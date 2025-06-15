@@ -1,0 +1,38 @@
+{
+  "name": "knowledge-hub",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Knowledge Hub Monorepo - Backend, CMS, and Frontend",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "start": "turbo start",
+    "lint": "turbo lint",
+    "type-check": "turbo type-check",
+    "clean": "turbo clean",
+    "test": "turbo test",
+    "dev:backend": "turbo dev --filter=backend",
+    "dev:cms": "turbo dev --filter=cms",
+    "dev:frontend": "turbo dev --filter=frontend",
+    "build:backend": "turbo build --filter=backend",
+    "build:cms": "turbo build --filter=cms",
+    "build:frontend": "turbo build --filter=frontend",
+    "start:backend": "turbo start --filter=backend",
+    "start:cms": "turbo start --filter=cms",
+    "start:frontend": "turbo start --filter=frontend"
+  },
+  "devDependencies": {
+    "@turbo/gen": "^1.13.4",
+    "turbo": "^1.13.4",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "packageManager": "npm@10.5.0"
+} 
