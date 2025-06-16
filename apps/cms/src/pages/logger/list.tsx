@@ -1,7 +1,7 @@
 import { List, useTable } from "@refinedev/antd";
 import { Table, Tooltip, Drawer, Typography } from "antd";
 import { useState } from "react";
-import ReactJson from 'react-json-view';
+import { JsonView } from 'react-json-view-lite';
 
 const { Text } = Typography;
 
@@ -77,17 +77,9 @@ export const LoggerList = () => {
       >
         {selectedRecord?.metadata && (
           <div style={{ padding: '16px' }}>
-            <ReactJson
-              src={selectedRecord.metadata}
-              theme="rjv-default"
-              name={false}
-              collapsed={2}
-              enableClipboard={true}
-              displayDataTypes={false}
-              style={{
-                fontSize: '14px',
-                backgroundColor: 'transparent',
-              }}
+            <JsonView
+              data={selectedRecord.metadata}
+              shouldExpandNode={(level) => level < 2}
             />
           </div>
         )}

@@ -1,7 +1,7 @@
 import { DateField, MarkdownField, Show, TextField } from "@refinedev/antd";
 import { useShow } from "@refinedev/core";
 import { Card, Tabs, Typography } from "antd";
-import ReactJson from "react-json-view";
+import { JsonView } from "react-json-view-lite";
 
 const { Title } = Typography;
 
@@ -48,13 +48,9 @@ export const PostShow = () => {
         <Tabs.TabPane tab="Metadata" key="3">
           <Card>
             {record?.metadata && (
-              <ReactJson
-                src={record.metadata}
-                name={null}
-                theme="rjv-default"
-                displayDataTypes={false}
-                enableClipboard={false}
-                collapsed={1}
+              <JsonView
+                data={record.metadata}
+                shouldExpandNode={(level) => level < 1}
               />
             )}
           </Card>

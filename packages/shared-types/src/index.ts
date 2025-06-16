@@ -4,93 +4,173 @@ import { initTRPC } from "@trpc/server";
 // Base tRPC setup
 export const t = initTRPC.create();
 
-// Shared schemas
-export const UserSchema = z.object({
-  id: z.string(),
-  email: z.string().email(),
-  name: z.string(),
-  role: z.enum(["admin", "user", "editor"]),
+// Common schemas
+export const BaseEntitySchema = z.object({
+  id: z.string().uuid(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
 
-export const ArticleSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  content: z.string(),
-  authorId: z.string(),
-  status: z.enum(["draft", "published", "archived"]),
-  tags: z.array(z.string()),
-  createdAt: z.date(),
-  updatedAt: z.date(),
-});
-
-export const CategorySchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string().optional(),
-  parentId: z.string().optional(),
-  createdAt: z.date(),
-  updatedAt: z.date(),
-});
-
-// Type exports
-export type User = z.infer<typeof UserSchema>;
-export type Article = z.infer<typeof ArticleSchema>;
-export type Category = z.infer<typeof CategorySchema>;
-
-// Common API response types
-export const ApiResponseSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
-  z.object({
-    success: z.boolean(),
-    data: dataSchema.optional(),
-    message: z.string().optional(),
-    error: z.string().optional(),
-  });
-
-export type ApiResponse<T> = {
-  success: boolean;
-  data?: T;
-  message?: string;
-  error?: string;
-};
-
-// Pagination types
 export const PaginationSchema = z.object({
   page: z.number().min(1).default(1),
   limit: z.number().min(1).max(100).default(10),
+  search: z.string().optional(),
   sortBy: z.string().optional(),
-  sortOrder: z.enum(["asc", "desc"]).default("asc"),
+  sortOrder: z.enum(["ASC", "DESC"]).default("DESC"),
 });
 
 export const PaginatedResponseSchema = <T extends z.ZodTypeAny>(
-  dataSchema: T
+  itemSchema: T
 ) =>
   z.object({
-    data: z.array(dataSchema),
-    pagination: z.object({
-      page: z.number(),
-      limit: z.number(),
-      total: z.number(),
-      totalPages: z.number(),
-    }),
+    data: z.array(itemSchema),
+    total: z.number(),
+    page: z.number(),
+    limit: z.number(),
+    totalPages: z.number(),
   });
 
-export type Pagination = z.infer<typeof PaginationSchema>;
-export type PaginatedResponse<T> = {
-  data: T[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-};
+export const ApiResponseSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
+  z.object({
+    success: z.boolean(),
+    data: dataSchema,
+    message: z.string().optional(),
+  });
+
+// User schema
+export const UserSchema = BaseEntitySchema.extend({
+  name: z.string().optional(),
+  email: z.string().email(),
+  roles: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+      })
+    )
+    .optional(),
+});
+
+// Article schema
+export const ArticleSchema = BaseEntitySchema.extend({
+  title: z.string(),
+  content: z.string(),
+  excerpt: z.string().optional(),
+  status: z.enum(["draft", "published", "archived"]),
+  authorId: z.string().uuid(),
+  tags: z.array(z.string()).optional(),
+  publishedAt: z.date().optional(),
+});
+
+// Category schema
+export const CategorySchema = BaseEntitySchema.extend({
+  name: z.string(),
+  description: z.string().optional(),
+  parentId: z.string().uuid().optional(),
+  slug: z.string(),
+});
+
+// Dataset schemas
+export const DataSourceTypeEnum = z.enum([
+  "file",
+  "text",
+  "website_crawl",
+  "api",
+]);
+export const IndexingTechniqueEnum = z.enum(["high_quality", "economy"]);
+export const PermissionEnum = z.enum([
+  "only_me",
+  "all_team_members",
+  "partial_members",
+]);
+
+export const DatasetSchema = BaseEntitySchema.extend({
+  name: z.string(),
+  description: z.string().optional(),
+  provider: z.string().default("vendor"),
+  permission: PermissionEnum.default("only_me"),
+  dataSourceType: DataSourceTypeEnum.optional(),
+  indexingTechnique: IndexingTechniqueEnum.optional(),
+  indexStruct: z.string().optional(),
+  embeddingModel: z.string().optional(),
+  embeddingModelProvider: z.string().optional(),
+  collectionBindingId: z.string().uuid().optional(),
+  retrievalModel: z.record(z.any()).optional(),
+  ownerId: z.string().uuid(),
+  owner: UserSchema.optional(),
+});
+
+export const DocumentSchema = BaseEntitySchema.extend({
+  datasetId: z.string().uuid(),
+  position: z.number(),
+  dataSourceType: z.string(),
+  dataSourceInfo: z.string().optional(),
+  datasetProcessRuleId: z.string().uuid().optional(),
+  batch: z.string(),
+  name: z.string(),
+  createdFrom: z.string(),
+  createdApiRequestId: z.string().uuid().optional(),
+  processingStartedAt: z.date().optional(),
+  fileId: z.string().optional(),
+  wordCount: z.number().optional(),
+  parsingCompletedAt: z.date().optional(),
+  cleaningCompletedAt: z.date().optional(),
+  splittingCompletedAt: z.date().optional(),
+  tokens: z.number().optional(),
+  indexingLatency: z.number().optional(),
+  completedAt: z.date().optional(),
+  isPaused: z.boolean().optional(),
+  pausedBy: z.string().uuid().optional(),
+  pausedAt: z.date().optional(),
+  error: z.string().optional(),
+  stoppedAt: z.date().optional(),
+  indexingStatus: z.string().default("waiting"),
+  enabled: z.boolean().default(true),
+  disabledAt: z.date().optional(),
+  disabledBy: z.string().uuid().optional(),
+  archived: z.boolean().default(false),
+  archivedReason: z.string().optional(),
+  archivedBy: z.string().uuid().optional(),
+  archivedAt: z.date().optional(),
+  docType: z.string().optional(),
+  docMetadata: z.record(z.any()).optional(),
+  docForm: z.string().default("text_model"),
+  docLanguage: z.string().optional(),
+  creatorId: z.string().uuid(),
+  creator: UserSchema.optional(),
+  dataset: DatasetSchema.optional(),
+});
+
+export const DocumentSegmentSchema = BaseEntitySchema.extend({
+  datasetId: z.string().uuid(),
+  documentId: z.string().uuid(),
+  position: z.number(),
+  content: z.string(),
+  answer: z.string().optional(),
+  wordCount: z.number(),
+  tokens: z.number(),
+  keywords: z.record(z.any()).optional(),
+  indexNodeId: z.string().optional(),
+  indexNodeHash: z.string().optional(),
+  hitCount: z.number().default(0),
+  enabled: z.boolean().default(true),
+  disabledAt: z.date().optional(),
+  disabledBy: z.string().uuid().optional(),
+  status: z.string().default("waiting"),
+  indexingAt: z.date().optional(),
+  completedAt: z.date().optional(),
+  error: z.string().optional(),
+  stoppedAt: z.date().optional(),
+  creatorId: z.string().uuid(),
+  creator: UserSchema.optional(),
+  dataset: DatasetSchema.optional(),
+  document: DocumentSchema.optional(),
+});
 
 // Export common TRPC utilities
 export const router = t.router;
+export const procedure = t.procedure;
 export const publicProcedure = t.procedure;
-export const middleware = t.middleware;
 
 // Export tRPC router types (explicit exports that work reliably)
 export { appRouter } from "./routers";

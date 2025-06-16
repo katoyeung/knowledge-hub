@@ -5,9 +5,13 @@ import {
   UserSchema,
   ArticleSchema,
   CategorySchema,
+  DatasetSchema,
+  DocumentSchema,
   PaginationSchema,
   PaginatedResponseSchema,
   ApiResponseSchema,
+  DataSourceTypeEnum,
+  PermissionEnum,
 } from "./index";
 
 // User router procedures
@@ -176,11 +180,170 @@ export const categoryRouter = router({
     }),
 });
 
+// Dataset router procedures
+export const datasetRouter = router({
+  getById: publicProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .output(ApiResponseSchema(DatasetSchema))
+    .query(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  getAll: publicProcedure
+    .input(
+      PaginationSchema.extend({
+        ownerId: z.string().uuid().optional(),
+        permission: PermissionEnum.optional(),
+        dataSourceType: DataSourceTypeEnum.optional(),
+      })
+    )
+    .output(PaginatedResponseSchema(DatasetSchema))
+    .query(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  create: publicProcedure
+    .input(
+      DatasetSchema.omit({
+        id: true,
+        createdAt: true,
+        updatedAt: true,
+        owner: true,
+      })
+    )
+    .output(ApiResponseSchema(DatasetSchema))
+    .mutation(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  update: publicProcedure
+    .input(
+      z.object({
+        id: z.string().uuid(),
+        data: DatasetSchema.omit({
+          id: true,
+          createdAt: true,
+          updatedAt: true,
+          owner: true,
+        }).partial(),
+      })
+    )
+    .output(ApiResponseSchema(DatasetSchema))
+    .mutation(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .output(ApiResponseSchema(z.boolean()))
+    .mutation(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  getWithDetails: publicProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .output(ApiResponseSchema(DatasetSchema))
+    .query(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  getByUser: publicProcedure
+    .input(z.object({ userId: z.string().uuid() }))
+    .output(ApiResponseSchema(z.array(DatasetSchema)))
+    .query(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+});
+
+// Document router procedures
+export const documentRouter = router({
+  getById: publicProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .output(ApiResponseSchema(DocumentSchema))
+    .query(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  getAll: publicProcedure
+    .input(
+      PaginationSchema.extend({
+        datasetId: z.string().uuid().optional(),
+        indexingStatus: z.string().optional(),
+        enabled: z.boolean().optional(),
+      })
+    )
+    .output(PaginatedResponseSchema(DocumentSchema))
+    .query(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  create: publicProcedure
+    .input(
+      DocumentSchema.omit({
+        id: true,
+        createdAt: true,
+        updatedAt: true,
+        creator: true,
+        dataset: true,
+      })
+    )
+    .output(ApiResponseSchema(DocumentSchema))
+    .mutation(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  update: publicProcedure
+    .input(
+      z.object({
+        id: z.string().uuid(),
+        data: DocumentSchema.omit({
+          id: true,
+          createdAt: true,
+          updatedAt: true,
+          creator: true,
+          dataset: true,
+        }).partial(),
+      })
+    )
+    .output(ApiResponseSchema(DocumentSchema))
+    .mutation(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .output(ApiResponseSchema(z.boolean()))
+    .mutation(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  updateStatus: publicProcedure
+    .input(
+      z.object({
+        id: z.string().uuid(),
+        status: z.string(),
+      })
+    )
+    .output(ApiResponseSchema(DocumentSchema))
+    .mutation(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+
+  getByDataset: publicProcedure
+    .input(z.object({ datasetId: z.string().uuid() }))
+    .output(ApiResponseSchema(z.array(DocumentSchema)))
+    .query(async ({ input: _ }) => {
+      throw new Error("Not implemented");
+    }),
+});
+
 // Root app router
 export const appRouter = router({
   user: userRouter,
   article: articleRouter,
   category: categoryRouter,
+  dataset: datasetRouter,
+  document: documentRouter,
 });
 
 export type AppRouter = typeof appRouter;

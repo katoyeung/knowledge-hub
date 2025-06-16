@@ -18,14 +18,14 @@ export const appConfig = {
       },
       users: `${apiBaseUrl}/users`,
       posts: `${apiBaseUrl}/posts`,
-      workflows: `${apiBaseUrl}/workflows`,
+
       prompts: `${apiBaseUrl}/prompts`,
       datasets: `${apiBaseUrl}/datasets`,
       logger: `${apiBaseUrl}/logger`,
     },
   },
   features: {
-    enableWorkflows: true,
+    enableWorkflows: false,
     enablePosts: true,
     enablePrompts: true,
     enableDatasets: true,

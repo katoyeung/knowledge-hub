@@ -7,6 +7,7 @@ import { UserModule } from '@modules/user';
 import { AuthModule } from '@modules/auth';
 import { getDatabaseConfig } from './config';
 import { AccessModule } from '@modules/access';
+import { DatasetModule } from '@modules/dataset';
 import { CacheModule } from '@nestjs/cache-manager';
 import { getCacheConfig } from './config/cache.config';
 import { NotificationModule } from '@modules/notification/notification.module';
@@ -34,6 +35,7 @@ import { SchedulerModule } from '@modules/scheduler/scheduler.module';
     UserModule,
     AuthModule,
     AccessModule,
+    DatasetModule,
     NotificationModule,
     QueueModule,
     EventEmitterModule.forRoot(),

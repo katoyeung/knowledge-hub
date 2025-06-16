@@ -12,7 +12,7 @@ import {
   Tabs,
   Typography,
 } from "antd";
-import ReactJson from "react-json-view";
+
 import { getModelList } from "../../utils/models";
 import { useEffect, useState } from "react";
 import axios from "axios";

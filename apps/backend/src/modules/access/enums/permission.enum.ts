@@ -12,4 +12,5 @@ export enum Resource {
   SCREENER = 'screener',
   INSTRUMENT = 'instrument',
   INDICATOR = 'indicator',
+  DATASET = 'dataset',
 }

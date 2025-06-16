@@ -25,12 +25,12 @@ import { ForgotPassword } from "./pages/forgotPassword";
 import { Login } from "./pages/login";
 import { Register } from "./pages/register";
 import { UserCreate, UserEdit, UserList, UserShow } from "./pages/users";
-import { FileSearchOutlined, FileTextOutlined, MessageOutlined, DatabaseOutlined, ApartmentOutlined } from "@ant-design/icons";
+import { FileSearchOutlined, FileTextOutlined, MessageOutlined, DatabaseOutlined } from "@ant-design/icons";
 
 import { accessControlProvider } from "./accessControlProvider";
 import { PostCreate, PostEdit, PostList, PostShow } from "./pages/posts";
 import { LoggerList } from "./pages/logger/list";
-import { WorkflowEditor, WorkflowCreate, WorkflowEdit, WorkflowList, WorkflowShow } from "./pages/workflows";
+
 import { PromptCreate, PromptList } from "./pages/prompts";
 import dataProvider from "@refinedev/nestjsx-crud";
 import { apiUrl, appConfig } from "./appConfig";
@@ -83,17 +83,7 @@ function App() {
                 //     icon: <SafetyCertificateOutlined />,
                 //   },
                 // },
-                {
-                  name: "workflows",
-                  list: "/workflows",
-                  create: "/workflows/create",
-                  edit: "/workflows/edit/:id",
-                  show: "/workflows/show/:id",
-                  meta: {
-                    canDelete: true,
-                    icon: <ApartmentOutlined />,
-                  },
-                },
+
                 {
                   name: "posts",
                   list: "/posts",
@@ -163,7 +153,7 @@ function App() {
                 >
                   <Route
                     index
-                    element={<NavigateToResource resource="workflows" />}
+                    element={<NavigateToResource resource="posts" />}
                   />
                   <Route path="/users">
                     <Route index element={<UserList />} />
@@ -193,14 +183,7 @@ function App() {
                     <Route path="edit/:id" element={<PostEdit />} />
                     <Route path="show/:id" element={<PostShow />} />
                   </Route>
-                  <Route path="/workflows">
-                    <Route index element={<WorkflowList />} />
-                    <Route path="editor" element={<WorkflowEditor />} />
-                    <Route path="editor/:id" element={<WorkflowEditor />} />
-                    <Route path="create" element={<WorkflowCreate />} />
-                    <Route path="edit/:id" element={<WorkflowEdit />} />
-                    <Route path="show/:id" element={<WorkflowShow />} />
-                  </Route>
+
                   <Route path="/datasets">
                     <Route index element={<DatasetList />} />
                     <Route path="create" element={<DatasetCreate />} />
