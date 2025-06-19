@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { documentSegmentApi, DocumentSegment, Document } from "@/lib/api";
 import { Toggle } from "@/components/ui/toggle";
+import { Edit3, Trash2 } from "lucide-react";
+import SegmentEditDrawer from "./segment-edit-drawer";
 
 // Simple date formatter
 const formatDate = (dateString?: string) => {
@@ -59,11 +61,24 @@ export default function DocumentSegmentsList({
     onBack,
 }: DocumentSegmentsListProps) {
     const [segments, setSegments] = useState<DocumentSegment[]>([]);
-    const [documentDetails, setDocumentDetails] = useState<Document>(document);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [expandedSegments, setExpandedSegments] = useState<Set<string>>(new Set());
     const [togglingSegments, setTogglingSegments] = useState<Set<string>>(new Set());
+
+    // Edit drawer state
+    const [editingSegment, setEditingSegment] = useState<DocumentSegment | null>(null);
+    const [isEditDrawerOpen, setIsEditDrawerOpen] = useState(false);
+
+    // Delete confirmation state
+    const [deleteConfirmSegment, setDeleteConfirmSegment] = useState<DocumentSegment | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    // Unsaved changes warning state
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [pendingEditSegment, setPendingEditSegment] = useState<DocumentSegment | null>(null);
+    const [showUnsavedWarning, setShowUnsavedWarning] = useState(false);
+    const [triggerSave, setTriggerSave] = useState(false);
 
     // Ref to track if fetch is in progress to prevent duplicate calls
     const fetchInProgressRef = useRef(false);
@@ -105,17 +120,6 @@ export default function DocumentSegmentsList({
         return 'N/A';
     };
 
-    const loadDocumentDetails = useCallback(async () => {
-        try {
-            const details = await documentApi.getById(document.id);
-            console.log('📋 Document details fetched:', details);
-            setDocumentDetails(details);
-        } catch (err) {
-            console.error("Failed to load document details:", err);
-            // Keep using the original document data if fetch fails
-        }
-    }, [document.id]);
-
     const loadSegments = useCallback(async () => {
         // Prevent duplicate calls for the same document
         if (fetchInProgressRef.current && currentDocumentIdRef.current === document.id) {
@@ -131,11 +135,8 @@ export default function DocumentSegmentsList({
             setLoading(true);
             setError(null);
 
-            // Load both document details and segments in parallel
-            const [segmentsData] = await Promise.all([
-                documentSegmentApi.getByDocument(document.id),
-                loadDocumentDetails()
-            ]);
+            // Just load segments, no need to fetch document details again
+            const segmentsData = await documentSegmentApi.getByDocument(document.id);
 
             console.log('📄 Segments fetched:', segmentsData.length, 'segments');
             setSegments(segmentsData);
@@ -146,7 +147,7 @@ export default function DocumentSegmentsList({
             setLoading(false);
             fetchInProgressRef.current = false;
         }
-    }, [document.id, loadDocumentDetails]);
+    }, [document.id]);
 
     useEffect(() => {
         console.log('🔄 segments useEffect triggered with documentId:', document.id);
@@ -224,7 +225,10 @@ export default function DocumentSegmentsList({
 
                 {shouldTruncate && (
                     <button
-                        onClick={() => handleToggleExpand(segment.id)}
+                        onClick={(e) => {
+                            e.stopPropagation(); // Prevent triggering edit
+                            handleToggleExpand(segment.id);
+                        }}
                         className="text-blue-600 hover:text-blue-800 text-xs font-medium"
                     >
                         {isExpanded ? "Show less" : "Show more"}
@@ -233,6 +237,120 @@ export default function DocumentSegmentsList({
             </div>
         );
     };
+
+    // Handle edit segment
+    const handleEditSegment = (segment: DocumentSegment) => {
+        // Check if there are unsaved changes
+        if (hasUnsavedChanges && editingSegment && editingSegment.id !== segment.id) {
+            setPendingEditSegment(segment);
+            setShowUnsavedWarning(true);
+            return;
+        }
+
+        setEditingSegment(segment);
+        setIsEditDrawerOpen(true);
+    };
+
+    // Handle save segment
+    const handleSaveSegment = (updatedSegment: DocumentSegment) => {
+        setSegments(prev => prev.map(segment =>
+            segment.id === updatedSegment.id ? updatedSegment : segment
+        ));
+    };
+
+    // Handle close edit drawer
+    const handleCloseEditDrawer = () => {
+        setIsEditDrawerOpen(false);
+        setEditingSegment(null);
+    };
+
+    // Handle delete segment
+    const handleDeleteSegment = (segment: DocumentSegment) => {
+        setDeleteConfirmSegment(segment);
+    };
+
+    // Handle confirm delete
+    const handleConfirmDelete = async () => {
+        if (!deleteConfirmSegment) return;
+
+        setIsDeleting(true);
+        try {
+            await documentSegmentApi.delete(deleteConfirmSegment.id);
+
+            // Remove from local state
+            setSegments(prev => prev.filter(segment => segment.id !== deleteConfirmSegment.id));
+
+            // Close modal
+            setDeleteConfirmSegment(null);
+        } catch (err) {
+            console.error("Failed to delete segment:", err);
+            // Could add error state here if needed
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
+    // Handle cancel delete
+    const handleCancelDelete = () => {
+        setDeleteConfirmSegment(null);
+    };
+
+    // Handle unsaved changes callback
+    const handleUnsavedChanges = (hasChanges: boolean) => {
+        setHasUnsavedChanges(hasChanges);
+    };
+
+    // Handle unsaved changes warning actions
+    const handleSaveAndContinue = async () => {
+        if (editingSegment) {
+            setTriggerSave(true);
+        }
+    };
+
+    const handleSaveTriggered = () => {
+        setTriggerSave(false);
+        setShowUnsavedWarning(false);
+        if (pendingEditSegment) {
+            // Small delay to ensure save is complete
+            setTimeout(() => {
+                setEditingSegment(pendingEditSegment);
+                setIsEditDrawerOpen(true);
+                setPendingEditSegment(null);
+            }, 100);
+        }
+    };
+
+    const handleDiscardAndContinue = () => {
+        setShowUnsavedWarning(false);
+        if (pendingEditSegment) {
+            setEditingSegment(pendingEditSegment);
+            setIsEditDrawerOpen(true);
+            setPendingEditSegment(null);
+        }
+    };
+
+    const handleCancelUnsavedWarning = () => {
+        setShowUnsavedWarning(false);
+        setPendingEditSegment(null);
+    };
+
+    // Disable body scrolling when modals are open
+    useEffect(() => {
+        if (typeof window !== 'undefined' && window.document?.body) {
+            if (deleteConfirmSegment || showUnsavedWarning) {
+                window.document.body.style.overflow = 'hidden';
+            } else {
+                window.document.body.style.overflow = '';
+            }
+        }
+
+        // Cleanup on unmount
+        return () => {
+            if (typeof window !== 'undefined' && window.document?.body) {
+                window.document.body.style.overflow = '';
+            }
+        };
+    }, [deleteConfirmSegment, showUnsavedWarning]);
 
     if (loading) {
         return (
@@ -305,13 +423,13 @@ export default function DocumentSegmentsList({
                         Document Segments
                     </h1>
                     <p className="text-gray-600 mt-1">
-                        {documentDetails.name} • {segments.length} segments
+                        {document.name} • {segments.length} segments
                     </p>
                 </div>
                 <div className="text-sm text-gray-500">
                     Status:
-                    <span className={`ml-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(documentDetails.indexingStatus)}`}>
-                        {documentDetails.indexingStatus}
+                    <span className={`ml-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(document.indexingStatus)}`}>
+                        {document.indexingStatus}
                     </span>
                 </div>
             </div>
@@ -321,19 +439,19 @@ export default function DocumentSegmentsList({
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
                         <span className="font-medium text-gray-700">Type:</span>
-                        <span className="ml-1 text-gray-600">{documentDetails.docType || 'Unknown'}</span>
+                        <span className="ml-1 text-gray-600">{document.docType || 'Unknown'}</span>
                     </div>
                     <div>
                         <span className="font-medium text-gray-700">Language:</span>
-                        <span className="ml-1 text-gray-600">{documentDetails.docLanguage || 'en'}</span>
+                        <span className="ml-1 text-gray-600">{document.docLanguage || 'en'}</span>
                     </div>
                     <div>
                         <span className="font-medium text-gray-700">Words:</span>
-                        <span className="ml-1 text-gray-600">{getWordCount(documentDetails, segments)}</span>
+                        <span className="ml-1 text-gray-600">{getWordCount(document, segments)}</span>
                     </div>
                     <div>
                         <span className="font-medium text-gray-700">Created:</span>
-                        <span className="ml-1 text-gray-600">{getDocumentCreationDate(documentDetails)}</span>
+                        <span className="ml-1 text-gray-600">{getDocumentCreationDate(document)}</span>
                     </div>
                 </div>
             </div>
@@ -360,7 +478,7 @@ export default function DocumentSegmentsList({
                     <p className="mt-1 text-sm text-gray-500">
                         This document hasn&apos;t been processed into segments yet.
                     </p>
-                    {documentDetails.indexingStatus === 'waiting' && (
+                    {document.indexingStatus === 'waiting' && (
                         <p className="mt-2 text-sm text-blue-600">
                             Processing will begin shortly...
                         </p>
@@ -391,6 +509,25 @@ export default function DocumentSegmentsList({
                                     <span className="text-xs text-gray-500">
                                         {segment.wordCount} words • {segment.tokens} tokens
                                     </span>
+
+                                    {/* Edit Button */}
+                                    <button
+                                        onClick={() => handleEditSegment(segment)}
+                                        className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                        title="Edit segment"
+                                    >
+                                        <Edit3 className="h-4 w-4" />
+                                    </button>
+
+                                    {/* Delete Button */}
+                                    <button
+                                        onClick={() => handleDeleteSegment(segment)}
+                                        className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                        title="Delete segment"
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                    </button>
+
                                     <Toggle
                                         checked={segment.enabled}
                                         onCheckedChange={() => handleToggleStatus(segment.id, segment.enabled)}
@@ -400,10 +537,16 @@ export default function DocumentSegmentsList({
                                 </div>
                             </div>
 
-                            {renderSegmentContent(segment)}
+                            {/* Content area - clickable for editing */}
+                            <div
+                                className="cursor-pointer hover:bg-gray-50 rounded p-2 -m-2 transition-colors"
+                                onClick={() => handleEditSegment(segment)}
+                            >
+                                {renderSegmentContent(segment)}
 
-                            {/* Keywords Tags */}
-                            <KeywordTags keywords={segment.keywords} />
+                                {/* Keywords Tags */}
+                                <KeywordTags keywords={segment.keywords} />
+                            </div>
 
                             {segment.completedAt && (
                                 <div className="mt-3 text-xs text-gray-500">
@@ -418,6 +561,100 @@ export default function DocumentSegmentsList({
                             )}
                         </div>
                     ))}
+                </div>
+            )}
+
+            {/* Edit Drawer */}
+            <SegmentEditDrawer
+                segment={editingSegment}
+                isOpen={isEditDrawerOpen}
+                onClose={handleCloseEditDrawer}
+                onSave={handleSaveSegment}
+                onUnsavedChanges={handleUnsavedChanges}
+                triggerSave={triggerSave}
+                onSaveTriggered={handleSaveTriggered}
+            />
+
+            {/* Delete Confirmation Modal */}
+            {deleteConfirmSegment && (
+                <div
+                    className="fixed inset-0 bg-black/5 flex items-center justify-center z-50 overscroll-none"
+                    style={{ touchAction: 'none' }}
+                    onClick={(e) => e.stopPropagation()}
+                    onWheel={(e) => e.preventDefault()}
+                    onTouchMove={(e) => e.preventDefault()}
+                >
+                    <div
+                        className="bg-white rounded-lg p-6 w-full max-w-md mx-4 shadow-2xl border border-gray-200"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                            Delete Segment
+                        </h3>
+                        <p className="text-gray-600 mb-6">
+                            Are you sure you want to delete Segment {deleteConfirmSegment.position}?
+                            This action cannot be undone.
+                        </p>
+                        <div className="flex gap-3 justify-end">
+                            <button
+                                onClick={handleCancelDelete}
+                                disabled={isDeleting}
+                                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmDelete}
+                                disabled={isDeleting}
+                                className="px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 min-w-[80px]"
+                            >
+                                {isDeleting ? "Deleting..." : "Delete"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Unsaved Changes Warning Modal */}
+            {showUnsavedWarning && (
+                <div
+                    className="fixed inset-0 bg-black/5 flex items-center justify-center z-50 overscroll-none"
+                    style={{ touchAction: 'none' }}
+                    onClick={(e) => e.stopPropagation()}
+                    onWheel={(e) => e.preventDefault()}
+                    onTouchMove={(e) => e.preventDefault()}
+                >
+                    <div
+                        className="bg-white rounded-lg p-6 w-full max-w-md mx-4 shadow-2xl border border-gray-200"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                            Unsaved Changes
+                        </h3>
+                        <p className="text-gray-600 mb-6">
+                            You have unsaved changes in the current segment. What would you like to do?
+                        </p>
+                        <div className="flex flex-col gap-3">
+                            <button
+                                onClick={handleSaveAndContinue}
+                                className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors"
+                            >
+                                Save and Continue
+                            </button>
+                            <button
+                                onClick={handleDiscardAndContinue}
+                                className="px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg transition-colors"
+                            >
+                                Discard Changes
+                            </button>
+                            <button
+                                onClick={handleCancelUnsavedWarning}
+                                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
