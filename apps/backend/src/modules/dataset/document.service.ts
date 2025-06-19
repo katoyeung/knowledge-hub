@@ -1,12 +1,16 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Document } from './entities/document.entity';
 import { Dataset } from './entities/dataset.entity';
+import { DocumentSegment } from './entities/document-segment.entity';
 import { TypeOrmCrudService } from '@dataui/crud-typeorm';
 import { Cache } from 'cache-manager';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { UploadDocumentDto } from './dto/upload-document.dto';
+import { EventTypes } from '../event/constants/event-types';
+import { DocumentUploadedEvent } from '../event/interfaces/document-events.interface';
 
 @Injectable()
 export class DocumentService extends TypeOrmCrudService<Document> {
@@ -15,8 +19,11 @@ export class DocumentService extends TypeOrmCrudService<Document> {
     private readonly documentRepository: Repository<Document>,
     @InjectRepository(Dataset)
     private readonly datasetRepository: Repository<Dataset>,
+    @InjectRepository(DocumentSegment)
+    private readonly segmentRepository: Repository<DocumentSegment>,
     @Inject(CACHE_MANAGER)
     private readonly cacheManager: Cache,
+    private readonly eventEmitter: EventEmitter2,
   ) {
     super(documentRepository);
   }
@@ -57,6 +64,10 @@ export class DocumentService extends TypeOrmCrudService<Document> {
   }
 
   async deleteDocument(id: string): Promise<void> {
+    // First, delete all related document segments
+    await this.segmentRepository.delete({ documentId: id });
+
+    // Then delete the document
     await this.documentRepository.delete(id);
     await this.invalidateDocumentCache(id);
   }
@@ -149,6 +160,24 @@ export class DocumentService extends TypeOrmCrudService<Document> {
 
       const savedDocument = await this.documentRepository.save(document);
       documents.push(savedDocument);
+
+      // Emit document uploaded event for each document
+      const uploadedEvent: DocumentUploadedEvent = {
+        type: EventTypes.DOCUMENT_UPLOADED,
+        payload: {
+          documentId: savedDocument.id,
+          datasetId: dataset.id,
+          userId,
+          filename: file.filename,
+          originalName: file.originalname,
+          mimeType: file.mimetype,
+          size: file.size,
+          filePath: file.path, // Full path to the uploaded file
+        },
+        timestamp: Date.now(),
+      };
+
+      this.eventEmitter.emit(EventTypes.DOCUMENT_UPLOADED, uploadedEvent);
     }
 
     await this.invalidateDocumentCache('all');

@@ -11,7 +11,13 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { DocumentService } from './document.service';
-import { Crud, CrudController } from '@dataui/crud';
+import {
+  Crud,
+  CrudController,
+  Override,
+  ParsedRequest,
+  CrudRequest,
+} from '@dataui/crud';
 import { Document } from './entities/document.entity';
 import { validate } from 'class-validator';
 import { plainToInstance, classToPlain } from 'class-transformer';
@@ -79,6 +85,17 @@ import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id
 )
 export class DocumentController implements CrudController<Document> {
   constructor(public readonly service: DocumentService) {}
+
+  @Override('deleteOneBase')
+  async deleteOne(@ParsedRequest() req: CrudRequest) {
+    const id = req.parsed.paramsFilter.find((f) => f.field === 'id')?.value;
+    if (!id) {
+      throw new Error('Document ID is required');
+    }
+
+    await this.service.deleteDocument(id);
+    return { deleted: true };
+  }
 
   @Post('upload')
   @UseInterceptors(

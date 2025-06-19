@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import {
     File,
@@ -9,10 +9,11 @@ import {
     Upload,
     Loader2,
     RefreshCw,
-    Calendar
+    Calendar,
 } from 'lucide-react'
 import { documentApi, type Document, type Dataset } from '@/lib/api'
 import { DocumentUpload } from './document-upload'
+import DocumentSegmentsList from './document-segments-list'
 
 interface DocumentListProps {
     datasetId: string
@@ -26,13 +27,36 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
     const [error, setError] = useState<string | null>(null)
     const [showUpload, setShowUpload] = useState(false)
     const [deletingId, setDeletingId] = useState<string | null>(null)
+    const [selectedDocument, setSelectedDocument] = useState<Document | null>(null)
+
+    // Ref to track if fetch is in progress to prevent duplicate calls
+    const fetchInProgressRef = useRef(false)
+    const currentDatasetIdRef = useRef<string | null>(null)
+
+    // Reset selectedDocument when datasetId changes (when clicking different dataset in sidebar)
+    useEffect(() => {
+        console.log('🔄 Dataset changed, resetting selectedDocument')
+        setSelectedDocument(null)
+        setShowUpload(false) // Also reset upload view if open
+    }, [datasetId])
 
     // Fetch documents for the dataset
-    const fetchDocuments = async () => {
+    const fetchDocuments = useCallback(async () => {
+        // Prevent duplicate calls for the same dataset
+        if (fetchInProgressRef.current && currentDatasetIdRef.current === datasetId) {
+            console.log('🚫 Skipping duplicate API call for datasetId:', datasetId)
+            return
+        }
+
+        console.log('🔍 fetchDocuments called for datasetId:', datasetId)
+        fetchInProgressRef.current = true
+        currentDatasetIdRef.current = datasetId
+
         try {
             setLoading(true)
             setError(null)
             const docs = await documentApi.getByDataset(datasetId)
+            console.log('📄 Documents fetched:', docs.length, 'documents')
             setDocuments(docs)
             onDocumentsChange?.(docs)
         } catch (err) {
@@ -41,14 +65,16 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
             setDocuments([])
         } finally {
             setLoading(false)
+            fetchInProgressRef.current = false
         }
-    }
+    }, [datasetId])
 
     useEffect(() => {
+        console.log('🔄 useEffect triggered with datasetId:', datasetId)
         if (datasetId) {
             fetchDocuments()
         }
-    }, [datasetId])
+    }, [datasetId, fetchDocuments])
 
     // Handle document upload success
     const handleUploadSuccess = (result: { dataset: Dataset; documents: Document[] }) => {
@@ -77,6 +103,16 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
         } finally {
             setDeletingId(null)
         }
+    }
+
+    // Handle view segments
+    const handleViewSegments = (document: Document) => {
+        setSelectedDocument(document)
+    }
+
+    // Handle back from segments view
+    const handleBackFromSegments = () => {
+        setSelectedDocument(null)
     }
 
     // Format file size
@@ -116,6 +152,15 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
         return undefined
     }
 
+    // Get document file size safely
+    const getDocumentSize = (document: Document): number | null => {
+        if (document.docMetadata?.size) {
+            const size = Number(document.docMetadata.size)
+            return isNaN(size) ? null : size
+        }
+        return null
+    }
+
     // Get status color
     const getStatusColor = (status: string) => {
         switch (status) {
@@ -130,6 +175,18 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
             default:
                 return 'text-gray-600 bg-gray-100'
         }
+    }
+
+    // Show segments view
+    if (selectedDocument) {
+        return (
+            <div className="bg-white rounded-lg border border-gray-200">
+                <DocumentSegmentsList
+                    document={selectedDocument}
+                    onBack={handleBackFromSegments}
+                />
+            </div>
+        )
     }
 
     // Show upload component
@@ -218,7 +275,8 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
                         {documents.map((document) => (
                             <div
                                 key={document.id}
-                                className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                                className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
+                                onClick={() => handleViewSegments(document)}
                             >
                                 <div className="flex items-center space-x-4 flex-1 min-w-0">
                                     <div className="flex-shrink-0">
@@ -244,13 +302,9 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
                                                 <Calendar className="h-3 w-3 mr-1" />
                                                 {formatDate(getDocumentDate(document) || '')}
                                             </span>
-                                            {document.docMetadata?.size && (
+                                            {getDocumentSize(document) && (
                                                 <span>
-                                                    {formatFileSize(
-                                                        typeof document.docMetadata.size === 'number'
-                                                            ? document.docMetadata.size
-                                                            : Number(document.docMetadata.size) || 0
-                                                    )}
+                                                    {formatFileSize(getDocumentSize(document)!)}
                                                 </span>
                                             )}
                                             {document.docType && (
@@ -271,7 +325,10 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        onClick={() => handleDelete(document.id)}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDelete(document.id);
+                                        }}
                                         disabled={deletingId === document.id}
                                         className="text-red-600 hover:text-red-700 hover:bg-red-50"
                                     >

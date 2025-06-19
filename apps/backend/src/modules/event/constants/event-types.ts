@@ -36,7 +36,16 @@ export enum EventTypes {
   // Indicator Events
   INDICATOR_CALCULATED = 'indicator.calculated',
   INDICATOR_UPDATED = 'indicator.updated',
+
+  // Document Events
+  DOCUMENT_UPLOADED = 'document.uploaded',
+  DOCUMENT_PROCESSING_STARTED = 'document.processing.started',
+  DOCUMENT_PROCESSING_COMPLETED = 'document.processing.completed',
+  DOCUMENT_PROCESSING_FAILED = 'document.processing.failed',
+  DOCUMENT_SEGMENTS_CREATED = 'document.segments.created',
 }
+
+export type EventType = (typeof EventTypes)[keyof typeof EventTypes];
 
 // src/modules/event/interfaces/event.interface.ts
 export interface BaseEvent {

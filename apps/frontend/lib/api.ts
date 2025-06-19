@@ -84,6 +84,39 @@ export interface Document {
   dataset?: Dataset;
 }
 
+// Document Segment API interface
+export interface DocumentSegment {
+  id: string;
+  datasetId: string;
+  documentId: string;
+  position: number;
+  content: string;
+  answer?: string;
+  wordCount: number;
+  tokens: number;
+  keywords?: Record<string, unknown>;
+  indexNodeId?: string;
+  indexNodeHash?: string;
+  hitCount: number;
+  enabled: boolean;
+  disabledAt?: string;
+  disabledBy?: string;
+  status: string;
+  indexingAt?: string;
+  completedAt?: string;
+  error?: string;
+  stoppedAt?: string;
+  userId: string;
+  createdAt: string;
+  updatedAt: string;
+  document?: Document;
+  dataset?: Dataset;
+  user?: {
+    id: string;
+    email: string;
+  };
+}
+
 // Dataset API functions
 export const datasetApi = {
   // Get all datasets
@@ -219,6 +252,70 @@ export const documentApi = {
   delete: async (id: string): Promise<boolean> => {
     await apiClient.delete(`/documents/${id}`);
     return true;
+  },
+};
+
+// Document Segment API functions
+export const documentSegmentApi = {
+  // Get segments by document ID
+  getByDocument: async (documentId: string): Promise<DocumentSegment[]> => {
+    const response = await apiClient.get(
+      `/document-segments/document/${documentId}`
+    );
+    return response.data;
+  },
+
+  // Get segments by dataset ID
+  getByDataset: async (datasetId: string): Promise<DocumentSegment[]> => {
+    const response = await apiClient.get(
+      `/document-segments/dataset/${datasetId}`
+    );
+    return response.data;
+  },
+
+  // Get all segments with pagination
+  getAll: async (params?: {
+    documentId?: string;
+    datasetId?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    data: DocumentSegment[];
+    total: number;
+    page: number;
+    limit: number;
+  }> => {
+    const response = await apiClient.get("/document-segments", { params });
+    return response.data;
+  },
+
+  // Get segment by ID
+  getById: async (id: string): Promise<DocumentSegment> => {
+    const response = await apiClient.get(`/document-segments/${id}`);
+    return response.data;
+  },
+
+  // Update segment
+  update: async (
+    id: string,
+    data: Partial<DocumentSegment>
+  ): Promise<DocumentSegment> => {
+    const response = await apiClient.patch(`/document-segments/${id}`, data);
+    return response.data;
+  },
+
+  // Delete segment
+  delete: async (id: string): Promise<boolean> => {
+    await apiClient.delete(`/document-segments/${id}`);
+    return true;
+  },
+
+  // Toggle segment status
+  toggleStatus: async (id: string): Promise<DocumentSegment> => {
+    const response = await apiClient.patch(
+      `/document-segments/${id}/toggle-status`
+    );
+    return response.data;
   },
 };
 

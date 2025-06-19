@@ -124,6 +124,9 @@ export class Document extends BaseEntity {
   @ManyToOne(() => User, (user) => user.createdDocuments)
   user: User;
 
-  @OneToMany(() => DocumentSegment, (segment) => segment.document)
+  @OneToMany(() => DocumentSegment, (segment) => segment.document, {
+    cascade: true,
+    onDelete: 'CASCADE',
+  })
   segments: DocumentSegment[];
 }

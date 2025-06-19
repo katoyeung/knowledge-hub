@@ -13,6 +13,7 @@ import { authUtil } from '@/lib/auth'
 export default function Home() {
   const [query, setQuery] = useState('')
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null)
+  const [datasetKey, setDatasetKey] = useState(0)
   const router = useRouter()
 
   const handleSearch = (e: React.FormEvent) => {
@@ -26,7 +27,9 @@ export default function Home() {
   }
 
   const handleDatasetClick = (dataset: Dataset) => {
+    console.log('🎯 Dataset clicked:', dataset.name, dataset.id)
     setSelectedDataset(dataset)
+    setDatasetKey(prev => prev + 1)
   }
 
   const handleLogout = async () => {
@@ -71,7 +74,11 @@ export default function Home() {
               </div>
 
               {/* Document List */}
-              <DocumentList datasetId={selectedDataset.id} />
+              <DocumentList
+                key={`${selectedDataset.id}-${datasetKey}`}
+                datasetId={selectedDataset.id}
+                dataset={selectedDataset}
+              />
             </div>
           </div>
         ) : (
