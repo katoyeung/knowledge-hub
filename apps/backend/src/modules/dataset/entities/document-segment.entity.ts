@@ -3,6 +3,7 @@ import { BaseEntity } from '../../../common/entities/base.entity';
 import { User } from '../../user/user.entity';
 import { Dataset } from './dataset.entity';
 import { Document } from './document.entity';
+import { Embedding } from './embedding.entity';
 
 @Entity({ name: 'document_segments' })
 export class DocumentSegment extends BaseEntity {
@@ -65,6 +66,11 @@ export class DocumentSegment extends BaseEntity {
   @Column('timestamp', { nullable: true })
   stoppedAt: Date;
 
+  // Embedding relationship
+  @Column('uuid', { nullable: true })
+  @RelationId((segment: DocumentSegment) => segment.embedding)
+  embeddingId: string;
+
   // Foreign key columns
   @Column('uuid')
   @RelationId((segment: DocumentSegment) => segment.user)
@@ -79,4 +85,7 @@ export class DocumentSegment extends BaseEntity {
 
   @ManyToOne(() => User, (user) => user.createdSegments)
   user: User;
+
+  @ManyToOne(() => Embedding, { nullable: true })
+  embedding: Embedding;
 }

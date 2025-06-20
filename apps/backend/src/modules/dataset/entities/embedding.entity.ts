@@ -1,3 +1,4 @@
+import { Exclude } from 'class-transformer';
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -10,13 +11,17 @@ export class Embedding {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ length: 255, default: 'text-embedding-ada-002' })
+  @Column({ length: 255, default: 'Qwen/Qwen3-Embedding-8B' })
   modelName: string;
 
   @Column({ length: 64 })
   hash: string;
 
-  @Column('float', { array: true })
+  @Exclude({ toPlainOnly: true })
+  @Column({
+    type: 'vector',
+    nullable: true,
+  })
   embedding: number[];
 
   @CreateDateColumn()

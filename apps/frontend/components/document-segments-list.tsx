@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { documentSegmentApi, DocumentSegment, Document } from "@/lib/api";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { documentSegmentApi, datasetApi, DocumentSegment, Document } from "@/lib/api";
 import { Toggle } from "@/components/ui/toggle";
-import { Edit3, Trash2 } from "lucide-react";
+import { Edit3, Trash2, Search, AlertCircle, X, ChevronUp, Square, CheckSquare, Eye, EyeOff } from "lucide-react";
 import SegmentEditDrawer from "./segment-edit-drawer";
 
 // Simple date formatter
@@ -51,10 +51,46 @@ const KeywordTags = ({ keywords }: { keywords?: Record<string, unknown> }) => {
     );
 };
 
+interface SearchResult {
+    id: string;
+    content: string;
+    similarity: number;
+    segment: DocumentSegment;
+}
+
+
+
 interface DocumentSegmentsListProps {
     document: Document;
     onBack: () => void;
 }
+
+// Custom debounce hook - optimized to prevent focus loss
+const useDebounce = (value: string, delay: number) => {
+    const [debouncedValue, setDebouncedValue] = useState(value);
+    const timeoutRef = useRef<number | undefined>(undefined);
+
+    useEffect(() => {
+        // Clear existing timeout
+        if (timeoutRef.current) {
+            window.clearTimeout(timeoutRef.current);
+        }
+
+        // Set new timeout
+        timeoutRef.current = window.setTimeout(() => {
+            setDebouncedValue(value);
+        }, delay);
+
+        // Cleanup function
+        return () => {
+            if (timeoutRef.current) {
+                window.clearTimeout(timeoutRef.current);
+            }
+        };
+    }, [value, delay]);
+
+    return debouncedValue;
+};
 
 export default function DocumentSegmentsList({
     document,
@@ -65,6 +101,21 @@ export default function DocumentSegmentsList({
     const [error, setError] = useState<string | null>(null);
     const [expandedSegments, setExpandedSegments] = useState<Set<string>>(new Set());
     const [togglingSegments, setTogglingSegments] = useState<Set<string>>(new Set());
+
+    // Search state - keep search input separate from debounced value
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [searchError, setSearchError] = useState<string | null>(null);
+    const [showingSearchResults, setShowingSearchResults] = useState(false);
+    const [searchInfo, setSearchInfo] = useState<{
+        count: number;
+        model?: string;
+        message?: string;
+    }>({ count: 0 });
+
+    // Debounce search query with longer delay to reduce API calls and prevent focus loss
+    const debouncedSearchQuery = useDebounce(searchQuery, 1200);
 
     // Edit drawer state
     const [editingSegment, setEditingSegment] = useState<DocumentSegment | null>(null);
@@ -81,8 +132,118 @@ export default function DocumentSegmentsList({
     const [triggerSave, setTriggerSave] = useState(false);
 
     // Ref to track if fetch is in progress to prevent duplicate calls
-    const fetchInProgressRef = useRef(false);
+    const fetchInProgressRef = useRef<boolean>(false);
     const currentDocumentIdRef = useRef<string | null>(null);
+
+    // Ref for search input to maintain focus
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    // Back to top button state
+    const [showBackToTop, setShowBackToTop] = useState(false);
+
+    // Bulk selection state
+    const [selectedSegments, setSelectedSegments] = useState<Set<string>>(new Set());
+    const [bulkActionMode, setBulkActionMode] = useState(false);
+    const [bulkActionLoading, setBulkActionLoading] = useState(false);
+
+    // Handle scroll to show/hide back to top button
+    useEffect(() => {
+        const handleScroll = () => {
+            const scrollTop = window.pageYOffset || (window.document?.documentElement?.scrollTop || 0);
+            setShowBackToTop(scrollTop > 300); // Show button after scrolling 300px
+        };
+
+        window.addEventListener('scroll', handleScroll);
+        return () => window.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    // Scroll to top function
+    const scrollToTop = () => {
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
+    };
+
+    // Bulk selection handlers
+    const handleToggleBulkMode = () => {
+        setBulkActionMode(!bulkActionMode);
+        setSelectedSegments(new Set()); // Clear selections when toggling mode
+    };
+
+    const handleSelectSegment = (segmentId: string) => {
+        const newSelected = new Set(selectedSegments);
+        if (newSelected.has(segmentId)) {
+            newSelected.delete(segmentId);
+        } else {
+            newSelected.add(segmentId);
+        }
+        setSelectedSegments(newSelected);
+    };
+
+    const handleSelectAll = () => {
+        const allSegmentIds = new Set(displaySegments.map(item => item.segment.id));
+        setSelectedSegments(allSegmentIds);
+    };
+
+    const handleSelectNone = () => {
+        setSelectedSegments(new Set());
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedSegments.size === 0) return;
+
+        setBulkActionLoading(true);
+        try {
+            const segmentIds = Array.from(selectedSegments);
+            await documentSegmentApi.bulkDelete(segmentIds);
+
+            // Refresh segments list
+            await loadSegments();
+
+            // Also update search results if showing
+            if (showingSearchResults) {
+                setSearchResults(prev => prev.filter(result => !selectedSegments.has(result.segment.id)));
+            }
+
+            setSelectedSegments(new Set());
+            setBulkActionMode(false);
+        } catch (error) {
+            console.error('Bulk delete failed:', error);
+            setError('Failed to delete selected segments');
+        } finally {
+            setBulkActionLoading(false);
+        }
+    };
+
+    const handleBulkToggleStatus = async (enabled: boolean) => {
+        if (selectedSegments.size === 0) return;
+
+        setBulkActionLoading(true);
+        try {
+            const segmentIds = Array.from(selectedSegments);
+            await documentSegmentApi.bulkUpdateStatus(segmentIds, enabled);
+
+            // Refresh segments list
+            await loadSegments();
+
+            // Also update search results if showing
+            if (showingSearchResults) {
+                setSearchResults(prev => prev.map(result =>
+                    selectedSegments.has(result.segment.id)
+                        ? { ...result, segment: { ...result.segment, enabled } }
+                        : result
+                ));
+            }
+
+            setSelectedSegments(new Set());
+        } catch (error) {
+            console.error('Bulk status update failed:', error);
+            setError('Failed to update selected segments');
+        } finally {
+            setBulkActionLoading(false);
+        }
+    };
 
     // Enhanced function to get document creation date
     const getDocumentCreationDate = (doc: Document): string => {
@@ -94,11 +255,6 @@ export default function DocumentSegmentsList({
         // Fallback to uploadedAt from metadata
         if (doc.docMetadata?.uploadedAt && typeof doc.docMetadata.uploadedAt === 'string') {
             return formatDate(doc.docMetadata.uploadedAt);
-        }
-
-        // Fallback to completedAt
-        if (doc.completedAt) {
-            return formatDate(doc.completedAt);
         }
 
         return 'N/A';
@@ -123,11 +279,9 @@ export default function DocumentSegmentsList({
     const loadSegments = useCallback(async () => {
         // Prevent duplicate calls for the same document
         if (fetchInProgressRef.current && currentDocumentIdRef.current === document.id) {
-            console.log('🚫 Skipping duplicate segments API call for documentId:', document.id);
             return;
         }
 
-        console.log('🔍 loadSegments called for documentId:', document.id);
         fetchInProgressRef.current = true;
         currentDocumentIdRef.current = document.id;
 
@@ -138,7 +292,6 @@ export default function DocumentSegmentsList({
             // Just load segments, no need to fetch document details again
             const segmentsData = await documentSegmentApi.getByDocument(document.id);
 
-            console.log('📄 Segments fetched:', segmentsData.length, 'segments');
             setSegments(segmentsData);
         } catch (err) {
             console.error("Failed to load document segments:", err);
@@ -150,7 +303,6 @@ export default function DocumentSegmentsList({
     }, [document.id]);
 
     useEffect(() => {
-        console.log('🔄 segments useEffect triggered with documentId:', document.id);
         loadSegments();
     }, [loadSegments]);
 
@@ -161,12 +313,20 @@ export default function DocumentSegmentsList({
         try {
             await documentSegmentApi.toggleStatus(segmentId);
 
-            // Update the local state immediately for better UX
+            // Update the local state immediately for better UX (both regular segments and search results)
             setSegments(prev => prev.map(segment =>
                 segment.id === segmentId
                     ? { ...segment, enabled: !currentEnabled }
                     : segment
             ));
+
+            if (showingSearchResults) {
+                setSearchResults(prev => prev.map(result =>
+                    result.segment.id === segmentId
+                        ? { ...result, segment: { ...result.segment, enabled: !currentEnabled } }
+                        : result
+                ));
+            }
         } catch (err) {
             console.error("Failed to toggle segment status:", err);
             // Revert the optimistic update on error
@@ -208,34 +368,10 @@ export default function DocumentSegmentsList({
         }
     };
 
-    const truncateContent = (content: string, maxLength: number = 200) => {
+    const truncateContent = (content: string | null | undefined, maxLength: number = 200) => {
+        if (!content) return '';
         if (content.length <= maxLength) return content;
         return content.substring(0, maxLength) + "...";
-    };
-
-    const renderSegmentContent = (segment: DocumentSegment) => {
-        const isExpanded = expandedSegments.has(segment.id);
-        const shouldTruncate = segment.content.length > 200;
-
-        return (
-            <div>
-                <div className="text-gray-800 text-sm leading-relaxed mb-3">
-                    {isExpanded || !shouldTruncate ? segment.content : truncateContent(segment.content)}
-                </div>
-
-                {shouldTruncate && (
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation(); // Prevent triggering edit
-                            handleToggleExpand(segment.id);
-                        }}
-                        className="text-blue-600 hover:text-blue-800 text-xs font-medium"
-                    >
-                        {isExpanded ? "Show less" : "Show more"}
-                    </button>
-                )}
-            </div>
-        );
     };
 
     // Handle edit segment
@@ -253,9 +389,18 @@ export default function DocumentSegmentsList({
 
     // Handle save segment
     const handleSaveSegment = (updatedSegment: DocumentSegment) => {
+        // Update both regular segments and search results
         setSegments(prev => prev.map(segment =>
             segment.id === updatedSegment.id ? updatedSegment : segment
         ));
+
+        if (showingSearchResults) {
+            setSearchResults(prev => prev.map(result =>
+                result.segment.id === updatedSegment.id
+                    ? { ...result, segment: updatedSegment }
+                    : result
+            ));
+        }
     };
 
     // Handle close edit drawer
@@ -277,8 +422,11 @@ export default function DocumentSegmentsList({
         try {
             await documentSegmentApi.delete(deleteConfirmSegment.id);
 
-            // Remove from local state
+            // Remove from local state (both regular segments and search results)
             setSegments(prev => prev.filter(segment => segment.id !== deleteConfirmSegment.id));
+            if (showingSearchResults) {
+                setSearchResults(prev => prev.filter(result => result.segment.id !== deleteConfirmSegment.id));
+            }
 
             // Close modal
             setDeleteConfirmSegment(null);
@@ -333,6 +481,131 @@ export default function DocumentSegmentsList({
         setShowUnsavedWarning(false);
         setPendingEditSegment(null);
     };
+
+    // Search functionality - background search that doesn't interrupt typing
+    const performSearch = useCallback(async (query: string) => {
+        if (!query.trim()) {
+            // Clear search state without losing focus
+            requestAnimationFrame(() => {
+                setSearchResults([]);
+                setShowingSearchResults(false);
+                setSearchError(null);
+                setSearchLoading(false);
+            });
+            return;
+        }
+
+        setSearchLoading(true);
+        setSearchError(null);
+
+        try {
+            const response = await datasetApi.search({
+                documentId: document.id,
+                query: query.trim(),
+                limit: 20,
+                similarityThreshold: 0.3
+            });
+
+            // Use requestAnimationFrame for smooth state updates
+            requestAnimationFrame(() => {
+                setSearchResults(response.results);
+                setSearchInfo({
+                    count: response.count,
+                    model: response.model,
+                    message: response.message
+                });
+                setShowingSearchResults(true);
+                setSearchLoading(false);
+            });
+        } catch (err: unknown) {
+            const error = err as { response?: { data?: { message?: string } } };
+            requestAnimationFrame(() => {
+                setSearchError(error.response?.data?.message || 'Search failed');
+                setSearchResults([]);
+                setShowingSearchResults(false);
+                setSearchLoading(false);
+            });
+        }
+    }, [document.id]);
+
+    // Trigger search when debounced query changes - but don't search on empty queries
+    useEffect(() => {
+        if (debouncedSearchQuery.trim()) {
+            performSearch(debouncedSearchQuery);
+        }
+    }, [debouncedSearchQuery, performSearch]);
+
+    // Stable input change handler that preserves focus
+    const handleSearchInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value;
+        setSearchQuery(value);
+
+        // If input is cleared, immediately clear results without waiting for debounce
+        if (!value.trim()) {
+            // Use requestAnimationFrame to preserve focus
+            requestAnimationFrame(() => {
+                setSearchResults([]);
+                setShowingSearchResults(false);
+                setSearchError(null);
+                setSearchLoading(false);
+            });
+        }
+    }, []);
+
+    const handleClearSearch = useCallback(() => {
+        setSearchQuery('');
+        setSearchResults([]);
+        setShowingSearchResults(false);
+        setSearchError(null);
+        setSearchInfo({ count: 0 });
+        setSearchLoading(false);
+    }, []);
+
+    const formatSimilarity = (similarity: number) => {
+        return `${(similarity * 100).toFixed(1)}%`;
+    };
+
+    const highlightText = useCallback((text: string | null | undefined, query: string) => {
+        if (!text) return '';
+        if (!query.trim()) return text;
+
+        const regex = new RegExp(`(${query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+        const parts = text.split(regex);
+
+        return parts.map((part, index) =>
+            regex.test(part) ? (
+                <mark key={index} className="bg-yellow-200 px-1 rounded">
+                    {part}
+                </mark>
+            ) : (
+                <span key={index}>{part}</span>
+            )
+        );
+    }, []);
+
+    // Memoize segments to display to prevent unnecessary re-renders
+    const displaySegments = useMemo(() => {
+        return showingSearchResults ? searchResults : segments.map(segment => ({ segment, similarity: 0 }));
+    }, [showingSearchResults, searchResults, segments]);
+
+    // Focus preservation effect
+    useEffect(() => {
+        // Preserve focus on search input after state changes
+        if (typeof window !== 'undefined' && searchInputRef.current && window.document.activeElement !== searchInputRef.current) {
+            const shouldRefocus = searchQuery.length > 0 && !searchLoading;
+            if (shouldRefocus) {
+                // Use a small delay to ensure DOM has updated
+                setTimeout(() => {
+                    if (searchInputRef.current) {
+                        searchInputRef.current.focus();
+                        // Restore cursor position to end
+                        const length = searchInputRef.current.value.length;
+                        searchInputRef.current.setSelectionRange(length, length);
+                    }
+                }, 10);
+            }
+        }
+    }, [showingSearchResults, searchLoading, searchQuery]);
 
     // Disable body scrolling when modals are open
     useEffect(() => {
@@ -454,7 +727,200 @@ export default function DocumentSegmentsList({
                         <span className="ml-1 text-gray-600">{getDocumentCreationDate(document)}</span>
                     </div>
                 </div>
+                {/* Second row for additional info */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mt-3 pt-3 border-t border-gray-200">
+                    <div>
+                        <span className="font-medium text-gray-700">Embedding Model:</span>
+                        <span className="ml-1 text-gray-600">
+                            {document.embeddingModel || 'Not specified'}
+                        </span>
+                        {document.embeddingDimensions && (
+                            <span className="ml-1 text-xs text-gray-500">
+                                ({document.embeddingDimensions}D)
+                            </span>
+                        )}
+                    </div>
+                    <div>
+                        <span className="font-medium text-gray-700">Dimensions:</span>
+                        <span className="ml-1 text-gray-600">
+                            {document.embeddingDimensions ? String(document.embeddingDimensions) : 'Unknown'}
+                        </span>
+                    </div>
+                </div>
             </div>
+
+            {/* Search Section */}
+            <div className="mb-6">
+                <div className="mb-4">
+                    <div className="flex gap-2">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                            <input
+                                ref={searchInputRef}
+                                key="search-input-stable"
+                                type="text"
+                                value={searchQuery}
+                                onChange={handleSearchInputChange}
+                                placeholder="Search segments using semantic similarity..."
+                                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                disabled={searchLoading}
+                                autoComplete="off"
+                                spellCheck={false}
+                            />
+                            {searchLoading && (
+                                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                                </div>
+                            )}
+                        </div>
+                        {showingSearchResults && (
+                            <button
+                                type="button"
+                                onClick={handleClearSearch}
+                                className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 flex items-center gap-2"
+                            >
+                                <X className="h-4 w-4" />
+                                Clear
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* Search Info */}
+                {showingSearchResults && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                        <div className="flex items-center justify-between">
+                            <div className="text-sm text-blue-800">
+                                {searchLoading ? (
+                                    <span className="flex items-center gap-2">
+                                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
+                                        Searching...
+                                    </span>
+                                ) : (
+                                    <>
+                                        Found {searchInfo.count} similar segments
+                                        {searchInfo.model && (
+                                            <span className="text-blue-600 ml-2">
+                                                • Using {searchInfo.model}
+                                            </span>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                        {searchInfo.message && !searchLoading && (
+                            <p className="text-xs text-blue-600 mt-1">{searchInfo.message}</p>
+                        )}
+                    </div>
+                )}
+
+                {/* Search Status - Show when searching but no results yet */}
+                {searchLoading && !showingSearchResults && searchQuery.trim() && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+                        <div className="flex items-center text-sm text-gray-600">
+                            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-gray-400 mr-2"></div>
+                            Searching for &ldquo;{searchQuery}&rdquo;...
+                        </div>
+                    </div>
+                )}
+
+                {/* Search Error */}
+                {searchError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                        <div className="flex items-center">
+                            <AlertCircle className="h-4 w-4 text-red-500 mr-2" />
+                            <span className="text-sm text-red-800">{searchError}</span>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Search Results Notice */}
+            {showingSearchResults && displaySegments.length > 0 && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                    <div className="flex items-center gap-2">
+                        <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" clipRule="evenodd" />
+                        </svg>
+                        <span className="text-sm text-blue-800">
+                            <strong>Search Results:</strong> Showing {displaySegments.length} matching segments with similarity scores. All actions are available.
+                        </span>
+                    </div>
+                </div>
+            )}
+
+            {/* Bulk Actions Toolbar */}
+            {displaySegments.length > 0 && (
+                <div className="mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <button
+                            onClick={handleToggleBulkMode}
+                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${bulkActionMode
+                                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                }`}
+                        >
+                            {bulkActionMode ? 'Exit Bulk Mode' : 'Bulk Actions'}
+                        </button>
+
+                        {bulkActionMode && (
+                            <>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={handleSelectAll}
+                                        disabled={bulkActionLoading}
+                                        className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors disabled:opacity-50"
+                                    >
+                                        Select All
+                                    </button>
+                                    <button
+                                        onClick={handleSelectNone}
+                                        disabled={bulkActionLoading}
+                                        className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors disabled:opacity-50"
+                                    >
+                                        Select None
+                                    </button>
+                                </div>
+
+                                {selectedSegments.size > 0 && (
+                                    <div className="flex items-center gap-2 pl-4 border-l border-gray-200">
+                                        <span className="text-sm text-gray-600">
+                                            {selectedSegments.size} selected
+                                        </span>
+                                        <button
+                                            onClick={() => handleBulkToggleStatus(false)}
+                                            disabled={bulkActionLoading}
+                                            className="px-2 py-1 text-xs bg-orange-100 text-orange-800 hover:bg-orange-200 rounded transition-colors disabled:opacity-50 flex items-center gap-1"
+                                            title="Disable selected segments"
+                                        >
+                                            <EyeOff className="h-3 w-3" />
+                                            Disable
+                                        </button>
+                                        <button
+                                            onClick={() => handleBulkToggleStatus(true)}
+                                            disabled={bulkActionLoading}
+                                            className="px-2 py-1 text-xs bg-green-100 text-green-800 hover:bg-green-200 rounded transition-colors disabled:opacity-50 flex items-center gap-1"
+                                            title="Enable selected segments"
+                                        >
+                                            <Eye className="h-3 w-3" />
+                                            Enable
+                                        </button>
+                                        <button
+                                            onClick={handleBulkDelete}
+                                            disabled={bulkActionLoading}
+                                            className="px-2 py-1 text-xs bg-red-100 text-red-800 hover:bg-red-200 rounded transition-colors disabled:opacity-50 flex items-center gap-1"
+                                            title="Delete selected segments"
+                                        >
+                                            <Trash2 className="h-3 w-3" />
+                                            {bulkActionLoading ? 'Deleting...' : 'Delete'}
+                                        </button>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Segments List */}
             {segments.length === 0 ? (
@@ -486,81 +952,154 @@ export default function DocumentSegmentsList({
                 </div>
             ) : (
                 <div className="space-y-4">
-                    {segments.map((segment) => (
-                        <div
-                            key={segment.id}
-                            className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-                        >
-                            <div className="flex items-start justify-between mb-3">
-                                <div className="flex items-center space-x-3">
-                                    <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                                        Segment {segment.position}
-                                    </span>
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(segment.status)}`}>
-                                        {segment.status}
-                                    </span>
-                                    {!segment.enabled && (
-                                        <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                                            Disabled
-                                        </span>
-                                    )}
-                                </div>
-                                <div className="flex items-center space-x-3">
-                                    <span className="text-xs text-gray-500">
-                                        {segment.wordCount} words • {segment.tokens} tokens
-                                    </span>
+                    {displaySegments.map((item, index) => {
+                        if (!item || !item.segment) {
+                            console.warn('Invalid item at index', index, item);
+                            return null;
+                        }
 
-                                    {/* Edit Button */}
-                                    <button
-                                        onClick={() => handleEditSegment(segment)}
-                                        className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                        title="Edit segment"
-                                    >
-                                        <Edit3 className="h-4 w-4" />
-                                    </button>
 
-                                    {/* Delete Button */}
-                                    <button
-                                        onClick={() => handleDeleteSegment(segment)}
-                                        className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                        title="Delete segment"
-                                    >
-                                        <Trash2 className="h-4 w-4" />
-                                    </button>
 
-                                    <Toggle
-                                        checked={segment.enabled}
-                                        onCheckedChange={() => handleToggleStatus(segment.id, segment.enabled)}
-                                        disabled={togglingSegments.has(segment.id)}
-                                        size="sm"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Content area - clickable for editing */}
+                        return (
                             <div
-                                className="cursor-pointer hover:bg-gray-50 rounded p-2 -m-2 transition-colors"
-                                onClick={() => handleEditSegment(segment)}
+                                key={`${showingSearchResults ? 'search' : 'normal'}-${item.segment.id || index}`}
+                                className={`bg-white border rounded-lg p-4 hover:shadow-md transition-shadow ${bulkActionMode && selectedSegments.has(item.segment.id)
+                                    ? 'border-blue-500 bg-blue-50'
+                                    : 'border-gray-200'
+                                    }`}
                             >
-                                {renderSegmentContent(segment)}
+                                <div className="flex items-start justify-between mb-3">
+                                    <div className="flex items-center space-x-3">
+                                        {/* Bulk Selection Checkbox */}
+                                        {bulkActionMode && (
+                                            <button
+                                                onClick={() => handleSelectSegment(item.segment.id)}
+                                                className="p-1 hover:bg-gray-100 rounded transition-colors"
+                                                title={selectedSegments.has(item.segment.id) ? 'Deselect segment' : 'Select segment'}
+                                            >
+                                                {selectedSegments.has(item.segment.id) ? (
+                                                    <CheckSquare className="h-4 w-4 text-blue-600" />
+                                                ) : (
+                                                    <Square className="h-4 w-4 text-gray-400" />
+                                                )}
+                                            </button>
+                                        )}
 
-                                {/* Keywords Tags */}
-                                <KeywordTags keywords={segment.keywords} />
+                                        <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
+                                            Segment {item.segment.position}
+                                        </span>
+                                        {showingSearchResults && item.similarity > 0 && (
+                                            <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">
+                                                {formatSimilarity(item.similarity)} match
+                                            </span>
+                                        )}
+                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(item.segment.status || 'completed')}`}>
+                                            {item.segment.status || 'completed'}
+                                        </span>
+                                        {!item.segment.enabled && (
+                                            <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded">
+                                                Disabled
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center space-x-3">
+                                        <span className="text-xs text-gray-500">
+                                            {item.segment.wordCount || 0} words • {item.segment.tokens || 0} tokens
+                                        </span>
+
+                                        {/* Action Buttons */}
+                                        {/* Edit Button */}
+                                        <button
+                                            onClick={() => handleEditSegment(item.segment)}
+                                            className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                            title="Edit segment"
+                                        >
+                                            <Edit3 className="h-4 w-4" />
+                                        </button>
+
+                                        {/* Delete Button */}
+                                        <button
+                                            onClick={() => handleDeleteSegment(item.segment)}
+                                            className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                            title="Delete segment"
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </button>
+
+                                        <Toggle
+                                            checked={item.segment.enabled}
+                                            onCheckedChange={() => handleToggleStatus(item.segment.id, item.segment.enabled)}
+                                            disabled={togglingSegments.has(item.segment.id)}
+                                            size="sm"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Content area with highlighting */}
+                                <div
+                                    className="cursor-pointer hover:bg-gray-50 rounded p-2 -m-2 transition-colors"
+                                    onClick={() => handleEditSegment(item.segment)}
+                                >
+                                    <div className="text-gray-700 leading-relaxed">
+                                        {expandedSegments.has(item.segment.id) ? (
+                                            <div className="whitespace-pre-wrap">
+                                                {showingSearchResults ?
+                                                    highlightText(item.segment.content || (item as SearchResult).content, searchQuery) :
+                                                    (item.segment.content || '')
+                                                }
+                                            </div>
+                                        ) : (
+                                            <div>
+                                                <div className="whitespace-pre-wrap">
+                                                    {showingSearchResults ?
+                                                        highlightText(truncateContent(item.segment.content || (item as SearchResult).content), searchQuery) :
+                                                        truncateContent(item.segment.content)
+                                                    }
+                                                </div>
+                                                {((item.segment.content || (item as SearchResult).content)?.length || 0) > 200 && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleToggleExpand(item.segment.id);
+                                                        }}
+                                                        className="text-blue-600 hover:text-blue-800 text-sm font-medium mt-2"
+                                                    >
+                                                        Show more
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                        {expandedSegments.has(item.segment.id) && ((item.segment.content || (item as SearchResult).content)?.length || 0) > 200 && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleToggleExpand(item.segment.id);
+                                                }}
+                                                className="text-blue-600 hover:text-blue-800 text-sm font-medium mt-2"
+                                            >
+                                                Show less
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {/* Keywords Tags */}
+                                    <KeywordTags keywords={item.segment.keywords} />
+                                </div>
+
+                                {item.segment.completedAt && (
+                                    <div className="mt-3 text-xs text-gray-500">
+                                        Completed: {formatDate(item.segment.completedAt)}
+                                    </div>
+                                )}
+
+                                {item.segment.error && (
+                                    <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                                        Error: {item.segment.error}
+                                    </div>
+                                )}
                             </div>
-
-                            {segment.completedAt && (
-                                <div className="mt-3 text-xs text-gray-500">
-                                    Completed: {formatDate(segment.completedAt)}
-                                </div>
-                            )}
-
-                            {segment.error && (
-                                <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-                                    Error: {segment.error}
-                                </div>
-                            )}
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
 
@@ -656,6 +1195,18 @@ export default function DocumentSegmentsList({
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Back to Top Button - Hide when modals/drawers are open */}
+            {showBackToTop && !isEditDrawerOpen && !deleteConfirmSegment && !showUnsavedWarning && (
+                <button
+                    onClick={scrollToTop}
+                    className="fixed bottom-6 right-6 p-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all duration-300 hover:scale-110 z-30"
+                    title="Back to top"
+                    aria-label="Back to top"
+                >
+                    <ChevronUp className="h-5 w-5" />
+                </button>
             )}
         </div>
     );

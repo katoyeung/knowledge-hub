@@ -112,6 +112,13 @@ export class Document extends BaseEntity {
   @Column({ length: 255, nullable: true })
   docLanguage: string;
 
+  // Embedding configuration columns
+  @Column({ length: 255, nullable: true })
+  embeddingModel: string;
+
+  @Column('integer', { nullable: true })
+  embeddingDimensions: number;
+
   // Foreign key columns
   @Column('uuid')
   @RelationId((document: Document) => document.user)

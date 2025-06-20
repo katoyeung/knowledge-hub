@@ -1,10 +1,11 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Document } from './entities/document.entity';
 import { Dataset } from './entities/dataset.entity';
 import { DocumentSegment } from './entities/document-segment.entity';
+import { Embedding } from './entities/embedding.entity';
 import { TypeOrmCrudService } from '@dataui/crud-typeorm';
 import { Cache } from 'cache-manager';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -14,6 +15,8 @@ import { DocumentUploadedEvent } from '../event/interfaces/document-events.inter
 
 @Injectable()
 export class DocumentService extends TypeOrmCrudService<Document> {
+  private readonly logger = new Logger(DocumentService.name);
+
   constructor(
     @InjectRepository(Document)
     private readonly documentRepository: Repository<Document>,
@@ -21,6 +24,8 @@ export class DocumentService extends TypeOrmCrudService<Document> {
     private readonly datasetRepository: Repository<Dataset>,
     @InjectRepository(DocumentSegment)
     private readonly segmentRepository: Repository<DocumentSegment>,
+    @InjectRepository(Embedding)
+    private readonly embeddingRepository: Repository<Embedding>,
     @Inject(CACHE_MANAGER)
     private readonly cacheManager: Cache,
     private readonly eventEmitter: EventEmitter2,
@@ -64,12 +69,74 @@ export class DocumentService extends TypeOrmCrudService<Document> {
   }
 
   async deleteDocument(id: string): Promise<void> {
-    // First, delete all related document segments
-    await this.segmentRepository.delete({ documentId: id });
+    this.logger.log(`🗑️ Starting document deletion: ${id}`);
 
-    // Then delete the document
-    await this.documentRepository.delete(id);
-    await this.invalidateDocumentCache(id);
+    // Use a transaction to ensure all deletions happen atomically
+    const queryRunner =
+      this.documentRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // First, get all segments for this document to find embeddings to delete
+      const segments = await queryRunner.manager.find(DocumentSegment, {
+        where: { documentId: id },
+        select: ['id', 'embeddingId'],
+      });
+
+      this.logger.log(`🗑️ Found ${segments.length} segments to analyze`);
+
+      // Collect all embedding IDs that need to be deleted
+      const embeddingIds = segments
+        .filter((segment) => segment.embeddingId)
+        .map((segment) => segment.embeddingId)
+        .filter(Boolean) // Remove null/undefined values
+        .filter((id, index, self) => self.indexOf(id) === index); // Remove duplicates
+
+      this.logger.log(
+        `🗑️ Found ${embeddingIds.length} unique embeddings to delete`,
+      );
+
+      // Delete document segments first (they reference embeddings via foreign key)
+      const deletedSegments = await queryRunner.manager.delete(
+        DocumentSegment,
+        { documentId: id },
+      );
+      this.logger.log(`✅ Deleted ${deletedSegments.affected || 0} segments`);
+
+      // Now delete embeddings (no longer referenced by segments)
+      if (embeddingIds.length > 0) {
+        const deletedEmbeddings = await queryRunner.manager.delete(
+          Embedding,
+          embeddingIds,
+        );
+        this.logger.log(
+          `✅ Deleted ${deletedEmbeddings.affected || 0} embeddings`,
+        );
+      }
+
+      // Finally, delete the document itself
+      const deletedDocument = await queryRunner.manager.delete(Document, id);
+      this.logger.log(
+        `✅ Deleted document: ${deletedDocument.affected || 0} record(s)`,
+      );
+
+      // Commit the transaction
+      await queryRunner.commitTransaction();
+
+      await this.invalidateDocumentCache(id);
+      this.logger.log(`🎉 Document deletion completed successfully: ${id}`);
+    } catch (error) {
+      // Rollback the transaction on error
+      await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `💥 Document deletion failed, transaction rolled back: ${error.message}`,
+      );
+      throw error;
+    } finally {
+      // Release the query runner
+      await queryRunner.release();
+    }
   }
 
   async getDocumentsByStatus(status: string): Promise<Document[]> {

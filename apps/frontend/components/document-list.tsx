@@ -11,33 +11,32 @@ import {
     RefreshCw,
     Calendar,
 } from 'lucide-react'
-import { documentApi, type Document, type Dataset } from '@/lib/api'
-import { DocumentUpload } from './document-upload'
-import DocumentSegmentsList from './document-segments-list'
+import { documentApi, datasetApi, type Document, type Dataset } from '@/lib/api'
+import { DocumentUploadWizard } from './document-upload-wizard'
 
 interface DocumentListProps {
     datasetId: string
     dataset?: Dataset
     onDocumentsChange?: (documents: Document[]) => void
+    onDatasetDeleted?: () => void
 }
 
-export function DocumentList({ datasetId, dataset, onDocumentsChange }: DocumentListProps) {
+export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetDeleted }: DocumentListProps) {
     const [documents, setDocuments] = useState<Document[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [showUpload, setShowUpload] = useState(false)
     const [deletingId, setDeletingId] = useState<string | null>(null)
-    const [selectedDocument, setSelectedDocument] = useState<Document | null>(null)
+    const [deletingDataset, setDeletingDataset] = useState(false)
 
     // Ref to track if fetch is in progress to prevent duplicate calls
     const fetchInProgressRef = useRef(false)
     const currentDatasetIdRef = useRef<string | null>(null)
 
-    // Reset selectedDocument when datasetId changes (when clicking different dataset in sidebar)
+    // Reset upload view when datasetId changes (when clicking different dataset in sidebar)
     useEffect(() => {
-        console.log('🔄 Dataset changed, resetting selectedDocument')
-        setSelectedDocument(null)
-        setShowUpload(false) // Also reset upload view if open
+        console.log('🔄 Dataset changed, resetting upload view')
+        setShowUpload(false)
     }, [datasetId])
 
     // Fetch documents for the dataset
@@ -76,13 +75,10 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
         }
     }, [datasetId, fetchDocuments])
 
-    // Handle document upload success
-    const handleUploadSuccess = (result: { dataset: Dataset; documents: Document[] }) => {
-        setDocuments(prev => {
-            const newDocuments = [...prev, ...result.documents]
-            onDocumentsChange?.(newDocuments)
-            return newDocuments
-        })
+    // Handle document upload completion
+    const handleUploadComplete = () => {
+        // Refresh the documents list to show newly uploaded documents
+        fetchDocuments()
         setShowUpload(false)
     }
 
@@ -107,12 +103,41 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
 
     // Handle view segments
     const handleViewSegments = (document: Document) => {
-        setSelectedDocument(document)
+        // Navigate to document-specific segments page
+        window.location.href = `/datasets/${datasetId}/documents/${document.id}/segments`
     }
 
-    // Handle back from segments view
-    const handleBackFromSegments = () => {
-        setSelectedDocument(null)
+    // Handle back from segments view - no longer needed since we navigate to separate page
+    // const handleBackFromSegments = () => {
+    //     // Navigation handled by separate page
+    // }
+
+    // Handle dataset deletion
+    const handleDeleteDataset = async () => {
+        if (!dataset) return
+
+        // Show confirmation dialog
+        const confirmed = window.confirm(
+            `Are you sure you want to delete the dataset "${dataset.name}"?\n\nThis action cannot be undone and will permanently delete all documents and data associated with this dataset.`
+        )
+
+        if (!confirmed) return
+
+        setDeletingDataset(true)
+        try {
+            await datasetApi.delete(dataset.id)
+
+            // Call the callback to notify parent component
+            onDatasetDeleted?.()
+
+            // Show success message
+            alert('Dataset deleted successfully')
+        } catch (error) {
+            console.error('Failed to delete dataset:', error)
+            alert('Failed to delete dataset. Please try again.')
+        } finally {
+            setDeletingDataset(false)
+        }
     }
 
     // Format file size
@@ -177,25 +202,30 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
         }
     }
 
-    // Show segments view
-    if (selectedDocument) {
-        return (
-            <div className="bg-white rounded-lg border border-gray-200">
-                <DocumentSegmentsList
-                    document={selectedDocument}
-                    onBack={handleBackFromSegments}
-                />
-            </div>
-        )
-    }
+    // Segments view is now handled by separate page route
+    // No longer need to show segments view here
 
     // Show upload component
     if (showUpload) {
+        // If dataset is not provided, we can't use the wizard - fallback to simple message
+        if (!dataset) {
+            return (
+                <div className="bg-white rounded-lg border border-gray-200 p-6">
+                    <div className="text-center">
+                        <p className="text-gray-600 mb-4">Dataset information is required to upload documents.</p>
+                        <Button onClick={() => setShowUpload(false)} variant="outline">
+                            Close
+                        </Button>
+                    </div>
+                </div>
+            )
+        }
+
         return (
             <div className="bg-white rounded-lg border border-gray-200">
-                <DocumentUpload
-                    datasetId={datasetId}
-                    onUploadSuccess={handleUploadSuccess}
+                <DocumentUploadWizard
+                    dataset={dataset}
+                    onComplete={handleUploadComplete}
                     onClose={() => setShowUpload(false)}
                 />
             </div>
@@ -231,6 +261,20 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange }: Document
                         >
                             <Upload className="h-4 w-4 mr-2" />
                             Upload Documents
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleDeleteDataset}
+                            disabled={deletingDataset}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+                        >
+                            {deletingDataset ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <Trash2 className="h-4 w-4" />
+                            )}
+                            <span className="ml-2">Delete Dataset</span>
                         </Button>
                     </div>
                 </div>

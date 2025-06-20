@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Sidebar } from '@/components/sidebar'
 import { DocumentList } from '@/components/document-list'
+import { DatasetCreateWizard } from '@/components/dataset-create-wizard'
 import { type Dataset } from '@/lib/api'
 import { authUtil } from '@/lib/auth'
 
@@ -14,22 +15,46 @@ export default function Home() {
   const [query, setQuery] = useState('')
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null)
   const [datasetKey, setDatasetKey] = useState(0)
+
+  const [showCreateWizard, setShowCreateWizard] = useState(false)
+  const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
+
+  // Fix hydration mismatch by using consistent initial state
+  const [sidebarMinimized, setSidebarMinimized] = useState(false) // Always start with false for SSR
+
   const router = useRouter()
+
+  // Set client state after hydration to prevent mismatch
+  useEffect(() => {
+    const saved = localStorage.getItem('sidebarMinimized')
+    if (saved) {
+      setSidebarMinimized(JSON.parse(saved))
+    }
+  }, [])
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    // Implement search functionality here
-    console.log('Searching for:', query)
+    // TODO: Implement global search functionality
   }
 
   const handleCreateDataset = () => {
-    console.log('Create dataset clicked')
+    setShowCreateWizard(true)
+  }
+
+  const handleWizardComplete = (dataset: Dataset) => {
+    setShowCreateWizard(false)
+    setSelectedDataset(dataset)
+    setDatasetKey(prev => prev + 1)
+    // Refresh sidebar to show new dataset
+    setSidebarRefreshTrigger(prev => prev + 1)
+  }
+
+  const handleWizardClose = () => {
+    setShowCreateWizard(false)
   }
 
   const handleDatasetClick = (dataset: Dataset) => {
-    console.log('🎯 Dataset clicked:', dataset.name, dataset.id)
-    setSelectedDataset(dataset)
-    setDatasetKey(prev => prev + 1)
+    router.push(`/datasets/${dataset.id}`)
   }
 
   const handleLogout = async () => {
@@ -44,16 +69,39 @@ export default function Home() {
     }
   }
 
+  const handleToggleSidebar = () => {
+    const newState = !sidebarMinimized
+    setSidebarMinimized(newState)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sidebarMinimized', JSON.stringify(newState))
+    }
+  }
+
+  // Show create wizard
+  if (showCreateWizard) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <DatasetCreateWizard
+          onComplete={handleWizardComplete}
+          onClose={handleWizardClose}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar
         onCreateDataset={handleCreateDataset}
         onDatasetClick={handleDatasetClick}
         onLogout={handleLogout}
+        refreshTrigger={sidebarRefreshTrigger}
+        minimized={sidebarMinimized}
+        onToggleMinimized={handleToggleSidebar}
       />
 
       {/* Main content area - adjusted for sidebar */}
-      <div className="ml-80">
+      <div className={`${sidebarMinimized ? 'ml-16' : 'ml-80'} transition-all duration-300`}>
         {selectedDataset ? (
           <div className="p-6">
             <div className="max-w-6xl mx-auto">
@@ -65,12 +113,14 @@ export default function Home() {
                 >
                   ← Back to Home
                 </button>
-                <h1 className="text-2xl font-bold text-gray-900">
-                  {selectedDataset.name}
-                </h1>
-                {selectedDataset.description && (
-                  <p className="text-gray-600 mt-2">{selectedDataset.description}</p>
-                )}
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">
+                    {selectedDataset.name}
+                  </h1>
+                  {selectedDataset.description && (
+                    <p className="text-gray-600 mt-2">{selectedDataset.description}</p>
+                  )}
+                </div>
               </div>
 
               {/* Document List */}
@@ -78,54 +128,51 @@ export default function Home() {
                 key={`${selectedDataset.id}-${datasetKey}`}
                 datasetId={selectedDataset.id}
                 dataset={selectedDataset}
+                onDatasetDeleted={() => {
+                  setSelectedDataset(null)
+                  setSidebarRefreshTrigger(prev => prev + 1)
+                }}
               />
             </div>
           </div>
         ) : (
-          <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-white">
-            <div className="w-full max-w-2xl mx-auto text-center">
-              {/* Logo or Title */}
-              <h1 className="text-4xl font-bold mb-8 text-gray-900">
-                Knowledge Hub
-              </h1>
+          <div className="p-6">
+            <div className="max-w-6xl mx-auto">
+              {/* Welcome Section */}
+              <div className="text-center py-16">
+                <h1 className="text-4xl font-bold text-gray-900 mb-4">
+                  Welcome to Knowledge Hub
+                </h1>
+                <p className="text-xl text-gray-600 mb-8">
+                  Create datasets and manage your documents with AI-powered embeddings
+                </p>
+                <Button
+                  onClick={handleCreateDataset}
+                  size="lg"
+                  className="px-8 py-3 text-lg"
+                >
+                  Create Your First Dataset
+                </Button>
+              </div>
 
-              {/* Search Form */}
-              <form onSubmit={handleSearch} className="space-y-4">
-                <div className="relative">
-                  <Input
-                    type="text"
-                    placeholder="Search knowledge hub..."
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    className="w-full h-12 pl-12 pr-4 text-lg rounded-full border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
-                  />
-                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
-                </div>
-
-                <div className="flex justify-center gap-4">
-                  <Button
-                    type="submit"
-                    className="px-6 py-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors"
-                  >
-                    Search
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="px-6 py-2 rounded-full hover:bg-gray-100 transition-colors"
-                  >
-                    I&apos;m Feeling Lucky
-                  </Button>
-                </div>
-              </form>
-
-              {/* Additional Info */}
-              <p className="mt-8 text-sm text-gray-500">
-                Search through our knowledge base to find what you need
-              </p>
-
+              {/* Search Section */}
+              <div className="max-w-2xl mx-auto">
+                <form onSubmit={handleSearch} className="flex gap-2">
+                  <div className="flex-1 relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                    <Input
+                      type="search"
+                      placeholder="Search across all datasets..."
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  <Button type="submit">Search</Button>
+                </form>
+              </div>
             </div>
-          </main>
+          </div>
         )}
       </div>
     </div>

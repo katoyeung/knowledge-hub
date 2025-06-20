@@ -74,6 +74,9 @@ export interface Document {
   docForm?: string;
   docLanguage?: string;
   docMetadata?: Record<string, unknown>;
+  // Embedding configuration
+  embeddingModel?: string;
+  embeddingDimensions?: number;
   createdAt?: string;
   updatedAt?: string;
   processingStartedAt?: string;
@@ -82,6 +85,16 @@ export interface Document {
     email: string;
   };
   dataset?: Dataset;
+}
+
+// Embedding API interface
+export interface Embedding {
+  id: string;
+  modelName: string;
+  hash: string;
+  embedding: number[];
+  createdAt: string;
+  providerName: string;
 }
 
 // Document Segment API interface
@@ -109,6 +122,9 @@ export interface DocumentSegment {
   userId: string;
   createdAt: string;
   updatedAt: string;
+  // Embedding relationship
+  embeddingId?: string;
+  embedding?: Embedding;
   document?: Document;
   dataset?: Dataset;
   user?: {
@@ -160,6 +176,122 @@ export const datasetApi = {
   delete: async (id: string): Promise<boolean> => {
     await apiClient.delete(`/datasets/${id}`);
     return true;
+  },
+
+  // Step-by-step dataset creation
+  createStepOne: async (data: {
+    name: string;
+    description?: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    data: Dataset;
+  }> => {
+    const response = await apiClient.post("/datasets/create-step-one", data);
+    return response.data;
+  },
+
+  // Upload documents to existing dataset
+  uploadDocuments: async (
+    datasetId: string,
+    files: File[]
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      dataset: Dataset;
+      documents: Document[];
+      uploadedFiles: Array<{
+        originalName: string;
+        filename: string;
+        size: number;
+        mimetype: string;
+      }>;
+    };
+  }> => {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    const response = await apiClient.post(
+      `/datasets/${datasetId}/upload-documents`,
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      }
+    );
+    return response.data;
+  },
+
+  // Process documents with embedding configuration
+  processDocuments: async (data: {
+    datasetId: string;
+    documentIds: string[];
+    embeddingModel: string;
+    customModelName?: string;
+    embeddingModelProvider?: string;
+    textSplitter: string;
+    chunkSize: number;
+    chunkOverlap: number;
+    separators?: string[];
+  }): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      dataset: Dataset;
+      processedDocuments: Document[];
+    };
+  }> => {
+    const response = await apiClient.post("/datasets/process-documents", data);
+    return response.data;
+  },
+
+  // Complete dataset setup
+  completeSetup: async (
+    datasetId: string,
+    data: {
+      embeddingModel: string;
+      embeddingModelProvider?: string;
+      textSplitter: string;
+      chunkSize: number;
+      chunkOverlap: number;
+      separators?: string[];
+    }
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: Dataset;
+  }> => {
+    const response = await apiClient.post(
+      `/datasets/${datasetId}/complete-setup`,
+      data
+    );
+    return response.data;
+  },
+
+  // Search documents using semantic similarity
+  search: async (data: {
+    documentId: string;
+    query: string;
+    limit?: number;
+    similarityThreshold?: number;
+  }): Promise<{
+    results: Array<{
+      id: string;
+      content: string;
+      similarity: number;
+      segment: DocumentSegment;
+    }>;
+    query: string;
+    count: number;
+    model?: string;
+    message?: string;
+  }> => {
+    const response = await apiClient.post("/datasets/search", data);
+    return response.data;
   },
 };
 
@@ -257,66 +389,52 @@ export const documentApi = {
 
 // Document Segment API functions
 export const documentSegmentApi = {
-  // Get segments by document ID
-  getByDocument: async (documentId: string): Promise<DocumentSegment[]> => {
-    const response = await apiClient.get(
-      `/document-segments/document/${documentId}`
-    );
-    return response.data;
-  },
+  getAll: (): Promise<DocumentSegment[]> =>
+    apiClient.get("/document-segments").then((res) => res.data),
 
-  // Get segments by dataset ID
-  getByDataset: async (datasetId: string): Promise<DocumentSegment[]> => {
-    const response = await apiClient.get(
-      `/document-segments/dataset/${datasetId}`
-    );
-    return response.data;
-  },
+  getById: (id: string): Promise<DocumentSegment> =>
+    apiClient.get(`/document-segments/${id}`).then((res) => res.data),
 
-  // Get all segments with pagination
-  getAll: async (params?: {
-    documentId?: string;
-    datasetId?: string;
-    page?: number;
-    limit?: number;
-  }): Promise<{
-    data: DocumentSegment[];
-    total: number;
-    page: number;
-    limit: number;
-  }> => {
-    const response = await apiClient.get("/document-segments", { params });
-    return response.data;
-  },
+  getByDocument: (documentId: string): Promise<DocumentSegment[]> =>
+    apiClient
+      .get(`/document-segments/document/${documentId}`)
+      .then((res) => res.data),
 
-  // Get segment by ID
-  getById: async (id: string): Promise<DocumentSegment> => {
-    const response = await apiClient.get(`/document-segments/${id}`);
-    return response.data;
-  },
+  getByDataset: (datasetId: string): Promise<DocumentSegment[]> =>
+    apiClient
+      .get(`/document-segments/dataset/${datasetId}`)
+      .then((res) => res.data),
 
-  // Update segment
-  update: async (
+  create: (data: Partial<DocumentSegment>): Promise<DocumentSegment> =>
+    apiClient.post("/document-segments", data).then((res) => res.data),
+
+  update: (
     id: string,
     data: Partial<DocumentSegment>
-  ): Promise<DocumentSegment> => {
-    const response = await apiClient.patch(`/document-segments/${id}`, data);
-    return response.data;
-  },
+  ): Promise<DocumentSegment> =>
+    apiClient.patch(`/document-segments/${id}`, data).then((res) => res.data),
 
-  // Delete segment
-  delete: async (id: string): Promise<boolean> => {
-    await apiClient.delete(`/document-segments/${id}`);
-    return true;
-  },
+  delete: (id: string): Promise<void> =>
+    apiClient.delete(`/document-segments/${id}`).then((res) => res.data),
 
-  // Toggle segment status
-  toggleStatus: async (id: string): Promise<DocumentSegment> => {
-    const response = await apiClient.patch(
-      `/document-segments/${id}/toggle-status`
-    );
-    return response.data;
-  },
+  toggleStatus: (id: string): Promise<DocumentSegment> =>
+    apiClient
+      .patch(`/document-segments/${id}/toggle-status`)
+      .then((res) => res.data),
+
+  // Bulk operations
+  bulkDelete: (segmentIds: string[]): Promise<{ deleted: number }> =>
+    apiClient
+      .post("/document-segments/bulk/delete", { segmentIds })
+      .then((res) => res.data),
+
+  bulkUpdateStatus: (
+    segmentIds: string[],
+    enabled: boolean
+  ): Promise<{ updated: number }> =>
+    apiClient
+      .post("/document-segments/bulk/update-status", { segmentIds, enabled })
+      .then((res) => res.data),
 };
 
 export default apiClient;

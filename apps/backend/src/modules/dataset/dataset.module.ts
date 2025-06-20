@@ -12,6 +12,8 @@ import { DocumentService } from './document.service';
 import { DocumentController } from './document.controller';
 import { DocumentSegmentService } from './document-segment.service';
 import { DocumentSegmentController } from './document-segment.controller';
+import { DocumentProcessingService } from './services/document-processing.service';
+import { EmbeddingService } from './services/embedding.service';
 
 @Module({
   imports: [
@@ -24,12 +26,20 @@ import { DocumentSegmentController } from './document-segment.controller';
     ]),
     EventModule,
   ],
-  providers: [DatasetService, DocumentService, DocumentSegmentService],
+  providers: [
+    DatasetService,
+    DocumentService,
+    DocumentSegmentService,
+    DocumentProcessingService,
+    EmbeddingService,
+  ],
   exports: [
     TypeOrmModule,
     DatasetService,
     DocumentService,
     DocumentSegmentService,
+    DocumentProcessingService,
+    EmbeddingService,
   ],
   controllers: [
     DatasetController,

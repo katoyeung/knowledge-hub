@@ -6,9 +6,11 @@ import {
   Get,
   Param,
   Patch,
+  Body,
+  Post,
 } from '@nestjs/common';
 import { DocumentSegmentService } from './document-segment.service';
-import { Crud, CrudController } from '@dataui/crud';
+import { Crud, CrudController, ParsedRequest, Override } from '@dataui/crud';
 import { DocumentSegment } from './entities/document-segment.entity';
 import { validate } from 'class-validator';
 import { plainToInstance, classToPlain } from 'class-transformer';
@@ -17,6 +19,19 @@ import { CreateDocumentSegmentDto } from './dto/create-document-segment.dto';
 import { UpdateDocumentSegmentDto } from './dto/update-document-segment.dto';
 import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
+import { IsArray, IsString, IsBoolean } from 'class-validator';
+
+// DTO for bulk operations
+class BulkSegmentIdsDto {
+  @IsArray()
+  @IsString({ each: true })
+  segmentIds: string[];
+}
+
+class BulkUpdateStatusDto extends BulkSegmentIdsDto {
+  @IsBoolean()
+  enabled: boolean;
+}
 
 @Crud({
   model: {
@@ -87,5 +102,27 @@ export class DocumentSegmentController
   @Patch(':id/toggle-status')
   async toggleStatus(@Param('id') id: string) {
     return await this.service.toggleStatus(id);
+  }
+
+  @Override('updateOneBase')
+  async updateOne(@ParsedRequest() req: any, @Body() dto: any) {
+    const id = req.parsed.paramsFilter.find(
+      (f: any) => f.field === 'id',
+    )?.value;
+    if (!id) {
+      throw new Error('Segment ID is required');
+    }
+
+    return await this.service.updateSegmentWithEmbedding(id, dto);
+  }
+
+  @Post('bulk/delete')
+  async bulkDelete(@Body() dto: BulkSegmentIdsDto) {
+    return await this.service.bulkDelete(dto.segmentIds);
+  }
+
+  @Post('bulk/update-status')
+  async bulkUpdateStatus(@Body() dto: BulkUpdateStatusDto) {
+    return await this.service.bulkUpdateStatus(dto.segmentIds, dto.enabled);
   }
 }
