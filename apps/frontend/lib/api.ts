@@ -400,6 +400,20 @@ export const documentSegmentApi = {
       .get(`/document-segments/document/${documentId}`)
       .then((res) => res.data),
 
+  getByDocumentPaginated: (
+    documentId: string,
+    params?: { page?: number; limit?: number }
+  ): Promise<{
+    data: DocumentSegment[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> =>
+    apiClient
+      .get(`/document-segments/document/${documentId}`, { params })
+      .then((res) => res.data),
+
   getByDataset: (datasetId: string): Promise<DocumentSegment[]> =>
     apiClient
       .get(`/document-segments/dataset/${datasetId}`)

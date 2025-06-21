@@ -35,6 +35,36 @@ export class DocumentSegmentService extends TypeOrmCrudService<DocumentSegment> 
     });
   }
 
+  async findByDocumentIdPaginated(
+    documentId: string,
+    page: number = 1,
+    limit: number = 20,
+  ): Promise<{
+    data: DocumentSegment[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> {
+    const [data, total] = await this.segmentRepository.findAndCount({
+      where: { documentId },
+      relations: ['document', 'dataset', 'user'],
+      order: { position: 'ASC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    const pageCount = Math.ceil(total / limit);
+
+    return {
+      data,
+      count: data.length,
+      total,
+      page,
+      pageCount,
+    };
+  }
+
   async findByDatasetId(datasetId: string): Promise<DocumentSegment[]> {
     return this.segmentRepository.find({
       where: { datasetId },

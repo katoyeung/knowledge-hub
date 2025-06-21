@@ -77,6 +77,13 @@ export default function DocumentSegmentsList({
     const [error, setError] = useState<string | null>(null);
     const [expandedSegments, setExpandedSegments] = useState<Set<string>>(new Set());
     const [togglingSegments, setTogglingSegments] = useState<Set<string>>(new Set());
+    
+    // Pagination state
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
+    const [totalSegments, setTotalSegments] = useState(0);
+    const [totalPages, setTotalPages] = useState(0);
+    const [paginationLoading, setPaginationLoading] = useState(false);
 
     // Search state - manual trigger search
     const [searchQuery, setSearchQuery] = useState('');
@@ -250,9 +257,9 @@ export default function DocumentSegmentsList({
         return 'N/A';
     };
 
-    const loadSegments = useCallback(async () => {
-        // Prevent duplicate calls for the same document
-        if (fetchInProgressRef.current && currentDocumentIdRef.current === document.id) {
+    const loadSegments = useCallback(async (page: number = 1, limit: number = pageSize, resetPagination: boolean = false) => {
+        // Prevent duplicate calls for the same document and page
+        if (fetchInProgressRef.current && currentDocumentIdRef.current === document.id && !resetPagination) {
             return;
         }
 
@@ -260,25 +267,61 @@ export default function DocumentSegmentsList({
         currentDocumentIdRef.current = document.id;
 
         try {
-            setLoading(true);
+            if (resetPagination) {
+                setLoading(true);
+                setCurrentPage(1);
+            } else {
+                setPaginationLoading(true);
+            }
             setError(null);
 
-            // Just load segments, no need to fetch document details again
-            const segmentsData = await documentSegmentApi.getByDocument(document.id);
+            // Load segments with pagination
+            const response = await documentSegmentApi.getByDocumentPaginated(document.id, {
+                page,
+                limit,
+            });
 
-            setSegments(segmentsData);
+            if (resetPagination || page === 1) {
+                setSegments(response.data);
+            } else {
+                // Append to existing segments for infinite scroll
+                setSegments(prev => [...prev, ...response.data]);
+            }
+            
+            setTotalSegments(response.total);
+            setTotalPages(response.pageCount);
+            setCurrentPage(page);
         } catch (err) {
             console.error("Failed to load document segments:", err);
             setError("Failed to load document segments");
         } finally {
             setLoading(false);
+            setPaginationLoading(false);
             fetchInProgressRef.current = false;
         }
-    }, [document.id]);
+    }, [document.id, pageSize]);
 
     useEffect(() => {
-        loadSegments();
+        loadSegments(1, pageSize, true);
     }, [loadSegments]);
+
+    // Handler for loading more segments
+    const handleLoadMore = useCallback(async () => {
+        if (currentPage < totalPages && !paginationLoading) {
+            await loadSegments(currentPage + 1, pageSize, false);
+        }
+    }, [loadSegments, currentPage, totalPages, paginationLoading, pageSize]);
+
+    // Handler for page size change
+    const handlePageSizeChange = useCallback(async (newPageSize: number) => {
+        setPageSize(newPageSize);
+        await loadSegments(1, newPageSize, true);
+    }, [loadSegments]);
+
+    // Reload segments wrapper for error retry
+    const reloadSegments = useCallback(() => {
+        loadSegments(1, pageSize, true);
+    }, [loadSegments, pageSize]);
 
     const handleToggleStatus = async (segmentId: string, currentEnabled: boolean) => {
         // Add to toggling set to show loading state
@@ -598,7 +641,7 @@ export default function DocumentSegmentsList({
                     </div>
                 </div>
                 <button
-                    onClick={loadSegments}
+                    onClick={reloadSegments}
                     className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 >
                     Try Again
@@ -635,7 +678,12 @@ export default function DocumentSegmentsList({
                         Document Segments
                     </h1>
                     <p className="text-gray-600 mt-1">
-                        {document.name} • {segments.length} segments
+                        {document.name} • {totalSegments > 0 ? `${totalSegments} segments total` : `${segments.length} segments`}
+                        {totalSegments > segments.length && (
+                            <span className="text-sm ml-2">
+                                (showing {segments.length})
+                            </span>
+                        )}
                     </p>
                 </div>
                 <div className="text-sm text-gray-500">
@@ -1014,6 +1062,49 @@ export default function DocumentSegmentsList({
                             </div>
                         );
                     })}
+                </div>
+            )}
+
+            {/* Pagination Controls */}
+            {totalSegments > 0 && segments.length > 0 && (
+                <div className="mt-8 border-t border-gray-200 pt-6">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <div className="text-sm text-gray-600">
+                                Showing {segments.length} of {totalSegments} segments
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm text-gray-600">Page size:</span>
+                                <select
+                                    value={pageSize}
+                                    onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                                    className="border border-gray-300 rounded px-2 py-1 text-sm"
+                                >
+                                    <option value={10}>10</option>
+                                    <option value={20}>20</option>
+                                    <option value={50}>50</option>
+                                    <option value={100}>100</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        {currentPage < totalPages && (
+                            <button
+                                onClick={handleLoadMore}
+                                disabled={paginationLoading}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                {paginationLoading ? (
+                                    <span className="flex items-center gap-2">
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                        Loading...
+                                    </span>
+                                ) : (
+                                    `Load More (Page ${currentPage + 1}/${totalPages})`
+                                )}
+                            </button>
+                        )}
+                    </div>
                 </div>
             )}
 

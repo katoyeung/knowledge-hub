@@ -8,6 +8,7 @@ import {
   Patch,
   Body,
   Post,
+  Query,
 } from '@nestjs/common';
 import { DocumentSegmentService } from './document-segment.service';
 import { Crud, CrudController, ParsedRequest, Override } from '@dataui/crud';
@@ -19,7 +20,23 @@ import { CreateDocumentSegmentDto } from './dto/create-document-segment.dto';
 import { UpdateDocumentSegmentDto } from './dto/update-document-segment.dto';
 import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
-import { IsArray, IsString, IsBoolean } from 'class-validator';
+import { IsArray, IsString, IsBoolean, IsOptional, IsNumber, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
+
+// DTO for pagination
+class PaginationQueryDto {
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value))
+  @IsNumber()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value))
+  @IsNumber()
+  @Min(1)
+  limit?: number = 20;
+}
 
 // DTO for bulk operations
 class BulkSegmentIdsDto {
@@ -90,8 +107,15 @@ export class DocumentSegmentController
   constructor(public readonly service: DocumentSegmentService) {}
 
   @Get('document/:documentId')
-  async findByDocument(@Param('documentId') documentId: string) {
-    return await this.service.findByDocumentId(documentId);
+  async findByDocument(
+    @Param('documentId') documentId: string,
+    @Query() paginationQuery: PaginationQueryDto,
+  ) {
+    return await this.service.findByDocumentIdPaginated(
+      documentId,
+      paginationQuery.page || 1,
+      paginationQuery.limit || 20,
+    );
   }
 
   @Get('dataset/:datasetId')
