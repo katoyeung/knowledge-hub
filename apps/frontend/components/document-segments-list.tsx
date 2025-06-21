@@ -3,8 +3,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { documentSegmentApi, datasetApi, DocumentSegment, Document } from "@/lib/api";
 import { Toggle } from "@/components/ui/toggle";
-import { Edit3, Trash2, Search, AlertCircle, X, ChevronUp, Square, CheckSquare, Eye, EyeOff } from "lucide-react";
+import { Edit3, Trash2, AlertCircle, ChevronUp, Square, CheckSquare, Eye, EyeOff } from "lucide-react";
 import SegmentEditDrawer from "./segment-edit-drawer";
+import SearchInput from "./search-input";
 
 // Simple date formatter
 const formatDate = (dateString?: string) => {
@@ -65,32 +66,7 @@ interface DocumentSegmentsListProps {
     onBack: () => void;
 }
 
-// Custom debounce hook - optimized to prevent focus loss
-const useDebounce = (value: string, delay: number) => {
-    const [debouncedValue, setDebouncedValue] = useState(value);
-    const timeoutRef = useRef<number | undefined>(undefined);
 
-    useEffect(() => {
-        // Clear existing timeout
-        if (timeoutRef.current) {
-            window.clearTimeout(timeoutRef.current);
-        }
-
-        // Set new timeout
-        timeoutRef.current = window.setTimeout(() => {
-            setDebouncedValue(value);
-        }, delay);
-
-        // Cleanup function
-        return () => {
-            if (timeoutRef.current) {
-                window.clearTimeout(timeoutRef.current);
-            }
-        };
-    }, [value, delay]);
-
-    return debouncedValue;
-};
 
 export default function DocumentSegmentsList({
     document,
@@ -102,7 +78,7 @@ export default function DocumentSegmentsList({
     const [expandedSegments, setExpandedSegments] = useState<Set<string>>(new Set());
     const [togglingSegments, setTogglingSegments] = useState<Set<string>>(new Set());
 
-    // Search state - keep search input separate from debounced value
+    // Search state - manual trigger search
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [searchLoading, setSearchLoading] = useState(false);
@@ -114,8 +90,7 @@ export default function DocumentSegmentsList({
         message?: string;
     }>({ count: 0 });
 
-    // Debounce search query with longer delay to reduce API calls and prevent focus loss
-    const debouncedSearchQuery = useDebounce(searchQuery, 1200);
+    // No need for separate input state - handled by SearchInput component
 
     // Edit drawer state
     const [editingSegment, setEditingSegment] = useState<DocumentSegment | null>(null);
@@ -135,8 +110,7 @@ export default function DocumentSegmentsList({
     const fetchInProgressRef = useRef<boolean>(false);
     const currentDocumentIdRef = useRef<string | null>(null);
 
-    // Ref for search input to maintain focus
-    const searchInputRef = useRef<HTMLInputElement>(null);
+
 
     // Back to top button state
     const [showBackToTop, setShowBackToTop] = useState(false);
@@ -528,29 +502,11 @@ export default function DocumentSegmentsList({
         }
     }, [document.id]);
 
-    // Trigger search when debounced query changes - but don't search on empty queries
-    useEffect(() => {
-        if (debouncedSearchQuery.trim()) {
-            performSearch(debouncedSearchQuery);
-        }
-    }, [debouncedSearchQuery, performSearch]);
-
-    // Stable input change handler that preserves focus
-    const handleSearchInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = e.target.value;
-        setSearchQuery(value);
-
-        // If input is cleared, immediately clear results without waiting for debounce
-        if (!value.trim()) {
-            // Use requestAnimationFrame to preserve focus
-            requestAnimationFrame(() => {
-                setSearchResults([]);
-                setShowingSearchResults(false);
-                setSearchError(null);
-                setSearchLoading(false);
-            });
-        }
-    }, []);
+    // Simple search handler for SearchInput component
+    const handleSearch = useCallback(async (query: string) => {
+        setSearchQuery(query);
+        await performSearch(query);
+    }, [performSearch]);
 
     const handleClearSearch = useCallback(() => {
         setSearchQuery('');
@@ -588,24 +544,7 @@ export default function DocumentSegmentsList({
         return showingSearchResults ? searchResults : segments.map(segment => ({ segment, similarity: 0 }));
     }, [showingSearchResults, searchResults, segments]);
 
-    // Focus preservation effect
-    useEffect(() => {
-        // Preserve focus on search input after state changes
-        if (typeof window !== 'undefined' && searchInputRef.current && window.document.activeElement !== searchInputRef.current) {
-            const shouldRefocus = searchQuery.length > 0 && !searchLoading;
-            if (shouldRefocus) {
-                // Use a small delay to ensure DOM has updated
-                setTimeout(() => {
-                    if (searchInputRef.current) {
-                        searchInputRef.current.focus();
-                        // Restore cursor position to end
-                        const length = searchInputRef.current.value.length;
-                        searchInputRef.current.setSelectionRange(length, length);
-                    }
-                }, 10);
-            }
-        }
-    }, [showingSearchResults, searchLoading, searchQuery]);
+
 
     // Disable body scrolling when modals are open
     useEffect(() => {
@@ -751,40 +690,15 @@ export default function DocumentSegmentsList({
 
             {/* Search Section */}
             <div className="mb-6">
-                <div className="mb-4">
-                    <div className="flex gap-2">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                            <input
-                                ref={searchInputRef}
-                                key="search-input-stable"
-                                type="text"
-                                value={searchQuery}
-                                onChange={handleSearchInputChange}
-                                placeholder="Search segments using semantic similarity..."
-                                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                disabled={searchLoading}
-                                autoComplete="off"
-                                spellCheck={false}
-                            />
-                            {searchLoading && (
-                                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                                </div>
-                            )}
-                        </div>
-                        {showingSearchResults && (
-                            <button
-                                type="button"
-                                onClick={handleClearSearch}
-                                className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 flex items-center gap-2"
-                            >
-                                <X className="h-4 w-4" />
-                                Clear
-                            </button>
-                        )}
-                    </div>
-                </div>
+                <SearchInput
+                    onSearch={handleSearch}
+                    onClear={handleClearSearch}
+                    isLoading={searchLoading}
+                    hasResults={showingSearchResults}
+                    placeholder="Search segments using semantic similarity..."
+                    enableInstantSearch={true}
+                    debounceMs={800}
+                />
 
                 {/* Search Info */}
                 {showingSearchResults && (
