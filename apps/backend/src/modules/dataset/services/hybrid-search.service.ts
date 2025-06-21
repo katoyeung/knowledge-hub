@@ -263,7 +263,7 @@ export class HybridSearchService {
   }
 
   /**
-   * Semantic similarity search
+   * Semantic similarity search using PostgreSQL vector indexes
    */
   private async performSemanticSearch(
     documentId: string,
@@ -303,49 +303,152 @@ export class HybridSearchService {
         return [];
       }
 
-      // Filter segments with embeddings
-      const segmentsWithEmbeddings = segments.filter(seg => seg.embedding?.embedding);
-
-      if (segmentsWithEmbeddings.length === 0) {
-        this.logger.warn(`No segments with embeddings found for document ${documentId}`);
-        return [];
-      }
-
-      // Calculate cosine similarity
-      const results: RankedResult[] = [];
-      for (const segment of segmentsWithEmbeddings) {
-        const segmentEmbedding = segment.embedding!.embedding;
-        const similarity = this.calculateCosineSimilarity(queryEmbedding, segmentEmbedding);
-
-        if (similarity > 0.1) { // Minimum similarity threshold
-          results.push({
-            id: segment.id,
-            content: segment.content,
-            position: segment.position,
-            wordCount: segment.wordCount,
-            tokens: segment.tokens,
-            keywords: segment.keywords as Record<string, unknown> || {},
-            enabled: segment.enabled,
-            status: segment.status,
-            createdAt: segment.createdAt.toString(),
-            updatedAt: segment.updatedAt.toString(),
-            completedAt: segment.completedAt?.toString(),
-            error: segment.error,
-            bm25Score: 0,
-            semanticScore: similarity,
-            rerankerScore: 0,
-            finalScore: 0,
-            matchType: 'semantic',
-          });
-        }
-      }
+      // Use PostgreSQL vector search instead of manual cosine similarity
+      const results = await this.performVectorSearch(
+        documentId,
+        queryEmbedding,
+        actualEmbeddingModel,
+        segments.length > 1000 ? 'ivfflat' : 'hnsw' // Use IVFFlat for large datasets, HNSW for smaller
+      );
 
       return results.sort((a, b) => b.semanticScore - a.semanticScore);
 
     } catch (error) {
       this.logger.error(`❌ Semantic search failed:`, error.message);
+      // Fallback to manual cosine similarity if vector search fails
+      return this.performManualSemanticSearch(documentId, query, segments);
+    }
+  }
+
+  /**
+   * Perform vector search using PostgreSQL indexes
+   */
+  private async performVectorSearch(
+    documentId: string,
+    queryEmbedding: number[],
+    modelName: string,
+    indexType: 'ivfflat' | 'hnsw' = 'hnsw'
+  ): Promise<RankedResult[]> {
+    const queryEmbeddingStr = `[${queryEmbedding.join(',')}]`;
+    
+    // PostgreSQL vector similarity search query
+    // Uses the appropriate distance operator based on index type
+    const distanceOperator = indexType === 'ivfflat' ? '<->' : '<->';
+    const orderDirection = 'ASC'; // Lower distance = higher similarity
+    
+    const query = `
+      SELECT 
+        ds.id,
+        ds.content,
+        ds.position,
+        ds.word_count as "wordCount",
+        ds.tokens,
+        ds.keywords,
+        ds.enabled,
+        ds.status,
+        ds.created_at as "createdAt",
+        ds.updated_at as "updatedAt",
+        ds.completed_at as "completedAt",
+        ds.error,
+        (1 - (e.embedding ${distanceOperator} $1)) as similarity
+      FROM document_segments ds
+      JOIN embeddings e ON ds.embedding_id = e.id
+      WHERE ds.document_id = $2 
+        AND e.model_name = $3
+        AND e.embedding IS NOT NULL
+        AND ds.enabled = true
+        AND (1 - (e.embedding ${distanceOperator} $1)) > 0.1
+      ORDER BY e.embedding ${distanceOperator} $1 ${orderDirection}
+      LIMIT 50
+    `;
+
+    const rawResults = await this.segmentRepository.query(query, [
+      queryEmbeddingStr,
+      documentId,
+      modelName
+    ]);
+
+    // Convert to RankedResult format
+    const results: RankedResult[] = rawResults.map((row: any) => ({
+      id: row.id,
+      content: row.content,
+      position: row.position,
+      wordCount: row.wordCount,
+      tokens: row.tokens,
+      keywords: row.keywords || {},
+      enabled: row.enabled,
+      status: row.status,
+      createdAt: row.createdAt.toString(),
+      updatedAt: row.updatedAt.toString(),
+      completedAt: row.completedAt?.toString(),
+      error: row.error,
+      bm25Score: 0,
+      semanticScore: row.similarity,
+      rerankerScore: 0,
+      finalScore: 0,
+      matchType: 'semantic',
+    }));
+
+    this.logger.log(`🚀 Vector search (${indexType}) found ${results.length} results`);
+    return results;
+  }
+
+  /**
+   * Fallback manual semantic search (original implementation)
+   */
+  private async performManualSemanticSearch(
+    documentId: string,
+    query: string,
+    segments: DocumentSegment[],
+  ): Promise<RankedResult[]> {
+    this.logger.log(`📦 Using manual cosine similarity as fallback`);
+    
+    // Filter segments with embeddings
+    const segmentsWithEmbeddings = segments.filter(seg => seg.embedding?.embedding);
+
+    if (segmentsWithEmbeddings.length === 0) {
+      this.logger.warn(`No segments with embeddings found for document ${documentId}`);
       return [];
     }
+
+    // Generate query embedding
+    const actualEmbeddingModel = await this.documentSegmentService.getEmbeddingModelForDocument(documentId);
+    const queryEmbeddingResult = await this.embeddingService.generateEmbedding(
+      query,
+      actualEmbeddingModel as any
+    );
+    const queryEmbedding = queryEmbeddingResult.embedding;
+
+    // Calculate cosine similarity manually
+    const results: RankedResult[] = [];
+    for (const segment of segmentsWithEmbeddings) {
+      const segmentEmbedding = segment.embedding!.embedding;
+      const similarity = this.calculateCosineSimilarity(queryEmbedding, segmentEmbedding);
+
+      if (similarity > 0.1) {
+        results.push({
+          id: segment.id,
+          content: segment.content,
+          position: segment.position,
+          wordCount: segment.wordCount,
+          tokens: segment.tokens,
+          keywords: segment.keywords as Record<string, unknown> || {},
+          enabled: segment.enabled,
+          status: segment.status,
+          createdAt: segment.createdAt.toString(),
+          updatedAt: segment.updatedAt.toString(),
+          completedAt: segment.completedAt?.toString(),
+          error: segment.error,
+          bm25Score: 0,
+          semanticScore: similarity,
+          rerankerScore: 0,
+          finalScore: 0,
+          matchType: 'semantic',
+        });
+      }
+    }
+
+    return results;
   }
 
   /**

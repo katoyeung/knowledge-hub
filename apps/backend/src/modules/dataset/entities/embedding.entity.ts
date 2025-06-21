@@ -4,9 +4,14 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity({ name: 'embeddings' })
+@Index('idx_embeddings_model_name', ['modelName'])
+@Index('idx_embeddings_model_embedding_exists', ['modelName'], { 
+  where: 'embedding IS NOT NULL' 
+})
 export class Embedding {
   @PrimaryGeneratedColumn('uuid')
   id: string;
