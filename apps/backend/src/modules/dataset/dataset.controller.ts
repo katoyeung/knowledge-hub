@@ -183,7 +183,7 @@ export class DatasetController implements CrudController<Dataset> {
         }
       },
       limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit per file
+        fileSize: parseInt(process.env.MAX_FILE_SIZE || '100') * 1024 * 1024,
       },
     }),
   )

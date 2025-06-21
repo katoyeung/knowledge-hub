@@ -1,16 +1,13 @@
 import { DataSource } from 'typeorm';
 import { SeedRunner } from './run-seed';
 import dataSourceConfig from '../../config/typeorm.config';
-import { User } from '@modules/user/user.entity';
-import { Role } from '@modules/access/entities/role.entity';
-import { Permission } from '@modules/access/entities/permission.entity';
 import { ConfigService } from '@nestjs/config';
 import { createKeyv } from '@keyv/redis';
 
 async function runSeed() {
   const dataSource = new DataSource({
     ...dataSourceConfig.options,
-    entities: [User, Role, Permission],
+    entities: ['src/**/*.entity.ts'],
     synchronize: true,
   });
 

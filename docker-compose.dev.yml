@@ -1,0 +1,83 @@
+services:
+  # Backend service (NestJS)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: knowledge-hub-backend
+    ports:
+      - "3001:3001"  # Backend API on port 3001
+      - "9229:9229"  # Node.js debug port
+    volumes:
+      - .:/workspace
+      - node_modules_cache:/workspace/node_modules
+      - apps_backend_node_modules:/workspace/apps/backend/node_modules
+    working_dir: /workspace
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+    networks:
+      - local-network
+    stdin_open: true
+    tty: true
+    user: "1001:1001"
+    command: sh -c "npm install && npm run dev:backend"
+
+  # Frontend service (Next.js)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: knowledge-hub-frontend
+    ports:
+      - "3000:3000"  # Frontend on port 3000
+      - "9230:9229"  # Node.js debug port for frontend
+    volumes:
+      - .:/workspace
+      - node_modules_cache:/workspace/node_modules
+      - apps_frontend_node_modules:/workspace/apps/frontend/node_modules
+    working_dir: /workspace
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+    networks:
+      - local-network
+    stdin_open: true
+    tty: true
+    user: "1001:1001"
+    command: sh -c "npm install && npm run dev:frontend"
+
+  # CMS service (Refine.js)
+  cms:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: knowledge-hub-cms
+    ports:
+      - "3002:3002"  # CMS on port 3002
+      - "9231:9229"  # Node.js debug port for CMS
+    volumes:
+      - .:/workspace
+      - node_modules_cache:/workspace/node_modules
+      - apps_cms_node_modules:/workspace/apps/cms/node_modules
+    working_dir: /workspace
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+    networks:
+      - local-network
+    stdin_open: true
+    tty: true
+    user: "1001:1001"
+    command: sh -c "npm install && npm run dev:cms"
+
+volumes:
+  node_modules_cache:
+  apps_backend_node_modules:
+  apps_frontend_node_modules:
+  apps_cms_node_modules:
+
+networks:
+  local-network:
+    external: true
+    name: dockers-env_local-network

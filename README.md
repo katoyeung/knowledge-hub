@@ -348,6 +348,123 @@ npm install
 3. Update documentation as needed
 4. Use conventional commit messages
 
+## Docker Development
+
+### Quick Start with Docker Compose
+
+Start all services at once:
+
+```bash
+# Start all services (backend, frontend, CMS)
+docker-compose -f docker-compose.dev.yml up
+
+# Start all services in background
+docker-compose -f docker-compose.dev.yml up -d
+
+# Stop all services
+docker-compose -f docker-compose.dev.yml down
+```
+
+### Individual Service Management
+
+#### Backend Service
+
+```bash
+# Start backend only
+docker-compose -f docker-compose.dev.yml up backend
+
+# Start backend in background
+docker-compose -f docker-compose.dev.yml up backend -d
+
+# Seed the database (run after backend is started)
+docker exec -it knowledge-hub-backend sh -c "cd /workspace/apps/backend && npm run seed"
+
+# View backend logs
+docker logs knowledge-hub-backend --tail=50 -f
+```
+
+#### Frontend Service
+
+```bash
+# Start frontend only
+docker-compose -f docker-compose.dev.yml up frontend
+
+# Start frontend in background
+docker-compose -f docker-compose.dev.yml up frontend -d
+
+# View frontend logs
+docker logs knowledge-hub-frontend --tail=50 -f
+```
+
+#### CMS Service
+
+```bash
+# Start CMS only
+docker-compose -f docker-compose.dev.yml up cms
+
+# Start CMS in background
+docker-compose -f docker-compose.dev.yml up cms -d
+
+# View CMS logs
+docker logs knowledge-hub-cms --tail=50 -f
+```
+
+### Docker Service Management
+
+```bash
+# View status of all services
+docker-compose -f docker-compose.dev.yml ps
+
+# Restart a specific service
+docker-compose -f docker-compose.dev.yml restart backend
+
+# Rebuild and start a service
+docker-compose -f docker-compose.dev.yml up --build backend
+
+# Execute commands inside containers
+docker exec -it knowledge-hub-backend bash
+docker exec -it knowledge-hub-frontend sh
+docker exec -it knowledge-hub-cms sh
+
+# View logs for all services
+docker-compose -f docker-compose.dev.yml logs -f
+
+# Clean up containers and volumes
+docker-compose -f docker-compose.dev.yml down -v
+```
+
+### Docker Development Workflow
+
+1. **First time setup**:
+   ```bash
+   # Build and start all services
+   docker-compose -f docker-compose.dev.yml up --build
+   
+   # In another terminal, seed the database
+   docker exec -it knowledge-hub-backend sh -c "cd /workspace/apps/backend && npm run seed"
+   ```
+
+2. **Daily development**:
+   ```bash
+   # Start services
+   docker-compose -f docker-compose.dev.yml up -d
+   
+   # Check logs when needed
+   docker-compose -f docker-compose.dev.yml logs -f [service-name]
+   
+   # Stop when done
+   docker-compose -f docker-compose.dev.yml down
+   ```
+
+3. **Rebuilding after changes**:
+   ```bash
+   # Rebuild specific service
+   docker-compose -f docker-compose.dev.yml up --build [service-name]
+   
+   # Or rebuild all services
+   docker-compose -f docker-compose.dev.yml build
+   ```
+
 ## License
 
 [Your License Here]

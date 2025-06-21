@@ -134,7 +134,7 @@ export class DocumentController implements CrudController<Document> {
         }
       },
       limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit per file
+        fileSize: parseInt(process.env.MAX_FILE_SIZE || '100') * 1024 * 1024,
       },
     }),
   )
