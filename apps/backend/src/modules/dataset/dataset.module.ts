@@ -14,6 +14,7 @@ import { DocumentSegmentService } from './document-segment.service';
 import { DocumentSegmentController } from './document-segment.controller';
 import { DocumentProcessingService } from './services/document-processing.service';
 import { EmbeddingService } from './services/embedding.service';
+import { HybridSearchService } from './services/hybrid-search.service';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { EmbeddingService } from './services/embedding.service';
     DocumentSegmentService,
     DocumentProcessingService,
     EmbeddingService,
+    HybridSearchService,
   ],
   exports: [
     TypeOrmModule,
@@ -40,6 +42,7 @@ import { EmbeddingService } from './services/embedding.service';
     DocumentSegmentService,
     DocumentProcessingService,
     EmbeddingService,
+    HybridSearchService,
   ],
   controllers: [
     DatasetController,

@@ -272,25 +272,34 @@ export const datasetApi = {
     return response.data;
   },
 
-  // Search documents using semantic similarity
+  // Search documents using hybrid search (BM25 + Semantic + Reranker)
   search: async (data: {
     documentId: string;
     query: string;
     limit?: number;
     similarityThreshold?: number;
+    rerankerType?: 'mathematical' | 'ml-cross-encoder';
   }): Promise<{
     results: Array<{
       id: string;
       content: string;
       similarity: number;
       segment: DocumentSegment;
+      matchType: string;
+      scores: {
+        bm25: number;
+        semantic: number;
+        reranker: number;
+        final: number;
+      };
     }>;
     query: string;
     count: number;
     model?: string;
+    rerankerType?: 'mathematical' | 'ml-cross-encoder';
     message?: string;
   }> => {
-    const response = await apiClient.post("/datasets/search", data);
+    const response = await apiClient.post("/datasets/search-documents", data);
     return response.data;
   },
 };

@@ -35,6 +35,11 @@ export enum TextSplitter {
   PYTHON_CODE = 'python_code',
 }
 
+export enum RerankerType {
+  MATHEMATICAL = 'mathematical',
+  ML_CROSS_ENCODER = 'ml-cross-encoder',
+}
+
 export class CreateDatasetStepOneDto {
   @IsString()
   @MinLength(1, { message: 'Dataset name cannot be empty' })
@@ -142,4 +147,8 @@ export class SearchDocumentsDto {
   @Min(0, { message: 'Similarity threshold must be at least 0' })
   @Max(1, { message: 'Similarity threshold must not exceed 1' })
   similarityThreshold?: number;
+
+  @IsOptional()
+  @IsEnum(RerankerType, { message: 'Invalid reranker type' })
+  rerankerType?: RerankerType;
 }

@@ -30,7 +30,7 @@ export class DocumentSegmentService extends TypeOrmCrudService<DocumentSegment> 
   async findByDocumentId(documentId: string): Promise<DocumentSegment[]> {
     return this.segmentRepository.find({
       where: { documentId },
-      relations: ['document', 'dataset', 'user'],
+      // No relations needed - document, dataset, and user info are redundant
       order: { position: 'ASC' },
     });
   }
@@ -48,7 +48,7 @@ export class DocumentSegmentService extends TypeOrmCrudService<DocumentSegment> 
   }> {
     const [data, total] = await this.segmentRepository.findAndCount({
       where: { documentId },
-      relations: ['document', 'dataset', 'user'],
+      // No relations needed - document, dataset, and user info are redundant
       order: { position: 'ASC' },
       skip: (page - 1) * limit,
       take: limit,

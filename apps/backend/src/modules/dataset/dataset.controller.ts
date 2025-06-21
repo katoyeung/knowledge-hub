@@ -34,6 +34,7 @@ import {
   ProcessDocumentsDto,
   SearchDocumentsDto,
   EmbeddingModel,
+  RerankerType,
 } from './dto/create-dataset-step.dto';
 import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
@@ -41,6 +42,7 @@ import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { DocumentSegmentService } from './document-segment.service';
+import { HybridSearchService, HybridSearchResponse } from './services/hybrid-search.service';
 import { DocumentService } from './document.service';
 import { EmbeddingService } from './services/embedding.service';
 import { Logger } from '@nestjs/common';
@@ -110,6 +112,7 @@ export class DatasetController implements CrudController<Dataset> {
     private readonly documentService: DocumentService,
     private readonly documentSegmentService: DocumentSegmentService,
     private readonly embeddingService: EmbeddingService,
+    private readonly hybridSearchService: HybridSearchService,
   ) {}
 
   @Override('deleteOneBase')
@@ -270,18 +273,19 @@ export class DatasetController implements CrudController<Dataset> {
     };
   }
 
-  @Post('search')
-  async searchDocuments(@Body() searchDto: SearchDocumentsDto) {
+  @Post('search-documents')
+  async searchDocuments(@Body() searchDto: SearchDocumentsDto): Promise<HybridSearchResponse> {
     try {
       const {
         documentId,
         query,
         limit = 10,
         similarityThreshold = 0.7,
+        rerankerType = 'ml-cross-encoder',
       } = searchDto;
 
       this.logger.log(
-        `🔍 Searching document ${documentId} for: "${query}" (limit: ${limit}, threshold: ${similarityThreshold})`,
+        `🔍 Starting hybrid search for document ${documentId} with query: "${query}" (limit: ${limit})`,
       );
 
       // First, get the document to check if it exists
@@ -291,7 +295,7 @@ export class DatasetController implements CrudController<Dataset> {
         throw new NotFoundException('Document not found');
       }
 
-      // Check if document has segments with embeddings
+      // Check if document has segments
       const segmentsCount =
         await this.documentSegmentService.countSegmentsWithEmbeddings(
           documentId,
@@ -303,128 +307,29 @@ export class DatasetController implements CrudController<Dataset> {
           query,
           count: 0,
           message:
-            'No embeddings found for this document. Please process the document first.',
+            'No segments found for this document. Please process the document first.',
         };
       }
 
       this.logger.log(
-        `📊 Document has ${segmentsCount} segments with embeddings`,
+        `📊 Document has ${segmentsCount} segments available for search`,
       );
 
-      // Get the actual embedding model from the stored embeddings
-      // This is more reliable than using document.embeddingModel which might be outdated
-      const actualEmbeddingModel =
-        await this.documentSegmentService.getEmbeddingModelForDocument(
-          documentId,
-        );
-
-      if (!actualEmbeddingModel) {
-        return {
-          results: [],
-          query,
-          count: 0,
-          message: 'Could not determine embedding model for this document.',
-        };
-      }
-
-      this.logger.log(
-        `🤖 Using actual embedding model from stored embeddings: ${actualEmbeddingModel}`,
-      );
-
-      // Check embedding dimensions consistency
-      const dimensionInfo =
-        await this.documentSegmentService.getEmbeddingDimensionsForDocument(
-          documentId,
-        );
-
-      if (!dimensionInfo.hasConsistentDimensions) {
-        this.logger.warn(
-          `⚠️ Inconsistent embedding dimensions detected for document ${documentId}:`,
-          dimensionInfo.dimensionCounts,
-        );
-        return {
-          results: [],
-          query,
-          count: 0,
-          message: `Inconsistent embedding dimensions detected. Found: ${Object.keys(dimensionInfo.dimensionCounts).join(', ')} dimensions. Please re-process this document.`,
-        };
-      }
-
-      // Generate query embedding using the same model as the stored embeddings
-      const queryEmbeddingResult =
-        await this.embeddingService.generateEmbedding(
-          query,
-          actualEmbeddingModel as EmbeddingModel,
-        );
-
-      this.logger.log(
-        `🧮 Generated query embedding: ${queryEmbeddingResult.dimensions} dimensions (stored: ${dimensionInfo.dimensions})`,
-      );
-
-      // Double-check dimension compatibility
-      if (
-        dimensionInfo.dimensions &&
-        queryEmbeddingResult.dimensions !== dimensionInfo.dimensions
-      ) {
-        this.logger.error(
-          `❌ Dimension mismatch: Query embedding has ${queryEmbeddingResult.dimensions} dimensions, but stored embeddings have ${dimensionInfo.dimensions} dimensions`,
-        );
-        return {
-          results: [],
-          query,
-          count: 0,
-          message: `Dimension mismatch: Query embedding (${queryEmbeddingResult.dimensions}D) doesn't match stored embeddings (${dimensionInfo.dimensions}D). This may happen if the model changed. Please re-process the document.`,
-        };
-      }
-
-      this.logger.log(`🗃️ Executing PostgreSQL vector similarity search...`);
-
-      // Use PostgreSQL vector similarity search
-      const results = await this.documentSegmentService.searchSimilarSegments(
+      // Use hybrid search (BM25 + Semantic + Reranker)
+      const hybridResults = await this.hybridSearchService.hybridSearch(
         documentId,
-        queryEmbeddingResult.embedding,
-        limit,
-      );
-
-      this.logger.log(`✅ Found ${results.length} similar segments`);
-
-      // The service already returns the correct format, just need to add document info
-      const enrichedResults = await Promise.all(
-        results.map(async (result: any) => {
-          // Get document info for this segment
-          const segment = await this.documentSegmentService.findOne({
-            where: { id: result.id },
-            relations: ['document', 'embedding'],
-          });
-
-          return {
-            id: result.id,
-            content: result.content,
-            similarity: result.similarity,
-            segment: {
-              ...result.segment,
-              embedding: {
-                id: segment?.embedding?.id,
-                modelName: segment?.embedding?.modelName,
-              },
-              document: {
-                id: segment?.document?.id,
-                name: segment?.document?.name,
-              },
-            },
-          };
-        }),
-      );
-
-      return {
-        results: enrichedResults,
         query,
-        count: enrichedResults.length,
-        model: actualEmbeddingModel,
-        searchMethod: 'postgresql_vector',
-      };
+        limit,
+        0.4, // semantic weight (reduced from 0.6)
+        0.6, // keyword weight (increased from 0.4)
+        rerankerType as 'mathematical' | 'ml-cross-encoder', // Use the selected reranker type
+      );
+
+      this.logger.log(`✅ Hybrid search found ${hybridResults.count} results`);
+
+      return hybridResults;
     } catch (error) {
-      this.logger.error('🚨 Search error:', error);
+      this.logger.error('🚨 Hybrid search error:', error);
       throw new BadRequestException(`Search failed: ${error.message}`);
     }
   }
