@@ -1,135 +1,63 @@
 # Knowledge Hub Backend
 
-A robust backend service for the Knowledge Hub platform, built with NestJS and TypeScript.
+🎯 **Robust backend service for the Knowledge Hub platform**
 
-## Features
+## 📖 Documentation
 
-- User authentication and authorization
-- Role-based access control
-- File storage and management
-- Event-driven architecture
-- Caching system
-- Queue management
-- Scheduled tasks
-- API documentation
+📚 **All documentation has been moved to the root [`docs/`](../../docs/) directory.**
 
-## Tech Stack
+### Quick Links
 
-- NestJS
-- TypeScript
-- PostgreSQL
-- TypeORM
-- Redis (for caching)
-- Bull (for queues)
-- JWT (for authentication)
+- **[📋 Complete Documentation Index](../../docs/README.md)** - Start here
+- **[🚀 Backend Setup Guide](../../docs/development/backend-setup.md)** - Installation & development
+- **[📡 API Reference](../../docs/api/document-parser-api.md)** - API documentation
+- **[🔧 Module Documentation](../../docs/modules/)** - Module-specific guides
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js (v18 or later)
-- PostgreSQL
-- Redis
-- Docker (optional)
-
-### Installation
-
-1. Clone the repository:
+## 🏃‍♂️ Quick Start
 
 ```bash
-git clone https://github.com/your-org/knowledge-hub-backend.git
-cd knowledge-hub-backend
-```
-
-2. Install dependencies:
-
-```bash
+# Install dependencies
 npm install
-```
 
-3. Set up environment variables:
-
-```bash
-cp .env.example .env
-```
-
-4. Start the development server:
-
-```bash
+# Start development server
 npm run start:dev
+
+# Run tests
+npm test
+
+# API documentation
+open http://localhost:3000/api
 ```
 
-### Docker Setup
-
-```bash
-docker-compose up -d
-```
-
-## API Documentation
-
-Once the server is running, you can access the API documentation at:
-
-- Swagger UI: http://localhost:3000/api
-- OpenAPI JSON: http://localhost:3000/api-json
-
-## Development
-
-### Database Migrations
-
-```bash
-# Generate a migration
-npm run typeorm migration:generate
-
-# Run migrations
-npm run typeorm migration:run
-
-# Revert last migration
-npm run typeorm migration:revert
-```
-
-### Testing
-
-```bash
-# Unit tests
-npm run test
-
-# e2e tests
-npm run test:e2e
-
-# Test coverage
-npm run test:cov
-```
-
-## Project Structure
+## 🏗️ Project Structure
 
 ```
-src/
-├── common/           # Common utilities and shared code
-├── config/           # Configuration files
-├── database/         # Database migrations and seeds
-├── modules/          # Feature modules
-│   ├── auth/        # Authentication
-│   ├── user/        # User management
-│   ├── access/      # Access control
-│   ├── storage/     # File storage
-│   ├── event/       # Event handling
-│   ├── queue/       # Queue management
-│   └── scheduler/   # Scheduled tasks
-└── main.ts          # Application entry point
+apps/backend/
+├── src/modules/          # Feature modules
+│   ├── document-parser/  # PDF parsing (RAGFlow)
+│   ├── dataset/          # Dataset management
+│   ├── auth/            # Authentication
+│   └── ...
+├── docs/ -> ../../docs/ # 📚 Documentation (moved to root)
+└── README.md            # This file
 ```
 
-## Contributing
+## 🎯 Key Features
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- **🤖 RAGFlow PDF Parser** - Advanced document understanding
+- **🔐 Authentication & Authorization** - JWT + role-based access
+- **📊 Dataset Management** - Document processing pipeline
+- **⚡ Event-Driven Architecture** - Scalable processing
+- **🚀 REST API** - Comprehensive endpoints
 
-## License
+## 📋 Status
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+| Component          | Status              | Documentation   | Tests            |
+| ------------------ | ------------------- | --------------- | ---------------- |
+| Document Parser    | ✅ Production Ready | ✅ Complete     | ✅ 24/24 passing |
+| Authentication     | ✅ Active           | ⚠️ Needs update | ❓ Unknown       |
+| Dataset Management | ✅ Active           | ✅ Available    | ⚠️ Needs review  |
 
-```
+---
 
-```
+**📚 For detailed information, see the [documentation index](../../docs/README.md)**
