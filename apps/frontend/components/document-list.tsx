@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { documentApi, datasetApi, type Document, type Dataset } from '@/lib/api'
 import { DocumentUploadWizard } from './document-upload-wizard'
+import { useToast } from './ui/simple-toast'
 
 interface DocumentListProps {
     datasetId: string
@@ -28,6 +29,7 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
     const [showUpload, setShowUpload] = useState(false)
     const [deletingId, setDeletingId] = useState<string | null>(null)
     const [deletingDataset, setDeletingDataset] = useState(false)
+    const toast = useToast()
 
     // Ref to track if fetch is in progress to prevent duplicate calls
     const fetchInProgressRef = useRef(false)
@@ -84,18 +86,24 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
 
     // Handle document deletion
     const handleDelete = async (documentId: string) => {
-        if (!window.confirm('Are you sure you want to delete this document?')) {
-            return
-        }
+        const confirmed = await toast.confirm({
+            title: 'Delete Document',
+            description: 'Are you sure you want to delete this document? This action cannot be undone.',
+            confirmText: 'Delete Document',
+            cancelText: 'Cancel'
+        })
+
+        if (!confirmed) return
 
         setDeletingId(documentId)
         try {
             await documentApi.delete(documentId)
             setDocuments(prev => prev.filter(doc => doc.id !== documentId))
             onDocumentsChange?.(documents.filter(doc => doc.id !== documentId))
+            toast.success('Document deleted', 'The document has been successfully deleted.')
         } catch (err) {
             console.error('Failed to delete document:', err)
-            alert('Failed to delete document')
+            toast.error('Failed to delete document', 'Please try again or contact support if the issue persists.')
         } finally {
             setDeletingId(null)
         }
@@ -117,9 +125,12 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
         if (!dataset) return
 
         // Show confirmation dialog
-        const confirmed = window.confirm(
-            `Are you sure you want to delete the dataset "${dataset.name}"?\n\nThis action cannot be undone and will permanently delete all documents and data associated with this dataset.`
-        )
+        const confirmed = await toast.confirm({
+            title: 'Delete Dataset',
+            description: `Are you sure you want to delete the dataset "${dataset.name}"? This action cannot be undone and will permanently delete all documents and data associated with this dataset.`,
+            confirmText: 'Delete Dataset',
+            cancelText: 'Cancel'
+        })
 
         if (!confirmed) return
 
@@ -131,10 +142,10 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
             onDatasetDeleted?.()
 
             // Show success message
-            alert('Dataset deleted successfully')
+            toast.success('Dataset deleted successfully', `The dataset "${dataset.name}" and all its documents have been permanently deleted.`)
         } catch (error) {
             console.error('Failed to delete dataset:', error)
-            alert('Failed to delete dataset. Please try again.')
+            toast.error('Failed to delete dataset', 'Please try again or contact support if the issue persists.')
         } finally {
             setDeletingDataset(false)
         }
