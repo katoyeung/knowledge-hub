@@ -26,7 +26,14 @@
     "typeorm:migration:run": "npm run typeorm -- migration:run -d src/config/data-source.ts",
     "typeorm:migration:revert": "npm run typeorm -- migration:revert -d src/config/data-source.ts",
     "typeorm:schema:sync": "npm run typeorm -- schema:sync -d src/config/data-source.ts",
-    "typeorm:schema:drop": "npm run typeorm -- schema:drop -d src/config/data-source.ts"
+    "typeorm:schema:drop": "npm run typeorm -- schema:drop -d src/config/data-source.ts",
+    "test:recall": "ts-node src/modules/document-parser/tests/recall-test-runner.ts",
+    "test:recall-benchmark": "jest src/modules/document-parser/tests/recall-benchmark.test.ts --verbose",
+    "test:recall-wikipedia": "ts-node src/modules/document-parser/tests/wikipedia-recall-test.ts",
+    "test:recall-stackoverflow": "ts-node src/modules/document-parser/tests/stackoverflow-recall-test.ts",
+    "test:recall-arxiv": "ts-node src/modules/document-parser/tests/arxiv-recall-test.ts",
+    "datasets:download": "bash datasets/download-test-data.sh",
+    "test:recall-realistic": "ts-node src/modules/document-parser/tests/realistic-recall-test.ts"
   },
   "dependencies": {
     "@casl/ability": "^6.7.3",

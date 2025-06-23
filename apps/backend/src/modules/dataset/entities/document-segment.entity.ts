@@ -1,4 +1,4 @@
-import { Entity, Column, ManyToOne, RelationId } from 'typeorm';
+import { Entity, Column, ManyToOne, OneToMany, RelationId } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { User } from '../../user/user.entity';
 import { Dataset } from './dataset.entity';
@@ -76,6 +76,26 @@ export class DocumentSegment extends BaseEntity {
   @RelationId((segment: DocumentSegment) => segment.user)
   userId: string;
 
+  // 🆕 Parent-Child Chunking Support
+  @Column('uuid', { nullable: true })
+  @RelationId((segment: DocumentSegment) => segment.parent)
+  parentId: string;
+
+  @Column({ length: 50, default: 'chunk' })
+  segmentType: string; // 'parent', 'child', 'chunk' (for backward compatibility)
+
+  @Column('integer', { default: 1 })
+  hierarchyLevel: number; // 1 = parent (paragraph), 2 = child (sentence), etc.
+
+  @Column('integer', { nullable: true })
+  childOrder: number; // Order within parent segment
+
+  @Column('integer', { default: 0 })
+  childCount: number; // Number of child segments (for parent segments)
+
+  @Column('json', { nullable: true })
+  hierarchyMetadata: object; // Additional hierarchy information
+
   // Relationships
   @ManyToOne(() => Dataset, (dataset) => dataset.segments)
   dataset: Dataset;
@@ -88,4 +108,15 @@ export class DocumentSegment extends BaseEntity {
 
   @ManyToOne(() => Embedding, { nullable: true })
   embedding: Embedding;
+
+  // 🆕 Parent-Child Relationships
+  @ManyToOne(() => DocumentSegment, (segment) => segment.children, {
+    nullable: true,
+  })
+  parent: DocumentSegment;
+
+  @OneToMany(() => DocumentSegment, (segment) => segment.parent, {
+    cascade: true,
+  })
+  children: DocumentSegment[];
 }

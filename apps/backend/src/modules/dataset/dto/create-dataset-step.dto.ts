@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsArray,
   IsUUID,
+  IsBoolean,
   Min,
   Max,
   MinLength,
@@ -125,6 +126,11 @@ export class ProcessDocumentsDto {
   @IsArray()
   @IsString({ each: true })
   separators?: string[];
+
+  // 🆕 Parent-Child Chunking Option
+  @IsOptional()
+  @IsBoolean()
+  enableParentChildChunking?: boolean;
 }
 
 export class SearchDocumentsDto {

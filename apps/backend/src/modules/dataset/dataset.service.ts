@@ -327,6 +327,8 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
           chunkSize: processDto.chunkSize,
           chunkOverlap: processDto.chunkOverlap,
           separators: processDto.separators,
+          // 🆕 Pass parent-child chunking option
+          enableParentChildChunking: processDto.enableParentChildChunking,
         },
         userId: _userId,
       });

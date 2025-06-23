@@ -12,9 +12,13 @@ import { Embedding } from '../entities/embedding.entity';
 import { EventTypes } from '../../event/constants/event-types';
 import { DocumentUploadedEvent } from '../../event/interfaces/document-events.interface';
 import { EmbeddingService } from './embedding.service';
-import { EmbeddingModel } from '../dto/create-dataset-step.dto';
+import { EmbeddingModel, TextSplitter } from '../dto/create-dataset-step.dto';
 import * as crypto from 'crypto';
 import * as natural from 'natural';
+import {
+  RagflowPdfParserService,
+  EmbeddingOptimizedConfig,
+} from '../../document-parser/services/ragflow-pdf-parser.service';
 
 interface EmbeddingConfig {
   model: string;
@@ -24,6 +28,7 @@ interface EmbeddingConfig {
   chunkSize: number;
   chunkOverlap: number;
   separators?: string[];
+  enableParentChildChunking?: boolean;
 }
 
 @Injectable()
@@ -40,6 +45,7 @@ export class DocumentProcessingService {
     @InjectRepository(Embedding)
     private readonly embeddingRepository: Repository<Embedding>,
     private readonly embeddingService: EmbeddingService,
+    private readonly ragflowPdfParserService: RagflowPdfParserService,
   ) {}
 
   @OnEvent('document.processing')
@@ -120,11 +126,36 @@ export class DocumentProcessingService {
       indexingStatus: 'splitting',
     });
 
-    // Split text into chunks using the provided embedding configuration
-    const chunks = this.splitText(content, embeddingConfig);
-    this.logger.log(
-      `Document ${documentId} split into ${chunks.length} chunks using ${embeddingConfig.textSplitter} splitter (size: ${embeddingConfig.chunkSize}, overlap: ${embeddingConfig.chunkOverlap})`,
-    );
+    // 🆕 Choose chunking strategy based on configuration
+    let segments: DocumentSegment[] = [];
+
+    if (
+      embeddingConfig.enableParentChildChunking &&
+      document.docType === 'pdf'
+    ) {
+      // Use advanced Parent-Child Chunking for PDFs
+      this.logger.log(
+        `🔗 Using Parent-Child Chunking for document ${documentId}`,
+      );
+      segments = await this.processWithParentChildChunking(
+        document,
+        datasetId,
+        embeddingConfig,
+        userId,
+      );
+    } else {
+      // Use traditional chunking
+      this.logger.log(
+        `📄 Using traditional chunking for document ${documentId}`,
+      );
+      segments = await this.processWithTraditionalChunking(
+        document,
+        datasetId,
+        content,
+        embeddingConfig,
+        userId,
+      );
+    }
 
     // Update document with embedding configuration
     await this.documentRepository.update(documentId, {
@@ -132,40 +163,6 @@ export class DocumentProcessingService {
       embeddingModel: embeddingConfig.model,
       embeddingDimensions: undefined, // Will be set after first embedding is generated
     });
-
-    // Create document segments
-    const segments: DocumentSegment[] = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkContent = chunks[i];
-
-      // Extract keywords from the segment content
-      const keywords = this.extractKeywords(chunkContent);
-      const keywordsObject = {
-        extracted: keywords,
-        count: keywords.length,
-        extractedAt: new Date().toISOString(),
-      };
-
-      this.logger.debug(
-        `Extracted ${keywords.length} keywords for segment ${i + 1}: ${keywords.join(', ')}`,
-      );
-
-      const segment = this.segmentRepository.create({
-        documentId: document.id,
-        datasetId: datasetId,
-        position: i + 1,
-        content: chunkContent,
-        wordCount: chunkContent.split(' ').length,
-        tokens: Math.ceil(chunkContent.length / 4), // Rough token estimate
-        keywords: keywordsObject,
-        status: 'waiting',
-        enabled: true,
-        userId: userId,
-      });
-
-      const savedSegment = await this.segmentRepository.save(segment);
-      segments.push(savedSegment);
-    }
 
     // Generate embeddings for each segment
     let embeddingDimensions: number | undefined;
@@ -640,5 +637,151 @@ export class DocumentProcessingService {
       this.logger.error('Keyword extraction failed:', error);
       return [];
     }
+  }
+
+  // 🆕 Parent-Child Chunking Processing Method
+  private async processWithParentChildChunking(
+    document: Document,
+    datasetId: string,
+    embeddingConfig: EmbeddingConfig,
+    userId: string,
+  ): Promise<DocumentSegment[]> {
+    const filePath = join(
+      process.cwd(),
+      'uploads',
+      'documents',
+      document.fileId,
+    );
+
+    // Convert EmbeddingConfig to EmbeddingOptimizedConfig for RAGFlow
+    const parentConfig: EmbeddingOptimizedConfig = {
+      model: embeddingConfig.model as EmbeddingModel,
+      customModelName: embeddingConfig.customModelName,
+      provider: embeddingConfig.provider,
+      textSplitter: embeddingConfig.textSplitter as TextSplitter,
+      chunkSize: Math.floor(embeddingConfig.chunkSize * 1.5), // Larger for parents
+      chunkOverlap: embeddingConfig.chunkOverlap,
+      separators: embeddingConfig.separators,
+      confidenceThreshold: 0.7,
+      enableTableExtraction: true,
+    };
+
+    const childConfig: EmbeddingOptimizedConfig = {
+      model: embeddingConfig.model as EmbeddingModel,
+      customModelName: embeddingConfig.customModelName,
+      provider: embeddingConfig.provider,
+      textSplitter: embeddingConfig.textSplitter as TextSplitter,
+      chunkSize: Math.floor(embeddingConfig.chunkSize * 0.6), // Smaller for children
+      chunkOverlap: Math.floor(embeddingConfig.chunkOverlap * 0.5),
+      separators: embeddingConfig.separators,
+      confidenceThreshold: 0.8,
+      enableTableExtraction: true,
+    };
+
+    // Use RAGFlow Parent-Child Chunking
+    const parseResult =
+      await this.ragflowPdfParserService.parsePdfWithParentChildChunking(
+        filePath,
+        parentConfig,
+        childConfig,
+      );
+
+    this.logger.log(
+      `🔗 Parent-Child Chunking completed: ${parseResult.segments.length} segments (${parseResult.processingMetadata?.hierarchicalChunking?.parentChunks || 0} parents, ${parseResult.processingMetadata?.hierarchicalChunking?.childChunks || 0} children)`,
+    );
+
+    // Convert RAGFlow segments to DocumentSegment entities
+    const segments: DocumentSegment[] = [];
+    for (let i = 0; i < parseResult.segments.length; i++) {
+      const ragflowSegment = parseResult.segments[i];
+
+      const keywords = this.extractKeywords(ragflowSegment.content);
+      const keywordsObject = {
+        extracted: keywords,
+        count: keywords.length,
+        extractedAt: new Date().toISOString(),
+      };
+
+      const segment = this.segmentRepository.create({
+        documentId: document.id,
+        datasetId: datasetId,
+        position: i + 1,
+        content: ragflowSegment.content,
+        wordCount: ragflowSegment.wordCount,
+        tokens: ragflowSegment.tokenCount,
+        keywords: keywordsObject,
+        status: 'waiting',
+        enabled: true,
+        userId: userId,
+        // 🆕 Parent-Child specific fields
+        parentId: ragflowSegment.parentId,
+        segmentType: ragflowSegment.segmentType || 'chunk',
+        hierarchyLevel: ragflowSegment.hierarchyLevel || 1,
+        childOrder: ragflowSegment.childOrder,
+        childCount: ragflowSegment.childCount || 0,
+        hierarchyMetadata: ragflowSegment.hierarchyMetadata || {},
+      });
+
+      const savedSegment = await this.segmentRepository.save(segment);
+      segments.push(savedSegment);
+    }
+
+    return segments;
+  }
+
+  // 🆕 Traditional Chunking Processing Method (extracted from original logic)
+  private async processWithTraditionalChunking(
+    document: Document,
+    datasetId: string,
+    content: string,
+    embeddingConfig: EmbeddingConfig,
+    userId: string,
+  ): Promise<DocumentSegment[]> {
+    // Split text into chunks using the provided embedding configuration
+    const chunks = this.splitText(content, embeddingConfig);
+    this.logger.log(
+      `Document ${document.id} split into ${chunks.length} chunks using ${embeddingConfig.textSplitter} splitter (size: ${embeddingConfig.chunkSize}, overlap: ${embeddingConfig.chunkOverlap})`,
+    );
+
+    // Create document segments
+    const segments: DocumentSegment[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkContent = chunks[i];
+
+      // Extract keywords from the segment content
+      const keywords = this.extractKeywords(chunkContent);
+      const keywordsObject = {
+        extracted: keywords,
+        count: keywords.length,
+        extractedAt: new Date().toISOString(),
+      };
+
+      this.logger.debug(
+        `Extracted ${keywords.length} keywords for segment ${i + 1}: ${keywords.join(', ')}`,
+      );
+
+      const segment = this.segmentRepository.create({
+        documentId: document.id,
+        datasetId: datasetId,
+        position: i + 1,
+        content: chunkContent,
+        wordCount: chunkContent.split(' ').length,
+        tokens: Math.ceil(chunkContent.length / 4), // Rough token estimate
+        keywords: keywordsObject,
+        status: 'waiting',
+        enabled: true,
+        userId: userId,
+        // Traditional chunking uses default values for parent-child fields
+        segmentType: 'chunk',
+        hierarchyLevel: 1,
+        childCount: 0,
+        hierarchyMetadata: {},
+      });
+
+      const savedSegment = await this.segmentRepository.save(segment);
+      segments.push(savedSegment);
+    }
+
+    return segments;
   }
 }

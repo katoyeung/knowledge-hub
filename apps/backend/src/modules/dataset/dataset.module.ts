@@ -15,6 +15,8 @@ import { DocumentSegmentController } from './document-segment.controller';
 import { DocumentProcessingService } from './services/document-processing.service';
 import { EmbeddingService } from './services/embedding.service';
 import { HybridSearchService } from './services/hybrid-search.service';
+// 🆕 Import for Parent-Child Chunking support
+import { DocumentParserModule } from '../document-parser/document-parser.module';
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { HybridSearchService } from './services/hybrid-search.service';
       Embedding,
     ]),
     EventModule,
+    // 🆕 Import DocumentParserModule for Parent-Child Chunking
+    DocumentParserModule,
   ],
   providers: [
     DatasetService,

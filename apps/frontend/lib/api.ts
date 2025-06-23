@@ -237,6 +237,8 @@ export const datasetApi = {
     chunkSize: number;
     chunkOverlap: number;
     separators?: string[];
+    // 🆕 Parent-Child Chunking option
+    enableParentChildChunking?: boolean;
   }): Promise<{
     success: boolean;
     message: string;
@@ -278,7 +280,7 @@ export const datasetApi = {
     query: string;
     limit?: number;
     similarityThreshold?: number;
-    rerankerType?: 'mathematical' | 'ml-cross-encoder';
+    rerankerType?: "mathematical" | "ml-cross-encoder";
   }): Promise<{
     results: Array<{
       id: string;
@@ -296,7 +298,7 @@ export const datasetApi = {
     query: string;
     count: number;
     model?: string;
-    rerankerType?: 'mathematical' | 'ml-cross-encoder';
+    rerankerType?: "mathematical" | "ml-cross-encoder";
     message?: string;
   }> => {
     const response = await apiClient.post("/datasets/search-documents", data);

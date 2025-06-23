@@ -79,7 +79,7 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
   useEffect(() => {
     const timer = setTimeout(() => {
       onRemove(toast.id)
-    }, toast.variant === 'error' ? 7000 : 5000)
+    }, toast.variant === 'error' ? 10000 : 8000)
 
     return () => clearTimeout(timer)
   }, [toast.id, toast.variant, onRemove])
@@ -98,8 +98,8 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
   }
 
   const getStyles = () => {
-    const baseStyles = "max-w-sm w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden animate-in slide-in-from-top-2"
-    
+    const baseStyles = "min-w-[320px] max-w-md w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden animate-in slide-in-from-top-2 transition-all duration-300"
+
     switch (toast.variant) {
       case 'success':
         return `${baseStyles} border-l-4 border-green-500`
@@ -115,26 +115,27 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
   return (
     <div className={getStyles()}>
       <div className="p-4">
-        <div className="flex items-start">
+        <div className="flex items-start space-x-3">
           <div className="flex-shrink-0">
             {getIcon()}
           </div>
-          <div className="ml-3 w-0 flex-1 pt-0.5">
-            <p className="text-sm font-medium text-gray-900">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-gray-900 leading-5">
               {toast.title}
             </p>
             {toast.description && (
-              <p className="mt-1 text-sm text-gray-500">
+              <p className="mt-1 text-sm text-gray-600 leading-5">
                 {toast.description}
               </p>
             )}
           </div>
-          <div className="ml-4 flex-shrink-0 flex">
+          <div className="flex-shrink-0">
             <button
-              className="bg-white rounded-md inline-flex text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              className="bg-white rounded-md p-1 text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
               onClick={() => onRemove(toast.id)}
+              aria-label="Close notification"
             >
-              <X className="h-5 w-5" />
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -157,7 +158,7 @@ function ConfirmDialog({ isOpen, options, onConfirm, onCancel }: ConfirmDialogPr
     <div className="fixed inset-0 z-[100] overflow-y-auto">
       <div className="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
         <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={onCancel}></div>
-        
+
         <div className="relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:p-6">
           <div className="sm:flex sm:items-start">
             <div className="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
@@ -209,7 +210,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
   }>({
     isOpen: false,
     options: { title: '', description: '' },
-    resolve: () => {}
+    resolve: () => { }
   })
 
   const removeToast = useCallback((id: string) => {
@@ -274,9 +275,9 @@ export function ToastProvider({ children }: ToastProviderProps) {
   return (
     <ToastContext.Provider value={contextValue}>
       {children}
-      
+
       {/* Toast Container */}
-      <div 
+      <div
         className="fixed top-0 right-0 z-50 p-6 pointer-events-none"
         style={{ zIndex: 9999 }}
       >

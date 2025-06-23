@@ -152,4 +152,67 @@ apps/*/out/
 apps/*/.turbo/
 packages/*/build/
 packages/*/dist/
-packages/*/.turbo/ 
+packages/*/.turbo/
+
+# Downloaded Data & Uploads (Knowledge Hub specific)
+# ================================================
+
+# Uploaded documents (PDFs, images, etc.)
+apps/backend/uploads/
+uploads/
+*/uploads/
+
+# Downloaded datasets and test data
+apps/backend/datasets/
+datasets/
+*/datasets/
+
+# Large data files (by extension)
+*.7z
+*.zip
+*.tar.gz
+*.tar.bz2
+*.rar
+*.xml
+*.json.gz
+*.csv.gz
+*.parquet
+*.arrow
+*.h5
+*.hdf5
+
+# Model files and embeddings
+*.bin
+*.pt
+*.pth
+*.onnx
+*.pkl
+*.pickle
+*.joblib
+*.model
+
+# Vector databases and indexes
+*.faiss
+*.annoy
+*.hnswlib
+*.scann
+
+# Cache directories for ML/AI
+.cache/
+cache/
+*/.cache/
+*/cache/
+
+# Downloaded external data
+data/
+*/data/
+raw_data/
+*/raw_data/
+processed_data/
+*/processed_data/
+
+# Temporary processing files
+*.tmp
+*.temp
+processing/
+*/processing/ 

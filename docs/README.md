@@ -25,6 +25,7 @@
 - **[Embedding Integration](guides/embedding-integration.md)** - RAG optimization and vector search
 - **[Dataset Integration](guides/dataset-integration.md)** - Frontend/CMS integration with type safety
 - **[Vector Index Setup](guides/vector-index-setup.md)** - PostgreSQL vector indexes (HNSW/IVFFlat)
+- **[Parent-Child Chunking](guides/parent-child-chunking.md)** - Advanced hierarchical document segmentation
 
 ### 🏗️ System Architecture
 

@@ -19,6 +19,7 @@ export interface RagflowParseResult {
   tables: TableStructure[];
   metadata: DocumentMetadata;
   errors?: string[];
+  processingMetadata?: Record<string, any>;
 }
 
 export interface ParsedSegment {
@@ -32,6 +33,13 @@ export interface ParsedSegment {
   keywords: string[];
   wordCount: number;
   tokenCount: number;
+  // 🆕 Parent-Child Chunking Support
+  parentId?: string;
+  segmentType?: 'parent' | 'child' | 'chunk';
+  hierarchyLevel?: number;
+  childOrder?: number;
+  childCount?: number;
+  hierarchyMetadata?: Record<string, any>;
 }
 
 export interface TableStructure {
@@ -1353,5 +1361,220 @@ export class RagflowPdfParserService {
     }
 
     return [text];
+  }
+
+  /**
+   * 🆕 Parent-Child Chunking Implementation (多粒度分块)
+   * Creates hierarchical segments with parent (paragraph) and child (sentence) levels
+   */
+  async parsePdfWithParentChildChunking(
+    filePath: string,
+    parentChunkConfig: EmbeddingOptimizedConfig,
+    childChunkConfig: EmbeddingOptimizedConfig,
+    additionalOptions?: Partial<RagflowParseOptions>,
+  ): Promise<RagflowParseResult> {
+    this.logger.log(`🔗 Starting Parent-Child Chunking for PDF: ${filePath}`);
+
+    // Parse PDF with parent-level configuration
+    const parentResult = await this.parsePdfWithEmbeddingConfig(
+      filePath,
+      parentChunkConfig,
+      additionalOptions,
+    );
+
+    // Create hierarchical segments
+    const hierarchicalSegments = await this.createParentChildHierarchy(
+      parentResult.segments,
+      childChunkConfig,
+    );
+
+    return {
+      ...parentResult,
+      segments: hierarchicalSegments,
+      processingMetadata: {
+        ...parentResult.processingMetadata,
+        hierarchicalChunking: {
+          parentChunks: hierarchicalSegments.filter(
+            (s) => s.segmentType === 'parent',
+          ).length,
+          childChunks: hierarchicalSegments.filter(
+            (s) => s.segmentType === 'child',
+          ).length,
+          totalHierarchicalSegments: hierarchicalSegments.length,
+        },
+      },
+    };
+  }
+
+  /**
+   * Create parent-child hierarchy from parent segments
+   */
+  private async createParentChildHierarchy(
+    parentSegments: ParsedSegment[],
+    childChunkConfig: EmbeddingOptimizedConfig,
+  ): Promise<ParsedSegment[]> {
+    const hierarchicalSegments: ParsedSegment[] = [];
+
+    for (
+      let parentIndex = 0;
+      parentIndex < parentSegments.length;
+      parentIndex++
+    ) {
+      const parentSegment = parentSegments[parentIndex];
+
+      // Mark as parent segment
+      const enhancedParent: ParsedSegment = {
+        ...parentSegment,
+        id: `parent_${parentIndex}_${Date.now()}`,
+        segmentType: 'parent',
+        hierarchyLevel: 1,
+        childOrder: undefined,
+        childCount: 0,
+        hierarchyMetadata: {
+          isParent: true,
+          originalLength: parentSegment.content.length,
+        },
+      };
+
+      // Create child segments from parent content
+      const childChunks = this.createChildChunks(
+        parentSegment.content,
+        childChunkConfig,
+      );
+
+      const childSegments: ParsedSegment[] = [];
+      for (let childIndex = 0; childIndex < childChunks.length; childIndex++) {
+        const childContent = childChunks[childIndex];
+
+        const childSegment: ParsedSegment = {
+          id: `child_${parentIndex}_${childIndex}_${Date.now()}`,
+          content: childContent,
+          type: this.determineContentType(childContent),
+          position: parentSegment.position,
+          pageNumber: parentSegment.pageNumber,
+          confidence: this.calculateConfidence(childContent, 'paragraph'),
+          keywords: this.extractKeywords(childContent),
+          wordCount: childContent.split(/\s+/).length,
+          tokenCount: Math.ceil(childContent.length / 4),
+          // 🆕 Child-specific properties
+          parentId: enhancedParent.id,
+          segmentType: 'child',
+          hierarchyLevel: 2,
+          childOrder: childIndex + 1,
+          childCount: 0,
+          hierarchyMetadata: {
+            isChild: true,
+            parentId: enhancedParent.id,
+            siblingCount: childChunks.length,
+          },
+        };
+
+        childSegments.push(childSegment);
+      }
+
+      // Update parent with child count
+      enhancedParent.childCount = childSegments.length;
+      enhancedParent.hierarchyMetadata = {
+        ...enhancedParent.hierarchyMetadata,
+        childCount: childSegments.length,
+      };
+
+      // Add parent and children to results
+      hierarchicalSegments.push(enhancedParent);
+      hierarchicalSegments.push(...childSegments);
+    }
+
+    this.logger.log(
+      `🔗 Created hierarchical structure: ${hierarchicalSegments.filter((s) => s.segmentType === 'parent').length} parents, ${hierarchicalSegments.filter((s) => s.segmentType === 'child').length} children`,
+    );
+
+    return hierarchicalSegments;
+  }
+
+  /**
+   * Create child chunks from parent content using fine-grained strategy
+   */
+  private createChildChunks(
+    parentContent: string,
+    childConfig: EmbeddingOptimizedConfig,
+  ): string[] {
+    // Use sentence-level splitting for child chunks
+    switch (childConfig.textSplitter) {
+      case TextSplitter.RECURSIVE_CHARACTER:
+        return this.splitBySentence(parentContent, childConfig.chunkSize);
+      case TextSplitter.CHARACTER:
+        return this.characterSplit(
+          parentContent,
+          childConfig.chunkSize,
+          childConfig.chunkOverlap,
+        );
+      case TextSplitter.TOKEN:
+        return this.tokenSplit(
+          parentContent,
+          childConfig.chunkSize,
+          childConfig.chunkOverlap,
+        );
+      default:
+        // Default to sentence-level splitting for children
+        return this.splitBySentence(parentContent, childConfig.chunkSize);
+    }
+  }
+
+  /**
+   * 🆕 Multi-Granularity Retrieval Support
+   * Retrieve child segments and merge with parent context
+   */
+  async retrieveWithParentChildContext(
+    query: string,
+    childMatches: ParsedSegment[],
+    includeParentContext: boolean = true,
+  ): Promise<{
+    segments: ParsedSegment[];
+    parentContext: ParsedSegment[];
+    retrievalMetadata: {
+      childMatches: number;
+      parentContextAdded: number;
+      totalSegments: number;
+    };
+  }> {
+    const parentContext: ParsedSegment[] = [];
+
+    if (includeParentContext) {
+      // Find parent segments for each child match
+      const parentIds = [
+        ...new Set(childMatches.map((child) => child.parentId).filter(Boolean)),
+      ] as string[];
+
+      // In a real implementation, you would query the database for parent segments
+      // For now, we'll simulate this
+      for (const parentId of parentIds) {
+        // This would be a database query in real implementation
+        const parentSegment = await this.findParentSegmentById(parentId);
+        if (parentSegment) {
+          parentContext.push(parentSegment);
+        }
+      }
+    }
+
+    return {
+      segments: childMatches,
+      parentContext,
+      retrievalMetadata: {
+        childMatches: childMatches.length,
+        parentContextAdded: parentContext.length,
+        totalSegments: childMatches.length + parentContext.length,
+      },
+    };
+  }
+
+  /**
+   * Simulate finding parent segment by ID (would be database query in real implementation)
+   */
+  private async findParentSegmentById(
+    parentId: string,
+  ): Promise<ParsedSegment | null> {
+    // In real implementation, this would query the database
+    // For now, return null as placeholder
+    return null;
   }
 }
