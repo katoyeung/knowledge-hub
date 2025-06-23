@@ -18,6 +18,14 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+    "test:recall": "npx ts-node -r tsconfig-paths/register src/modules/document-parser/tests/recall-test-runner.ts",
+    "test:chunk-config": "npx ts-node -r tsconfig-paths/register src/modules/document-parser/tests/chunk-config-test.ts",
+    "test:bge-m3": "npx ts-node -r tsconfig-paths/register src/modules/document-parser/tests/bge-m3-comparison-test.ts",
+        "test:chinese-integration": "npx ts-node -r tsconfig-paths/register src/modules/document-parser/tests/chinese-integration-test.spec.ts",
+    "test:recall-benchmark": "jest --testPathPattern=recall-benchmark.test.ts --verbose",
+    "test:recall-comparison": "jest --testPathPattern=recall-comparison.test.ts --verbose",
+    "test:recall-wikipedia": "npx ts-node -r tsconfig-paths/register src/modules/document-parser/tests/wikipedia-recall-test.ts",
+    "test:recall-stackoverflow": "npx ts-node -r tsconfig-paths/register src/modules/document-parser/tests/stackoverflow-recall-test.ts",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed": "ts-node -r ./tsconfig-paths-bootstrap.js src/database/seeds/seed.ts",
     "typeorm": "typeorm-ts-node-commonjs",
@@ -27,13 +35,7 @@
     "typeorm:migration:revert": "npm run typeorm -- migration:revert -d src/config/data-source.ts",
     "typeorm:schema:sync": "npm run typeorm -- schema:sync -d src/config/data-source.ts",
     "typeorm:schema:drop": "npm run typeorm -- schema:drop -d src/config/data-source.ts",
-    "test:recall": "ts-node src/modules/document-parser/tests/recall-test-runner.ts",
-    "test:recall-benchmark": "jest src/modules/document-parser/tests/recall-benchmark.test.ts --verbose",
-    "test:recall-wikipedia": "ts-node src/modules/document-parser/tests/wikipedia-recall-test.ts",
-    "test:recall-stackoverflow": "ts-node src/modules/document-parser/tests/stackoverflow-recall-test.ts",
-    "test:recall-arxiv": "ts-node src/modules/document-parser/tests/arxiv-recall-test.ts",
-    "datasets:download": "bash datasets/download-test-data.sh",
-    "test:recall-realistic": "ts-node src/modules/document-parser/tests/realistic-recall-test.ts"
+    "datasets:download": "bash datasets/download-test-data.sh"
   },
   "dependencies": {
     "@casl/ability": "^6.7.3",
@@ -115,7 +117,7 @@
       "ts"
     ],
     "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
+    "testRegex": ".*\\.(spec|test)\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
@@ -123,6 +125,11 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^@modules/(.*)$": "<rootDir>/modules/$1",
+      "^@common/(.*)$": "<rootDir>/common/$1",
+      "^@config/(.*)$": "<rootDir>/config/$1"
+    }
   }
 }

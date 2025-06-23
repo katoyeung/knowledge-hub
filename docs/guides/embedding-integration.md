@@ -17,8 +17,8 @@ The RAGFlow PDF parser has been enhanced to seamlessly integrate with your exist
 - Uses your existing `EmbeddingModel` and `TextSplitter` enums
 - Maintains consistency with your dataset processing pipeline
 - Supports all your embedding models (1024D models):
-  - `mixedbread-ai/mxbai-embed-large-v1` (recommended)
-  - `Xenova/bge-m3` (multilingual)
+  - `Xenova/bge-m3` (recommended - multilingual)
+  - `mixedbread-ai/mxbai-embed-large-v1` (high quality English)
   - `WhereIsAI/UAE-Large-V1` (universal)
   - Custom models
 
@@ -85,19 +85,19 @@ Your `TextSplitter` strategies are intelligently mapped to RAGFlow segmentation 
 import {
   RagflowPdfParserService,
   EmbeddingOptimizedConfig,
-} from './services/ragflow-pdf-parser.service';
+} from "./services/ragflow-pdf-parser.service";
 import {
   EmbeddingModel,
   TextSplitter,
-} from '../dataset/dto/create-dataset-step.dto';
+} from "../dataset/dto/create-dataset-step.dto";
 
-// Configure for your embedding model
+// Configure for your embedding model (optimized for BGE M3)
 const embeddingConfig: EmbeddingOptimizedConfig = {
-  model: EmbeddingModel.MIXEDBREAD_MXBAI_EMBED_LARGE_V1,
-  provider: 'mixedbread',
+  model: EmbeddingModel.XENOVA_BGE_M3,
+  provider: "xenova",
   textSplitter: TextSplitter.RECURSIVE_CHARACTER,
-  chunkSize: 1000,
-  chunkOverlap: 200,
+  chunkSize: 800, // Optimized for BGE M3 semantic understanding
+  chunkOverlap: 80, // 10% overlap - efficient with parent-child chunking
   confidenceThreshold: 0.8,
   enableTableExtraction: true,
   enableImageExtraction: false,
@@ -107,7 +107,7 @@ const embeddingConfig: EmbeddingOptimizedConfig = {
 const result = await ragflowPdfParserService.parsePdfWithEmbeddingConfig(
   filePath,
   embeddingConfig,
-  { extractionMethod: 'hybrid' },
+  { extractionMethod: "hybrid" }
 );
 
 console.log(`Processed ${result.segments.length} embedding-optimized segments`);
@@ -127,7 +127,7 @@ const datasetConfig = {
 // Convert to RAGFlow embedding config
 const ragflowConfig: EmbeddingOptimizedConfig = {
   model: datasetConfig.embeddingModel,
-  provider: 'xenova',
+  provider: "xenova",
   textSplitter: datasetConfig.textSplitter,
   chunkSize: datasetConfig.chunkSize,
   chunkOverlap: datasetConfig.chunkOverlap,
@@ -138,7 +138,7 @@ const ragflowConfig: EmbeddingOptimizedConfig = {
 // Ensure consistent chunking between parsing and retrieval
 const result = await ragflowPdfParserService.parsePdfWithEmbeddingConfig(
   filePath,
-  ragflowConfig,
+  ragflowConfig
 );
 ```
 
@@ -168,7 +168,7 @@ For token-aware models, use `TextSplitter.TOKEN`:
 ```typescript
 const tokenConfig: EmbeddingOptimizedConfig = {
   model: EmbeddingModel.MIXEDBREAD_MXBAI_EMBED_LARGE_V1,
-  provider: 'mixedbread',
+  provider: "mixedbread",
   textSplitter: TextSplitter.TOKEN,
   chunkSize: 800, // ~200 tokens (4 chars/token)
   chunkOverlap: 160, // ~40 tokens
@@ -183,12 +183,12 @@ For multilingual content, use BGE-M3:
 ```typescript
 const multilingualConfig: EmbeddingOptimizedConfig = {
   model: EmbeddingModel.XENOVA_BGE_M3,
-  provider: 'xenova',
+  provider: "xenova",
   textSplitter: TextSplitter.RECURSIVE_CHARACTER,
-  chunkSize: 1500,
-  chunkOverlap: 150,
+  chunkSize: 800, // Optimized for multilingual content
+  chunkOverlap: 80, // 10% overlap for efficiency
   confidenceThreshold: 0.75,
-  separators: ['\n\n', '\n', '. ', '! ', '? ', ', ', ' '],
+  separators: ["\n\n", "\n", ". ", "! ", "? ", ", ", " "],
 };
 ```
 
@@ -199,7 +199,7 @@ For markdown or structured content:
 ```typescript
 const structuredConfig: EmbeddingOptimizedConfig = {
   model: EmbeddingModel.WHEREISAI_UAE_LARGE_V1,
-  provider: 'whereisai',
+  provider: "whereisai",
   textSplitter: TextSplitter.MARKDOWN,
   chunkSize: 1200,
   chunkOverlap: 240,
@@ -267,7 +267,7 @@ The integration maintains all RAGFlow advanced features:
 const result = await ragflowPdfParserService.parsePdfWithEmbeddingConfig(
   filePath,
   embeddingConfig,
-  additionalOptions,
+  additionalOptions
 );
 ```
 
@@ -279,7 +279,7 @@ const segments =
   await ragflowPdfParserService.performEmbeddingOptimizedSegmentation(
     content,
     embeddingConfig,
-    baseOptions,
+    baseOptions
   );
 ```
 
@@ -291,7 +291,7 @@ const chunks = ragflowPdfParserService.recursiveCharacterSplit(
   content,
   chunkSize,
   chunkOverlap,
-  separators,
+  separators
 );
 ```
 

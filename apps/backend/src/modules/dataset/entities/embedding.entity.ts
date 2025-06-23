@@ -9,14 +9,14 @@ import {
 
 @Entity({ name: 'embeddings' })
 @Index('idx_embeddings_model_name', ['modelName'])
-@Index('idx_embeddings_model_embedding_exists', ['modelName'], { 
-  where: 'embedding IS NOT NULL' 
+@Index('idx_embeddings_model_embedding_exists', ['modelName'], {
+  where: 'embedding IS NOT NULL',
 })
 export class Embedding {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ length: 255, default: 'Qwen/Qwen3-Embedding-8B' })
+  @Column({ length: 255, default: 'Xenova/bge-m3' })
   modelName: string;
 
   @Column({ length: 64 })

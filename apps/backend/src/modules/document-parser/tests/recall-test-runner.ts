@@ -289,11 +289,13 @@ Performance testing should be conducted regularly to ensure that database perfor
   }
 
   private createTraditionalChunks(): TraditionalChunk[] {
-    const chunkSize = 500; // Larger chunks for more realistic testing
+    const chunkSize = 800; // NEW OPTIMIZED: BGE M3 optimized chunk size
+    const overlap = 80; // NEW OPTIMIZED: 10% overlap for efficiency
     const chunks: TraditionalChunk[] = [];
     const cleanDoc = this.testDocument.replace(/\n\s*\n/g, '\n').trim();
 
-    for (let i = 0; i < cleanDoc.length; i += chunkSize) {
+    // Implement overlapping chunks for more realistic testing
+    for (let i = 0; i < cleanDoc.length; i += chunkSize - overlap) {
       const chunk = cleanDoc.slice(i, i + chunkSize).trim();
       if (chunk.length > 100) {
         // Ensure meaningful content
@@ -303,6 +305,9 @@ Performance testing should be conducted regularly to ensure that database perfor
           type: 'traditional',
         });
       }
+
+      // Stop if we've covered the entire document
+      if (i + chunkSize >= cleanDoc.length) break;
     }
 
     return chunks;

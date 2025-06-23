@@ -5,12 +5,14 @@ import * as pdfParse from 'pdf-parse';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as natural from 'natural';
+import { v4 as uuidv4 } from 'uuid';
 import { Document } from '../../dataset/entities/document.entity';
 import { DocumentSegment } from '../../dataset/entities/document-segment.entity';
 import {
   EmbeddingModel,
   TextSplitter,
 } from '../../dataset/dto/create-dataset-step.dto';
+import { ChineseTextPreprocessorService } from './chinese-text-preprocessor.service';
 
 export interface RagflowParseResult {
   success: boolean;
@@ -129,6 +131,7 @@ export class RagflowPdfParserService {
     private readonly documentRepository: Repository<Document>,
     @InjectRepository(DocumentSegment)
     private readonly segmentRepository: Repository<DocumentSegment>,
+    private readonly chineseTextPreprocessorService: ChineseTextPreprocessorService,
   ) {}
 
   /**
@@ -179,15 +182,55 @@ export class RagflowPdfParserService {
       // Extract basic content
       const rawContent = pdfData.text || '';
 
+      // 🆕 Apply text preprocessing to ALL documents (not just Chinese)
+      let processedContent = rawContent;
+      const originalLength = rawContent.length;
+
+      this.logger.log(
+        `🧹 [RAGFlow DEBUG] Starting text preprocessing for ${originalLength} characters`,
+      );
+      this.logger.log(
+        `🧹 [RAGFlow DEBUG] Content before cleaning: "${rawContent.substring(0, 200)}..."`,
+      );
+
+      // Check if it's Chinese text for specialized processing
+      const isChinese =
+        this.chineseTextPreprocessorService.isChineseText(rawContent);
+      this.logger.log(
+        `🧹 [RAGFlow DEBUG] Chinese text detection result: ${isChinese}`,
+      );
+
+      if (isChinese) {
+        this.logger.log(
+          `🇨🇳 [RAGFlow DEBUG] Applying Chinese-specific preprocessing to ${rawContent.length} characters`,
+        );
+        processedContent =
+          this.chineseTextPreprocessorService.preprocessChineseText(rawContent);
+        this.logger.log(`🇨🇳 [RAGFlow DEBUG] Chinese preprocessing complete`);
+      } else {
+        this.logger.log(
+          `🌐 [RAGFlow DEBUG] Applying general text cleaning to ${rawContent.length} characters`,
+        );
+        processedContent = this.cleanGeneralText(rawContent);
+        this.logger.log(`🌐 [RAGFlow DEBUG] General text cleaning complete`);
+      }
+
+      this.logger.log(
+        `✨ [RAGFlow DEBUG] Text preprocessing complete: ${originalLength} → ${processedContent.length} characters`,
+      );
+      this.logger.log(
+        `✨ [RAGFlow DEBUG] Content after cleaning: "${processedContent.substring(0, 200)}..."`,
+      );
+
       // Deep document understanding - layout analysis
       const layoutAnalysis = await this.performLayoutAnalysis(
-        rawContent,
+        processedContent,
         mergedOptions,
       );
 
       // Advanced segmentation using RAGFlow-inspired techniques
       const segments = await this.performAdvancedSegmentation(
-        rawContent,
+        processedContent,
         layoutAnalysis,
         mergedOptions,
       );
@@ -208,7 +251,7 @@ export class RagflowPdfParserService {
 
       const result: RagflowParseResult = {
         success: true,
-        content: rawContent,
+        content: processedContent,
         segments,
         tables,
         metadata,
@@ -432,7 +475,7 @@ export class RagflowPdfParserService {
     const tokenCount = Math.ceil(wordCount * 0.75);
 
     return {
-      id: `segment_${position}_${Date.now()}`,
+      id: uuidv4(),
       content: content.trim(),
       type,
       position,
@@ -504,7 +547,7 @@ export class RagflowPdfParserService {
     const tokenCount = Math.ceil(wordCount * 0.75); // Rough token estimation
 
     return {
-      id: `segment_${position}_${Date.now()}`,
+      id: uuidv4(),
       content: content.trim(),
       type,
       position,
@@ -1097,50 +1140,71 @@ export class RagflowPdfParserService {
       `🎯 Performing embedding-optimized segmentation with ${embeddingConfig.textSplitter}`,
     );
 
+    // 🆕 Preprocess Chinese text if detected
+    let processedContent = content;
+    if (this.chineseTextPreprocessorService.isChineseText(content)) {
+      this.logger.debug(
+        'Applying Chinese text preprocessing for embedding optimization...',
+      );
+      processedContent =
+        this.chineseTextPreprocessorService.preprocessChineseText(content);
+    }
+
     const segments: ParsedSegment[] = [];
     let chunks: string[] = [];
 
     // Apply your TextSplitter strategy
     switch (embeddingConfig.textSplitter) {
       case TextSplitter.RECURSIVE_CHARACTER:
-        chunks = this.recursiveCharacterSplit(
-          content,
-          embeddingConfig.chunkSize,
-          embeddingConfig.chunkOverlap,
-          embeddingConfig.separators,
-        );
+        // 🆕 Use Chinese-aware splitting if applicable
+        if (
+          this.chineseTextPreprocessorService.isChineseText(processedContent)
+        ) {
+          chunks = this.chineseTextPreprocessorService.splitChineseText(
+            processedContent,
+            embeddingConfig.chunkSize,
+            embeddingConfig.chunkOverlap,
+          );
+        } else {
+          chunks = this.recursiveCharacterSplit(
+            processedContent,
+            embeddingConfig.chunkSize,
+            embeddingConfig.chunkOverlap,
+            embeddingConfig.separators,
+          );
+        }
         break;
       case TextSplitter.CHARACTER:
         chunks = this.characterSplit(
-          content,
+          processedContent,
           embeddingConfig.chunkSize,
           embeddingConfig.chunkOverlap,
         );
         break;
       case TextSplitter.TOKEN:
         chunks = this.tokenSplit(
-          content,
+          processedContent,
           embeddingConfig.chunkSize,
           embeddingConfig.chunkOverlap,
         );
         break;
       case TextSplitter.MARKDOWN:
         chunks = this.markdownSplit(
-          content,
+          processedContent,
           embeddingConfig.chunkSize,
           embeddingConfig.chunkOverlap,
         );
         break;
       case TextSplitter.PYTHON_CODE:
         chunks = this.pythonCodeSplit(
-          content,
+          processedContent,
           embeddingConfig.chunkSize,
           embeddingConfig.chunkOverlap,
         );
         break;
       default:
         chunks = this.recursiveCharacterSplit(
-          content,
+          processedContent,
           embeddingConfig.chunkSize,
           embeddingConfig.chunkOverlap,
         );
@@ -1162,7 +1226,7 @@ export class RagflowPdfParserService {
         // Only include segments above confidence threshold
         if (confidence >= (embeddingConfig.confidenceThreshold || 0.7)) {
           const segment: ParsedSegment = {
-            id: `emb_segment_${i}_${Date.now()}`,
+            id: uuidv4(),
             content: chunk,
             type,
             position: i,
@@ -1425,7 +1489,7 @@ export class RagflowPdfParserService {
       // Mark as parent segment
       const enhancedParent: ParsedSegment = {
         ...parentSegment,
-        id: `parent_${parentIndex}_${Date.now()}`,
+        id: uuidv4(),
         segmentType: 'parent',
         hierarchyLevel: 1,
         childOrder: undefined,
@@ -1447,7 +1511,7 @@ export class RagflowPdfParserService {
         const childContent = childChunks[childIndex];
 
         const childSegment: ParsedSegment = {
-          id: `child_${parentIndex}_${childIndex}_${Date.now()}`,
+          id: uuidv4(),
           content: childContent,
           type: this.determineContentType(childContent),
           position: parentSegment.position,
@@ -1576,5 +1640,112 @@ export class RagflowPdfParserService {
     // In real implementation, this would query the database
     // For now, return null as placeholder
     return null;
+  }
+
+  /**
+   * Clean general text content (applies to all documents)
+   * Removes excessive empty lines, fixes spacing issues, etc.
+   */
+  private cleanGeneralText(text: string): string {
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] cleanGeneralText called with ${text.length} characters`,
+    );
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] Input text preview: "${text.substring(0, 200)}..."`,
+    );
+
+    if (!text || text.trim().length === 0) {
+      this.logger.log(
+        `🧹 [RAGFlow DEBUG] Empty or whitespace-only text, returning empty string`,
+      );
+      return '';
+    }
+
+    let cleaned = text;
+
+    // Count empty lines before cleaning
+    const emptyLinesBefore = (text.match(/^\s*$/gm) || []).length;
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] Empty lines before cleaning: ${emptyLinesBefore}`,
+    );
+
+    // 1. Remove the specific pattern of empty lines with just spaces and newlines
+    // This targets the exact pattern: " \n \n \n \n  \n \n   \n  \n \n     \n"
+    cleaned = cleaned.replace(/^[ \t]*\n(?:[ \t]*\n)+/gm, '\n');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 1 (remove empty line patterns): ${cleaned.length} chars`,
+    );
+
+    // 2. Remove lines that contain only whitespace characters
+    cleaned = cleaned.replace(/^[ \t\r\f\v]*$/gm, '');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 2 (remove whitespace-only lines): ${cleaned.length} chars`,
+    );
+
+    // 3. Remove excessive consecutive newlines (more than 2)
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 3 (limit consecutive newlines): ${cleaned.length} chars`,
+    );
+
+    // 4. Remove excessive spaces at the beginning of lines
+    cleaned = cleaned.replace(/^[ \t]+/gm, '');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 4 (remove leading spaces): ${cleaned.length} chars`,
+    );
+
+    // 5. Remove excessive spaces at the end of lines
+    cleaned = cleaned.replace(/[ \t]+$/gm, '');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 5 (remove trailing spaces): ${cleaned.length} chars`,
+    );
+
+    // 6. Replace multiple consecutive spaces with single space
+    cleaned = cleaned.replace(/[ \t]{2,}/g, ' ');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 6 (normalize spaces): ${cleaned.length} chars`,
+    );
+
+    // 7. Remove empty lines at the beginning of the text
+    cleaned = cleaned.replace(/^[\s\n]*/, '');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 7 (remove leading empty lines): ${cleaned.length} chars`,
+    );
+
+    // 8. Remove empty lines at the end of the text
+    cleaned = cleaned.replace(/[\s\n]*$/, '');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 8 (remove trailing empty lines): ${cleaned.length} chars`,
+    );
+
+    // 9. Normalize line breaks (ensure consistent \n)
+    cleaned = cleaned.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 9 (normalize line breaks): ${cleaned.length} chars`,
+    );
+
+    // 10. Final cleanup: remove any remaining lines with only spaces
+    const lines = cleaned.split('\n');
+    const filteredLines = lines.filter((line) => line.trim().length > 0);
+    cleaned = filteredLines.join('\n');
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] After step 10 (filter empty lines): ${lines.length} → ${filteredLines.length} lines`,
+    );
+
+    const result = cleaned.trim();
+
+    // Count empty lines after cleaning
+    const emptyLinesAfter = (result.match(/^\s*$/gm) || []).length;
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] Empty lines after cleaning: ${emptyLinesAfter}`,
+    );
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] Final cleaned text preview: "${result.substring(0, 200)}..."`,
+    );
+    this.logger.log(
+      `🧹 [RAGFlow DEBUG] cleanGeneralText returning ${result.length} characters`,
+    );
+
+    return result;
   }
 }

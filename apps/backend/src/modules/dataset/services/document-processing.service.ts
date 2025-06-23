@@ -2,9 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { readFileSync } from 'fs';
+import { promises as fs } from 'fs';
 import { join } from 'path';
-import * as pdfParse from 'pdf-parse';
 import { Document } from '../entities/document.entity';
 import { DocumentSegment } from '../entities/document-segment.entity';
 import { Dataset } from '../entities/dataset.entity';
@@ -19,6 +18,8 @@ import {
   RagflowPdfParserService,
   EmbeddingOptimizedConfig,
 } from '../../document-parser/services/ragflow-pdf-parser.service';
+import { SimplePdfParserService } from '../../document-parser/services/simple-pdf-parser.service';
+import { ChineseTextPreprocessorService } from '../../document-parser/services/chinese-text-preprocessor.service';
 
 interface EmbeddingConfig {
   model: string;
@@ -46,6 +47,8 @@ export class DocumentProcessingService {
     private readonly embeddingRepository: Repository<Embedding>,
     private readonly embeddingService: EmbeddingService,
     private readonly ragflowPdfParserService: RagflowPdfParserService,
+    private readonly simplePdfParserService: SimplePdfParserService,
+    private readonly chineseTextPreprocessorService: ChineseTextPreprocessorService,
   ) {}
 
   @OnEvent('document.processing')
@@ -55,7 +58,12 @@ export class DocumentProcessingService {
     embeddingConfig: EmbeddingConfig;
     userId: string;
   }) {
-    this.logger.log(`Starting document processing for ${event.documentId}`);
+    this.logger.log(
+      `🚀 [DEBUG] Starting document processing for ${event.documentId}`,
+    );
+    this.logger.log(
+      `🚀 [DEBUG] Event received with config: ${JSON.stringify(event.embeddingConfig)}`,
+    );
 
     try {
       await this.processDocument(
@@ -216,78 +224,171 @@ export class DocumentProcessingService {
 
   private async extractTextFromFile(
     filePath: string,
-    docType: string,
+    docType?: string,
   ): Promise<string> {
+    this.logger.log(
+      `📄 [DEBUG] Extracting text from file: ${filePath} (type: ${docType})`,
+    );
+
+    let content = '';
+
     try {
-      switch (docType) {
-        case 'text':
-        case 'markdown':
-        case 'json':
-        case 'csv':
-          return readFileSync(filePath, 'utf-8');
-
-        case 'pdf':
-          try {
-            const pdfBuffer = readFileSync(filePath);
-            const pdfData = await pdfParse(pdfBuffer);
-            return (
-              pdfData.text ||
-              `PDF processed but no text content found in ${filePath}`
-            );
-          } catch (pdfError) {
-            this.logger.warn(
-              `Failed to parse PDF ${filePath}: ${pdfError.message}`,
-            );
-            return `PDF file could not be parsed - ${filePath}. Error: ${pdfError.message}`;
-          }
-
-        case 'word':
-          // Word documents are not currently supported
-          throw new Error(
-            `Word document parsing is not currently supported: ${filePath}`,
+      if (docType === 'pdf') {
+        // Try RAGFlow parser first for better PDF handling
+        try {
+          this.logger.log(`📄 [DEBUG] Attempting RAGFlow PDF parsing...`);
+          const parseResult = await this.ragflowPdfParserService.parsePdf(
+            filePath,
+            {
+              confidenceThreshold: 0.8,
+              enableTableExtraction: true,
+            },
           );
-
-        default:
-          // Try to read as text, but handle binary files gracefully
-          try {
-            return readFileSync(filePath, 'utf-8');
-          } catch {
-            throw new Error(
-              `Unsupported file type: ${docType} for file: ${filePath}`,
-            );
-          }
+          content = parseResult.segments.map((s) => s.content).join('\n\n');
+          this.logger.log(
+            `📄 [DEBUG] RAGFlow PDF extraction successful: ${content.length} characters`,
+          );
+          this.logger.log(
+            `📄 [DEBUG] RAGFlow content preview: "${content.substring(0, 100)}..."`,
+          );
+        } catch (ragflowError) {
+          this.logger.warn(
+            `RAGFlow PDF parsing failed, falling back to simple parser: ${ragflowError.message}`,
+          );
+          const simpleResult =
+            await this.simplePdfParserService.extractTextFromPdf(filePath);
+          content = simpleResult.content;
+          this.logger.log(
+            `📄 [DEBUG] Simple PDF extraction successful: ${content.length} characters`,
+          );
+          this.logger.log(
+            `📄 [DEBUG] Simple PDF content preview: "${content.substring(0, 100)}..."`,
+          );
+        }
+      } else {
+        // Handle other file types
+        content = await fs.readFile(filePath, 'utf-8');
+        this.logger.log(
+          `📄 [DEBUG] Text file extraction successful: ${content.length} characters`,
+        );
+        this.logger.log(
+          `📄 [DEBUG] Text file content preview: "${content.substring(0, 100)}..."`,
+        );
       }
-    } catch (error) {
-      throw new Error(
-        `Failed to extract text from ${docType} file: ${error.message}`,
+
+      // 🆕 Apply text preprocessing to ALL documents (not just Chinese)
+      const originalLength = content.length;
+      this.logger.log(
+        `🧹 [DEBUG] Starting text preprocessing for ${originalLength} characters`,
       );
+      this.logger.log(
+        `🧹 [DEBUG] Content before cleaning: "${content.substring(0, 200)}..."`,
+      );
+
+      // Check if it's Chinese text for specialized processing
+      const isChinese =
+        this.chineseTextPreprocessorService.isChineseText(content);
+      this.logger.log(`🧹 [DEBUG] Chinese text detection result: ${isChinese}`);
+
+      if (isChinese) {
+        this.logger.log(
+          `🇨🇳 [DEBUG] Applying Chinese-specific preprocessing to ${content.length} characters`,
+        );
+        content =
+          this.chineseTextPreprocessorService.preprocessChineseText(content);
+        this.logger.log(`🇨🇳 [DEBUG] Chinese preprocessing complete`);
+      } else {
+        this.logger.log(
+          `🌐 [DEBUG] Applying general text cleaning to ${content.length} characters`,
+        );
+        content = this.cleanGeneralText(content);
+        this.logger.log(`🌐 [DEBUG] General text cleaning complete`);
+      }
+
+      this.logger.log(
+        `✨ [DEBUG] Text preprocessing complete: ${originalLength} → ${content.length} characters`,
+      );
+      this.logger.log(
+        `✨ [DEBUG] Content after cleaning: "${content.substring(0, 200)}..."`,
+      );
+
+      return content;
+    } catch (error) {
+      this.logger.error(`Failed to extract text from ${filePath}:`, error);
+      throw error;
     }
   }
 
   private splitText(text: string, config: EmbeddingConfig): string[] {
     const { textSplitter, chunkSize, chunkOverlap } = config;
 
+    this.logger.log(
+      `🔪 [DEBUG] Starting text splitting with ${textSplitter}, chunkSize: ${chunkSize}, overlap: ${chunkOverlap}`,
+    );
+    this.logger.log(`🔪 [DEBUG] Input text length: ${text.length} characters`);
+    this.logger.log(
+      `🔪 [DEBUG] Input text preview: "${text.substring(0, 200)}..."`,
+    );
+
+    // 🆕 Use Chinese-aware splitting for Chinese text
+    if (this.chineseTextPreprocessorService.isChineseText(text)) {
+      this.logger.debug('🇨🇳 [DEBUG] Using Chinese-aware text splitting...');
+      const chunks = this.chineseTextPreprocessorService.splitChineseText(
+        text,
+        chunkSize,
+        chunkOverlap,
+      );
+      this.logger.log(
+        `🇨🇳 [DEBUG] Chinese splitting produced ${chunks.length} chunks`,
+      );
+      return chunks;
+    }
+
+    // Apply general text splitting for all other documents
+    this.logger.debug(
+      `🌐 [DEBUG] Using ${textSplitter} text splitting for non-Chinese content...`,
+    );
+
+    let chunks: string[] = [];
+
     // Simple text splitting implementation
     // In a real implementation, you would use more sophisticated text splitters
     switch (textSplitter) {
       case 'recursive_character':
-        return this.recursiveCharacterSplit(text, chunkSize, chunkOverlap);
+        chunks = this.recursiveCharacterSplit(text, chunkSize, chunkOverlap);
+        break;
 
       case 'character':
-        return this.characterSplit(text, chunkSize, chunkOverlap);
+        chunks = this.characterSplit(text, chunkSize, chunkOverlap);
+        break;
 
       case 'token':
-        return this.tokenSplit(text, chunkSize, chunkOverlap);
+        chunks = this.tokenSplit(text, chunkSize, chunkOverlap);
+        break;
 
       case 'markdown':
-        return this.markdownSplit(text, chunkSize, chunkOverlap);
+        chunks = this.markdownSplit(text, chunkSize, chunkOverlap);
+        break;
 
       case 'python_code':
-        return this.pythonCodeSplit(text, chunkSize, chunkOverlap);
+        chunks = this.pythonCodeSplit(text, chunkSize, chunkOverlap);
+        break;
 
       default:
-        return this.characterSplit(text, chunkSize, chunkOverlap);
+        chunks = this.recursiveCharacterSplit(text, chunkSize, chunkOverlap);
+        break;
     }
+
+    this.logger.log(
+      `🔪 [DEBUG] Text splitting produced ${chunks.length} chunks`,
+    );
+    if (chunks.length > 0) {
+      this.logger.log(
+        `🔪 [DEBUG] First chunk preview: "${chunks[0].substring(0, 200)}..."`,
+      );
+    }
+
+    return chunks;
   }
 
   private recursiveCharacterSplit(
@@ -691,9 +792,20 @@ export class DocumentProcessingService {
     );
 
     // Convert RAGFlow segments to DocumentSegment entities
+    // First, separate parent and child segments
+    const parentRagflowSegments = parseResult.segments.filter(
+      (s) => s.segmentType === 'parent',
+    );
+    const childRagflowSegments = parseResult.segments.filter(
+      (s) => s.segmentType === 'child',
+    );
+
     const segments: DocumentSegment[] = [];
-    for (let i = 0; i < parseResult.segments.length; i++) {
-      const ragflowSegment = parseResult.segments[i];
+    const parentIdMapping = new Map<string, string>(); // Map from ragflow parent ID to DB parent ID
+
+    // 1. First, save all parent segments
+    for (let i = 0; i < parentRagflowSegments.length; i++) {
+      const ragflowSegment = parentRagflowSegments[i];
 
       const keywords = this.extractKeywords(ragflowSegment.content);
       const keywordsObject = {
@@ -713,10 +825,58 @@ export class DocumentProcessingService {
         status: 'waiting',
         enabled: true,
         userId: userId,
-        // 🆕 Parent-Child specific fields
-        parentId: ragflowSegment.parentId,
-        segmentType: ragflowSegment.segmentType || 'chunk',
+        // Parent segments don't have parentId
+        parentId: undefined,
+        segmentType: ragflowSegment.segmentType || 'parent',
         hierarchyLevel: ragflowSegment.hierarchyLevel || 1,
+        childOrder: ragflowSegment.childOrder,
+        childCount: ragflowSegment.childCount || 0,
+        hierarchyMetadata: ragflowSegment.hierarchyMetadata || {},
+      });
+
+      const savedSegment = await this.segmentRepository.save(segment);
+      segments.push(savedSegment);
+
+      // Map the ragflow parent ID to the database parent ID
+      parentIdMapping.set(ragflowSegment.id, savedSegment.id);
+    }
+
+    // 2. Then, save all child segments with proper parent references
+    for (let i = 0; i < childRagflowSegments.length; i++) {
+      const ragflowSegment = childRagflowSegments[i];
+
+      const keywords = this.extractKeywords(ragflowSegment.content);
+      const keywordsObject = {
+        extracted: keywords,
+        count: keywords.length,
+        extractedAt: new Date().toISOString(),
+      };
+
+      // Map the ragflow parent ID to the actual database parent ID
+      const actualParentId = parentIdMapping.get(ragflowSegment.parentId!);
+
+      if (!actualParentId) {
+        this.logger.warn(
+          `Child segment ${ragflowSegment.id} references unknown parent ${ragflowSegment.parentId}. Skipping.`,
+        );
+        continue;
+      }
+
+      const segment = this.segmentRepository.create({
+        documentId: document.id,
+        datasetId: datasetId,
+        position: parentRagflowSegments.length + i + 1, // Position after parents
+        content: ragflowSegment.content,
+        wordCount: ragflowSegment.wordCount,
+        tokens: ragflowSegment.tokenCount,
+        keywords: keywordsObject,
+        status: 'waiting',
+        enabled: true,
+        userId: userId,
+        // Map to actual database parent ID
+        parentId: actualParentId,
+        segmentType: ragflowSegment.segmentType || 'child',
+        hierarchyLevel: ragflowSegment.hierarchyLevel || 2,
         childOrder: ragflowSegment.childOrder,
         childCount: ragflowSegment.childCount || 0,
         hierarchyMetadata: ragflowSegment.hierarchyMetadata || {},
@@ -783,5 +943,112 @@ export class DocumentProcessingService {
     }
 
     return segments;
+  }
+
+  /**
+   * Clean general text content (applies to all documents)
+   * Removes excessive empty lines, fixes spacing issues, etc.
+   */
+  private cleanGeneralText(text: string): string {
+    this.logger.log(
+      `🧹 [DEBUG] cleanGeneralText called with ${text.length} characters`,
+    );
+    this.logger.log(
+      `🧹 [DEBUG] Input text preview: "${text.substring(0, 200)}..."`,
+    );
+
+    if (!text || text.trim().length === 0) {
+      this.logger.log(
+        `🧹 [DEBUG] Empty or whitespace-only text, returning empty string`,
+      );
+      return '';
+    }
+
+    let cleaned = text;
+
+    // Count empty lines before cleaning
+    const emptyLinesBefore = (text.match(/^\s*$/gm) || []).length;
+    this.logger.log(
+      `🧹 [DEBUG] Empty lines before cleaning: ${emptyLinesBefore}`,
+    );
+
+    // 1. Remove the specific pattern of empty lines with just spaces and newlines
+    // This targets the exact pattern: " \n \n \n \n  \n \n   \n  \n \n     \n"
+    cleaned = cleaned.replace(/^[ \t]*\n(?:[ \t]*\n)+/gm, '\n');
+    this.logger.log(
+      `🧹 [DEBUG] After step 1 (remove empty line patterns): ${cleaned.length} chars`,
+    );
+
+    // 2. Remove lines that contain only whitespace characters
+    cleaned = cleaned.replace(/^[ \t\r\f\v]*$/gm, '');
+    this.logger.log(
+      `🧹 [DEBUG] After step 2 (remove whitespace-only lines): ${cleaned.length} chars`,
+    );
+
+    // 3. Remove excessive consecutive newlines (more than 2)
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+    this.logger.log(
+      `🧹 [DEBUG] After step 3 (limit consecutive newlines): ${cleaned.length} chars`,
+    );
+
+    // 4. Remove excessive spaces at the beginning of lines
+    cleaned = cleaned.replace(/^[ \t]+/gm, '');
+    this.logger.log(
+      `🧹 [DEBUG] After step 4 (remove leading spaces): ${cleaned.length} chars`,
+    );
+
+    // 5. Remove excessive spaces at the end of lines
+    cleaned = cleaned.replace(/[ \t]+$/gm, '');
+    this.logger.log(
+      `🧹 [DEBUG] After step 5 (remove trailing spaces): ${cleaned.length} chars`,
+    );
+
+    // 6. Replace multiple consecutive spaces with single space
+    cleaned = cleaned.replace(/[ \t]{2,}/g, ' ');
+    this.logger.log(
+      `🧹 [DEBUG] After step 6 (normalize spaces): ${cleaned.length} chars`,
+    );
+
+    // 7. Remove empty lines at the beginning of the text
+    cleaned = cleaned.replace(/^[\s\n]*/, '');
+    this.logger.log(
+      `🧹 [DEBUG] After step 7 (remove leading empty lines): ${cleaned.length} chars`,
+    );
+
+    // 8. Remove empty lines at the end of the text
+    cleaned = cleaned.replace(/[\s\n]*$/, '');
+    this.logger.log(
+      `🧹 [DEBUG] After step 8 (remove trailing empty lines): ${cleaned.length} chars`,
+    );
+
+    // 9. Normalize line breaks (ensure consistent \n)
+    cleaned = cleaned.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    this.logger.log(
+      `🧹 [DEBUG] After step 9 (normalize line breaks): ${cleaned.length} chars`,
+    );
+
+    // 10. Final cleanup: remove any remaining lines with only spaces
+    const lines = cleaned.split('\n');
+    const filteredLines = lines.filter((line) => line.trim().length > 0);
+    cleaned = filteredLines.join('\n');
+    this.logger.log(
+      `🧹 [DEBUG] After step 10 (filter empty lines): ${lines.length} → ${filteredLines.length} lines`,
+    );
+
+    const result = cleaned.trim();
+
+    // Count empty lines after cleaning
+    const emptyLinesAfter = (result.match(/^\s*$/gm) || []).length;
+    this.logger.log(
+      `🧹 [DEBUG] Empty lines after cleaning: ${emptyLinesAfter}`,
+    );
+    this.logger.log(
+      `🧹 [DEBUG] Final cleaned text preview: "${result.substring(0, 200)}..."`,
+    );
+    this.logger.log(
+      `🧹 [DEBUG] cleanGeneralText returning ${result.length} characters`,
+    );
+
+    return result;
   }
 }

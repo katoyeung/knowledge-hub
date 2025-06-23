@@ -1,8 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { RagflowPdfParserService } from '../services/ragflow-pdf-parser.service';
-import { DocumentSegmentService } from '../../dataset/services/document-segment.service';
-import { EmbeddingService } from '../../embedding/services/embedding.service';
+import { DocumentSegmentService } from '../../dataset/document-segment.service';
+import { EmbeddingService } from '../../dataset/services/embedding.service';
 import { ConfigService } from '@nestjs/config';
+import { Document } from '../../dataset/entities/document.entity';
+import { DocumentSegment } from '../../dataset/entities/document-segment.entity';
+import { ChineseTextPreprocessorService } from '../services/chinese-text-preprocessor.service';
 
 /**
  * 🎯 Recall Benchmark Test Suite
@@ -233,8 +237,35 @@ Network latency between application servers and database servers can significant
                 RAGFLOW_API_URL: 'http://localhost:9380',
                 RAGFLOW_API_KEY: 'test-key',
               };
-              return config[key];
+              return (config as any)[key];
             }),
+          },
+        },
+        {
+          provide: getRepositoryToken(Document),
+          useValue: {
+            findOne: jest.fn(),
+            save: jest.fn(),
+            create: jest.fn(),
+            update: jest.fn(),
+          },
+        },
+        {
+          provide: getRepositoryToken(DocumentSegment),
+          useValue: {
+            findOne: jest.fn(),
+            save: jest.fn(),
+            create: jest.fn(),
+            update: jest.fn(),
+            find: jest.fn(),
+          },
+        },
+        {
+          provide: ChineseTextPreprocessorService,
+          useValue: {
+            isChineseText: jest.fn().mockReturnValue(false),
+            preprocessText: jest.fn((text: string) => text),
+            normalizeChineseText: jest.fn((text: string) => text),
           },
         },
       ],
@@ -602,8 +633,8 @@ Network latency between application servers and database servers can significant
   async function simulateParentChildChunking(document: string): Promise<any> {
     const sections = document.split(/(?=^#)/gm).filter((s) => s.trim());
     const structure = {
-      parents: [],
-      children: [],
+      parents: [] as any[],
+      children: [] as any[],
       relationships: new Map(),
     };
 
@@ -707,7 +738,9 @@ Network latency between application servers and database servers can significant
 
       // If child match, add parent context
       if (match.type === 'child' && match.parentId) {
-        const parent = structure.parents.find((p) => p.id === match.parentId);
+        const parent = structure.parents.find(
+          (p: any) => p.id === match.parentId,
+        );
         if (parent) {
           expandedContent.add(parent.content);
         }
@@ -716,7 +749,7 @@ Network latency between application servers and database servers can significant
       // If parent match, add relevant children
       if (match.type === 'parent') {
         const children = structure.relationships.get(match.id) || [];
-        children.slice(0, 3).forEach((child) => {
+        children.slice(0, 3).forEach((child: any) => {
           // Limit children to avoid noise
           expandedContent.add(child.content);
         });

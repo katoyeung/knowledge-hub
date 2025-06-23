@@ -32,8 +32,8 @@ interface UnifiedDocumentWizardProps {
 // Embedding models enum mapping - 1024D Models Only
 const EMBEDDING_MODELS = {
     // 1024-Dimension Models Only (for consistency and compatibility)
-    'Xenova/bge-m3': 'BGE M3 - Multilingual (1024 dims)',
-    'mixedbread-ai/mxbai-embed-large-v1': 'MixedBread AI - High Quality English (1024 dims) ⭐',
+    'Xenova/bge-m3': 'BGE M3 - Multilingual (1024 dims) ⭐',
+    'mixedbread-ai/mxbai-embed-large-v1': 'MixedBread AI - High Quality English (1024 dims)',
     'WhereIsAI/UAE-Large-V1': 'UAE Large V1 - Universal Angle (1024 dims)',
     'custom': 'Custom Model (must be 1024 dimensions)',
 }
@@ -73,13 +73,13 @@ export function UnifiedDocumentWizard({
     const [uploadedDocuments, setUploadedDocuments] = useState<Document[]>([])
 
     // Step 3: Embedding Configuration
-    const [embeddingModel, setEmbeddingModel] = useState<keyof typeof EMBEDDING_MODELS>('mixedbread-ai/mxbai-embed-large-v1')
+    const [embeddingModel, setEmbeddingModel] = useState<keyof typeof EMBEDDING_MODELS>('Xenova/bge-m3')
     const [customModelName, setCustomModelName] = useState('')
     const [textSplitter, setTextSplitter] = useState<keyof typeof TEXT_SPLITTERS>('recursive_character')
-    const [chunkSize, setChunkSize] = useState(1000)
-    const [chunkOverlap, setChunkOverlap] = useState(200)
-    // 🆕 Parent-Child Chunking state
-    const [enableParentChildChunking, setEnableParentChildChunking] = useState(false)
+    const [chunkSize, setChunkSize] = useState(800)
+    const [chunkOverlap, setChunkOverlap] = useState(80)
+    // 🆕 Parent-Child Chunking state - enabled by default
+    const [enableParentChildChunking, setEnableParentChildChunking] = useState(true)
 
     const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files || [])

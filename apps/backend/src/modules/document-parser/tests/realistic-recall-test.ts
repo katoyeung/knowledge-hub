@@ -243,13 +243,13 @@ Test-driven development (TDD) encourages writing tests before implementation cod
         console.log(
           `    Traditional found: ${traditionalResult.foundContent
             .slice(0, 2)
-            .map((c) => `"${c.substring(0, 50)}..."`)
+            .map((c: string) => `"${c.substring(0, 50)}..."`)
             .join(', ')}`,
         );
         console.log(
           `    Parent-Child found: ${parentChildResult.foundContent
             .slice(0, 3)
-            .map((c) => `"${c.substring(0, 50)}..."`)
+            .map((c: string) => `"${c.substring(0, 50)}..."`)
             .join(', ')}`,
         );
         console.log('');
@@ -283,8 +283,8 @@ Test-driven development (TDD) encourages writing tests before implementation cod
       .split(/(?=^#)/gm)
       .filter((s) => s.trim());
     const structure = {
-      parents: [],
-      children: [],
+      parents: [] as any[],
+      children: [] as any[],
     };
 
     sections.forEach((section, i) => {
