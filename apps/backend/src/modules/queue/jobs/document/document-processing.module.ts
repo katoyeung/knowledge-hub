@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { DocumentParserProcessor } from './document-parser.processor';
 import { Document } from '../../../dataset/entities/document.entity';
 import { DocumentSegment } from '../../../dataset/entities/document-segment.entity';
 
@@ -12,7 +11,7 @@ import { DocumentSegment } from '../../../dataset/entities/document-segment.enti
     }),
     TypeOrmModule.forFeature([Document, DocumentSegment]),
   ],
-  providers: [DocumentParserProcessor],
+  providers: [],
   exports: [BullModule],
 })
 export class DocumentProcessingModule {}

@@ -16,6 +16,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventModule } from '@modules/event/event.module';
 import { SchedulerModule } from '@modules/scheduler/scheduler.module';
+import { DocumentParserModule } from '@modules/document-parser/document-parser.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { SchedulerModule } from '@modules/scheduler/scheduler.module';
     AuthModule,
     AccessModule,
     DatasetModule,
+    DocumentParserModule,
     NotificationModule,
     QueueModule,
     EventEmitterModule.forRoot(),
