@@ -24,8 +24,6 @@ export function DatasetGrid({ onCreateDataset, onDatasetClick }: DatasetGridProp
             setIsLoading(true)
             setError(null)
             const response = await datasetApi.getAll()
-            console.log('API Response:', response)
-            console.log('Response data:', response.data)
 
             setDatasets(response.data)
         } catch (err) {

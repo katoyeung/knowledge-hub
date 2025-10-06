@@ -58,6 +58,11 @@ export abstract class BaseLLMClient extends BaseApiClient implements LLMClient {
   protected async getCachedResponse<T>(
     cacheKey: string,
   ): Promise<ApiResponse<T> | null> {
+    // Skip cache if TTL is 0 (disabled)
+    if (this.cacheTTL === 0) {
+      return null;
+    }
+
     try {
       const cachedData = await this.cacheManager.get<ApiResponse<T>>(cacheKey);
       if (cachedData) {
@@ -76,6 +81,11 @@ export abstract class BaseLLMClient extends BaseApiClient implements LLMClient {
     cacheKey: string,
     response: ApiResponse<T>,
   ): Promise<void> {
+    // Skip cache if TTL is 0 (disabled)
+    if (this.cacheTTL === 0) {
+      return;
+    }
+
     try {
       await this.cacheManager.set(cacheKey, response, this.cacheTTL);
       this.logger.debug(`Cached response for ${cacheKey}`);

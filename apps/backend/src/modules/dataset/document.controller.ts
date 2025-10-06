@@ -8,9 +8,13 @@ import {
   UploadedFiles,
   Body,
   Request,
+  Patch,
+  Param,
+  Logger,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { DocumentService } from './document.service';
+import { DocumentProcessingService } from './services/document-processing.service';
 import {
   Crud,
   CrudController,
@@ -24,7 +28,7 @@ import { plainToInstance, classToPlain } from 'class-transformer';
 import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
-import { UploadDocumentDto } from './dto/upload-document.dto';
+import { UploadDocumentDto } from './dto/create-dataset-step.dto';
 import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
 import { diskStorage } from 'multer';
@@ -45,8 +49,8 @@ import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id
   query: {
     sort: [
       {
-        field: 'position',
-        order: 'ASC',
+        field: 'createdAt',
+        order: 'DESC',
       },
     ],
     join: {
@@ -84,7 +88,12 @@ import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id
   }),
 )
 export class DocumentController implements CrudController<Document> {
-  constructor(public readonly service: DocumentService) {}
+  private readonly logger = new Logger(DocumentController.name);
+
+  constructor(
+    public readonly service: DocumentService,
+    private readonly documentProcessingService: DocumentProcessingService,
+  ) {}
 
   @Override('deleteOneBase')
   async deleteOne(@ParsedRequest() req: CrudRequest) {
@@ -93,7 +102,18 @@ export class DocumentController implements CrudController<Document> {
       throw new Error('Document ID is required');
     }
 
+    // Delete the document first
     await this.service.deleteDocument(id);
+
+    // Stop ALL ongoing processing jobs asynchronously (don't wait)
+    this.documentProcessingService
+      .stopAllProcessingJobs(
+        'File deleted by user - clearing all processing jobs',
+      )
+      .catch((error) => {
+        this.logger.error('Failed to stop processing jobs:', error);
+      });
+
     return { deleted: true };
   }
 

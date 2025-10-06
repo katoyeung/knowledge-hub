@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import * as pdfParse from 'pdf-parse';
+import pdfParse from 'pdf-parse';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as natural from 'natural';
@@ -182,44 +182,23 @@ export class RagflowPdfParserService {
       // Extract basic content
       const rawContent = pdfData.text || '';
 
-      // 🆕 Apply text preprocessing to ALL documents (not just Chinese)
+      // Apply text preprocessing to ALL documents (not just Chinese)
       let processedContent = rawContent;
       const originalLength = rawContent.length;
-
-      this.logger.log(
-        `🧹 [RAGFlow DEBUG] Starting text preprocessing for ${originalLength} characters`,
-      );
-      this.logger.log(
-        `🧹 [RAGFlow DEBUG] Content before cleaning: "${rawContent.substring(0, 200)}..."`,
-      );
 
       // Check if it's Chinese text for specialized processing
       const isChinese =
         this.chineseTextPreprocessorService.isChineseText(rawContent);
-      this.logger.log(
-        `🧹 [RAGFlow DEBUG] Chinese text detection result: ${isChinese}`,
-      );
 
       if (isChinese) {
-        this.logger.log(
-          `🇨🇳 [RAGFlow DEBUG] Applying Chinese-specific preprocessing to ${rawContent.length} characters`,
-        );
         processedContent =
           this.chineseTextPreprocessorService.preprocessChineseText(rawContent);
-        this.logger.log(`🇨🇳 [RAGFlow DEBUG] Chinese preprocessing complete`);
       } else {
-        this.logger.log(
-          `🌐 [RAGFlow DEBUG] Applying general text cleaning to ${rawContent.length} characters`,
-        );
         processedContent = this.cleanGeneralText(rawContent);
-        this.logger.log(`🌐 [RAGFlow DEBUG] General text cleaning complete`);
       }
 
       this.logger.log(
-        `✨ [RAGFlow DEBUG] Text preprocessing complete: ${originalLength} → ${processedContent.length} characters`,
-      );
-      this.logger.log(
-        `✨ [RAGFlow DEBUG] Content after cleaning: "${processedContent.substring(0, 200)}..."`,
+        `Text preprocessing complete: ${originalLength} → ${processedContent.length} characters`,
       );
 
       // Deep document understanding - layout analysis
@@ -387,7 +366,7 @@ export class RagflowPdfParserService {
     }
 
     // Check for list items
-    if (/^(\d+\.|[•\-\*]|\([a-z]\)|\([0-9]+\))\s/.test(trimmed)) {
+    if (/^(\d+\.|[•\-*]|\([a-z]\)|\([0-9]+\))\s/.test(trimmed)) {
       return 'list';
     }
 
@@ -623,7 +602,7 @@ export class RagflowPdfParserService {
   }
 
   private isListItem(line: string): boolean {
-    return /^(\d+\.|[•\-\*]|\([a-z]\)|\([0-9]+\))\s/.test(line.trim());
+    return /^(\d+\.|[•\-*]|\([a-z]\)|\([0-9]+\))\s/.test(line.trim());
   }
 
   private isHeaderFooter(line: string): boolean {
@@ -794,12 +773,207 @@ export class RagflowPdfParserService {
 
   private extractKeywords(content: string): string[] {
     try {
+      // Detect if content is primarily Chinese
+      const isChinese =
+        this.chineseTextPreprocessorService.isChineseText(content);
+
+      if (isChinese) {
+        return this.extractChineseKeywords(content);
+      } else {
+        return this.extractEnglishKeywords(content);
+      }
+    } catch (error) {
+      this.logger.warn(`Keyword extraction failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Extract keywords from Chinese text
+   */
+  private extractChineseKeywords(content: string): string[] {
+    try {
+      this.logger.debug('🇨🇳 [RAGFlow] Extracting Chinese keywords...');
+
+      // Clean Chinese text - remove punctuation but preserve Chinese characters
+      const cleanText = content
+        .replace(/[，。；：！？、（）【】《》〈〉「」『』""'']/g, ' ') // Chinese punctuation
+        .replace(/[^\u4e00-\u9fff\w\s]/g, ' ') // Keep Chinese chars, alphanumeric, whitespace
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim();
+
+      // Chinese stop words (common function words)
+      const chineseStopWords = new Set([
+        '的',
+        '是',
+        '在',
+        '有',
+        '和',
+        '或',
+        '但',
+        '於',
+        '以',
+        '及',
+        '與',
+        '等',
+        '如',
+        '若',
+        '而',
+        '則',
+        '亦',
+        '即',
+        '乃',
+        '其',
+        '此',
+        '該',
+        '這',
+        '那',
+        '些',
+        '各',
+        '每',
+        '所',
+        '不',
+        '沒',
+        '無',
+        '非',
+        '未',
+        '否',
+        '也',
+        '都',
+        '又',
+        '還',
+        '就',
+        '只',
+        '才',
+        '已',
+        '很',
+        '最',
+        '更',
+        '太',
+        '十分',
+        '非常',
+        '相當',
+        '比較',
+        '特別',
+        '尤其',
+        '特殊',
+        '一般',
+        '通常',
+        '經常',
+        '往往',
+        '總是',
+        '從來',
+        '一直',
+        '始終',
+        '到底',
+        '究竟',
+        '什麼',
+        '怎麼',
+        '為什麼',
+        '哪裡',
+        '何時',
+        '如何',
+        '多少',
+        '幾個',
+        '哪些',
+        '誰',
+        '我',
+        '你',
+        '他',
+        '她',
+        '它',
+        '我們',
+        '你們',
+        '他們',
+        '她們',
+        '它們',
+        '自己',
+        '上',
+        '下',
+        '前',
+        '後',
+        '裡',
+        '外',
+        '內',
+        '中',
+        '間',
+        '旁',
+        '邊',
+        '側',
+        '左',
+        '右',
+        '可以',
+        '能夠',
+        '應該',
+        '必須',
+        '需要',
+        '想要',
+        '希望',
+        '願意',
+        '打算',
+        '決定',
+      ]);
+
+      // For Chinese text, we need to segment into meaningful units
+      const keywords: { [key: string]: number } = {};
+
+      // Extract 2-4 character Chinese terms (most meaningful Chinese terms are 2-4 characters)
+      for (let len = 2; len <= 4; len++) {
+        for (let i = 0; i <= cleanText.length - len; i++) {
+          const term = cleanText.substring(i, i + len);
+
+          // Only Chinese characters, minimum meaningful length
+          if (
+            /^[\u4e00-\u9fff]+$/.test(term) &&
+            !chineseStopWords.has(term) &&
+            term.length >= 2
+          ) {
+            keywords[term] = (keywords[term] || 0) + 1;
+          }
+        }
+      }
+
+      // Also extract mixed Chinese-English terms (like "PDF文件", "API接口")
+      const mixedTerms =
+        cleanText.match(
+          /[\u4e00-\u9fff]+[a-zA-Z]+|[a-zA-Z]+[\u4e00-\u9fff]+/g,
+        ) || [];
+      mixedTerms.forEach((term) => {
+        if (term.length >= 2 && term.length <= 10) {
+          keywords[term] = (keywords[term] || 0) + 1;
+        }
+      });
+
+      // Sort by frequency and return top keywords
+      const sortedKeywords = Object.entries(keywords)
+        .filter(([word, freq]) => freq >= 1) // Minimum frequency
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 8)
+        .map(([word]) => word);
+
+      this.logger.debug(
+        `🇨🇳 [RAGFlow] Extracted ${sortedKeywords.length} Chinese keywords: ${sortedKeywords.slice(0, 5).join(', ')}`,
+      );
+      return sortedKeywords;
+    } catch (error) {
+      this.logger.warn(`Chinese keyword extraction failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Extract keywords from English text (original logic)
+   */
+  private extractEnglishKeywords(content: string): string[] {
+    try {
+      this.logger.debug('🌐 [RAGFlow] Extracting English keywords...');
+
       // Use natural library for keyword extraction (similar to RAGFlow's approach)
       const tokenizer = new natural.WordTokenizer();
       const tokens = tokenizer.tokenize(content.toLowerCase()) || [];
 
       // Remove stop words and short words
-      const stopWords = new Set([
+      const englishStopWords = new Set([
         'the',
         'a',
         'an',
@@ -846,8 +1020,8 @@ export class RagflowPdfParserService {
           (token) =>
             token.length > 2 &&
             token.length < 20 &&
-            !stopWords.has(token) &&
-            /^[a-zA-Z]+$/.test(token),
+            !englishStopWords.has(token) &&
+            /^[a-zA-Z]+$/.test(token), // Only English alphabetic characters
         )
         .reduce((acc: { [key: string]: number }, token) => {
           acc[token] = (acc[token] || 0) + 1;
@@ -855,12 +1029,17 @@ export class RagflowPdfParserService {
         }, {});
 
       // Return top keywords by frequency
-      return Object.entries(keywords)
+      const sortedKeywords = Object.entries(keywords)
         .sort(([, a], [, b]) => (b as number) - (a as number))
         .slice(0, 8)
         .map(([word]) => word);
+
+      this.logger.debug(
+        `🌐 [RAGFlow] Extracted ${sortedKeywords.length} English keywords: ${sortedKeywords.slice(0, 5).join(', ')}`,
+      );
+      return sortedKeywords;
     } catch (error) {
-      this.logger.warn(`Keyword extraction failed: ${error.message}`);
+      this.logger.warn(`English keyword extraction failed: ${error.message}`);
       return [];
     }
   }
@@ -886,7 +1065,7 @@ export class RagflowPdfParserService {
         if (content.split('.').length > 2) confidence += 0.2;
         break;
       case 'list':
-        if (/^(\d+\.|[•\-\*])/.test(content)) confidence += 0.3;
+        if (/^(\d+\.|[•\-*])/.test(content)) confidence += 0.3;
         break;
     }
 
@@ -1214,9 +1393,26 @@ export class RagflowPdfParserService {
       `✂️ Text splitting produced ${chunks.length} chunks using ${embeddingConfig.textSplitter}`,
     );
 
+    // Post-process chunks to merge tiny final chunks
+    const minChunkSize = Math.max(50, embeddingConfig.chunkSize * 0.1);
+    const processedChunks = chunks.filter((chunk) => chunk.trim().length > 0);
+
+    if (processedChunks.length > 1) {
+      const lastChunk = processedChunks[processedChunks.length - 1];
+      if (lastChunk.length < minChunkSize) {
+        const secondLastChunk = processedChunks[processedChunks.length - 2];
+        processedChunks[processedChunks.length - 2] =
+          secondLastChunk + ' ' + lastChunk;
+        processedChunks.pop();
+        this.logger.debug(
+          `Merged tiny final chunk (${lastChunk.length} chars) with previous chunk`,
+        );
+      }
+    }
+
     // Create segments from chunks with RAGFlow enhancements
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i].trim();
+    for (let i = 0; i < processedChunks.length; i++) {
+      const chunk = processedChunks[i].trim();
 
       if (chunk.length >= (baseOptions.minSegmentLength || 50)) {
         const type = this.determineContentType(chunk);
@@ -1420,7 +1616,36 @@ export class RagflowPdfParserService {
           chunks.push(currentChunk);
         }
 
-        return chunks.filter((chunk) => chunk.trim().length > 0);
+        // Post-process to merge tiny final chunks and remove duplicates
+        const minChunkSize = Math.max(50, chunkSize * 0.1); // Minimum 10% of max size or 50 chars
+        const processedChunks = chunks.filter(
+          (chunk) => chunk.trim().length > 0,
+        );
+
+        // Remove duplicate chunks (same content)
+        const uniqueChunks = [];
+        const seenContent = new Set();
+
+        for (const chunk of processedChunks) {
+          const trimmedContent = chunk.trim();
+          if (!seenContent.has(trimmedContent)) {
+            seenContent.add(trimmedContent);
+            uniqueChunks.push(chunk);
+          }
+        }
+
+        // Merge tiny final chunks
+        if (uniqueChunks.length > 1) {
+          const lastChunk = uniqueChunks[uniqueChunks.length - 1];
+          if (lastChunk.length < minChunkSize) {
+            const secondLastChunk = uniqueChunks[uniqueChunks.length - 2];
+            uniqueChunks[uniqueChunks.length - 2] =
+              secondLastChunk + ' ' + lastChunk;
+            uniqueChunks.pop();
+          }
+        }
+
+        return uniqueChunks;
       }
     }
 
@@ -1647,105 +1872,110 @@ export class RagflowPdfParserService {
    * Removes excessive empty lines, fixes spacing issues, etc.
    */
   private cleanGeneralText(text: string): string {
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] cleanGeneralText called with ${text.length} characters`,
-    );
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] Input text preview: "${text.substring(0, 200)}..."`,
-    );
-
     if (!text || text.trim().length === 0) {
-      this.logger.log(
-        `🧹 [RAGFlow DEBUG] Empty or whitespace-only text, returning empty string`,
-      );
       return '';
     }
 
     let cleaned = text;
 
-    // Count empty lines before cleaning
-    const emptyLinesBefore = (text.match(/^\s*$/gm) || []).length;
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] Empty lines before cleaning: ${emptyLinesBefore}`,
-    );
+    // Fix common PDF character encoding issues
+    cleaned = this.fixPdfCharacterEncoding(cleaned);
 
     // 1. Remove the specific pattern of empty lines with just spaces and newlines
-    // This targets the exact pattern: " \n \n \n \n  \n \n   \n  \n \n     \n"
     cleaned = cleaned.replace(/^[ \t]*\n(?:[ \t]*\n)+/gm, '\n');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 1 (remove empty line patterns): ${cleaned.length} chars`,
-    );
 
     // 2. Remove lines that contain only whitespace characters
     cleaned = cleaned.replace(/^[ \t\r\f\v]*$/gm, '');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 2 (remove whitespace-only lines): ${cleaned.length} chars`,
-    );
 
     // 3. Remove excessive consecutive newlines (more than 2)
     cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 3 (limit consecutive newlines): ${cleaned.length} chars`,
-    );
 
     // 4. Remove excessive spaces at the beginning of lines
     cleaned = cleaned.replace(/^[ \t]+/gm, '');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 4 (remove leading spaces): ${cleaned.length} chars`,
-    );
 
     // 5. Remove excessive spaces at the end of lines
     cleaned = cleaned.replace(/[ \t]+$/gm, '');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 5 (remove trailing spaces): ${cleaned.length} chars`,
-    );
 
     // 6. Replace multiple consecutive spaces with single space
     cleaned = cleaned.replace(/[ \t]{2,}/g, ' ');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 6 (normalize spaces): ${cleaned.length} chars`,
-    );
 
     // 7. Remove empty lines at the beginning of the text
     cleaned = cleaned.replace(/^[\s\n]*/, '');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 7 (remove leading empty lines): ${cleaned.length} chars`,
-    );
 
     // 8. Remove empty lines at the end of the text
     cleaned = cleaned.replace(/[\s\n]*$/, '');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 8 (remove trailing empty lines): ${cleaned.length} chars`,
-    );
 
     // 9. Normalize line breaks (ensure consistent \n)
     cleaned = cleaned.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 9 (normalize line breaks): ${cleaned.length} chars`,
-    );
 
     // 10. Final cleanup: remove any remaining lines with only spaces
     const lines = cleaned.split('\n');
     const filteredLines = lines.filter((line) => line.trim().length > 0);
     cleaned = filteredLines.join('\n');
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] After step 10 (filter empty lines): ${lines.length} → ${filteredLines.length} lines`,
-    );
 
-    const result = cleaned.trim();
+    return cleaned.trim();
+  }
 
-    // Count empty lines after cleaning
-    const emptyLinesAfter = (result.match(/^\s*$/gm) || []).length;
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] Empty lines after cleaning: ${emptyLinesAfter}`,
-    );
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] Final cleaned text preview: "${result.substring(0, 200)}..."`,
-    );
-    this.logger.log(
-      `🧹 [RAGFlow DEBUG] cleanGeneralText returning ${result.length} characters`,
-    );
+  /**
+   * Fix common PDF character encoding issues
+   * These are typical problems from pdf-parse where ligatures and special characters get misinterpreted
+   */
+  private fixPdfCharacterEncoding(text: string): string {
+    let fixed = text;
 
-    return result;
+    // Common PDF ligature and encoding fixes
+    const fixes = [
+      // Ligature issues
+      { pattern: /C([a-z])/g, replacement: 'fi$1' }, // "Cles" → "files"
+      { pattern: /([a-z])C([a-z])/g, replacement: '$1fi$2' }, // "workClow" → "workflow"
+      { pattern: /=([a-z])/g, replacement: 'ti$1' }, // "=on" → "tion"
+      { pattern: /([a-z])=([a-z])/g, replacement: '$1ti$2' }, // "extrac=on" → "extraction"
+
+      // Common word fixes based on context
+      { pattern: /\bEn=ty\b/g, replacement: 'Entity' },
+      { pattern: /\bExtrac=on\b/g, replacement: 'Extraction' },
+      { pattern: /\bCiles?\b/g, replacement: 'Files' },
+      { pattern: /\bworkClow\b/g, replacement: 'workflow' },
+      { pattern: /\bDeCine\b/g, replacement: 'Define' },
+      { pattern: /\bspeciCica=on\b/g, replacement: 'specification' },
+      { pattern: /\bfunc=onali=es\b/g, replacement: 'functionalities' },
+      { pattern: /\bmanagemen=\b/g, replacement: 'management' },
+      { pattern: /\bdocumen=\b/g, replacement: 'document' },
+      { pattern: /\brequiremen=s?\b/g, replacement: 'requirements' },
+      { pattern: /\bintegra=on\b/g, replacement: 'integration' },
+      { pattern: /\bauthen=ca=on\b/g, replacement: 'authentication' },
+      { pattern: /\bimplementa=on\b/g, replacement: 'implementation' },
+      { pattern: /\barchitecture\b/gi, replacement: 'architecture' },
+      { pattern: /\bdeliverables?\b/gi, replacement: 'deliverables' },
+
+      // Fix double replacements (in case we over-corrected)
+      { pattern: /fifi/g, replacement: 'fi' },
+      { pattern: /titi/g, replacement: 'ti' },
+
+      // Additional common patterns
+      { pattern: /\bwi=h\b/g, replacement: 'with' },
+      { pattern: /\bsolu=on\b/g, replacement: 'solution' },
+      { pattern: /\bposi=on\b/g, replacement: 'position' },
+      { pattern: /\bac=on\b/g, replacement: 'action' },
+      { pattern: /\bsec=on\b/g, replacement: 'section' },
+      { pattern: /\bop=on\b/g, replacement: 'option' },
+      { pattern: /\bcondi=on\b/g, replacement: 'condition' },
+      { pattern: /\bna=on\b/g, replacement: 'nation' },
+      { pattern: /\bmodica=ons?\b/g, replacement: 'modifications' },
+      { pattern: /\bapplica=ons?\b/g, replacement: 'applications' },
+
+      // Unicode normalization for special characters
+      { pattern: /[\u2018\u2019]/g, replacement: "'" }, // Smart single quotes
+      { pattern: /[\u201C\u201D]/g, replacement: '"' }, // Smart double quotes
+      { pattern: /[\u2013\u2014]/g, replacement: '-' }, // En/em dashes
+      { pattern: /\u2026/g, replacement: '...' }, // Ellipsis
+      { pattern: /\u00A0/g, replacement: ' ' }, // Non-breaking space
+    ];
+
+    for (const fix of fixes) {
+      fixed = fixed.replace(fix.pattern, fix.replacement);
+    }
+
+    return fixed;
   }
 }

@@ -29,12 +29,17 @@ import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
 import { CreateDatasetDto } from './dto/create-dataset.dto';
 import { UpdateDatasetDto } from './dto/update-dataset.dto';
 import {
+  getEffectiveChunkSize,
+  getEffectiveChunkOverlap,
+  getModelDefaults,
+  EmbeddingModel,
+  RerankerType,
+} from './dto/create-dataset-step.dto';
+import {
   CreateDatasetStepOneDto,
   CreateDatasetStepTwoDto,
   ProcessDocumentsDto,
   SearchDocumentsDto,
-  EmbeddingModel,
-  RerankerType,
 } from './dto/create-dataset-step.dto';
 import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
@@ -42,9 +47,13 @@ import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { DocumentSegmentService } from './document-segment.service';
-import { HybridSearchService, HybridSearchResponse } from './services/hybrid-search.service';
+import {
+  HybridSearchService,
+  HybridSearchResponse,
+} from './services/hybrid-search.service';
 import { DocumentService } from './document.service';
-import { EmbeddingService } from './services/embedding.service';
+import { EmbeddingV2Service } from './services/embedding-v2.service';
+import { DocumentProcessingService } from './services/document-processing.service';
 import { Logger } from '@nestjs/common';
 
 @Crud({
@@ -111,8 +120,9 @@ export class DatasetController implements CrudController<Dataset> {
     public readonly service: DatasetService,
     private readonly documentService: DocumentService,
     private readonly documentSegmentService: DocumentSegmentService,
-    private readonly embeddingService: EmbeddingService,
+    private readonly embeddingService: EmbeddingV2Service,
     private readonly hybridSearchService: HybridSearchService,
+    private readonly documentProcessingService: DocumentProcessingService,
   ) {}
 
   @Override('deleteOneBase')
@@ -122,7 +132,18 @@ export class DatasetController implements CrudController<Dataset> {
       throw new Error('Dataset ID is required');
     }
 
+    // Delete the dataset first
     await this.service.deleteDataset(id);
+
+    // Stop ALL ongoing processing jobs asynchronously (don't wait)
+    this.documentProcessingService
+      .stopAllProcessingJobs(
+        'Dataset deleted by user - clearing all processing jobs',
+      )
+      .catch((error) => {
+        this.logger.error('Failed to stop processing jobs:', error);
+      });
+
     return { deleted: true };
   }
 
@@ -274,14 +295,17 @@ export class DatasetController implements CrudController<Dataset> {
   }
 
   @Post('search-documents')
-  async searchDocuments(@Body() searchDto: SearchDocumentsDto): Promise<HybridSearchResponse> {
+  async searchDocuments(
+    @Body() searchDto: SearchDocumentsDto,
+  ): Promise<HybridSearchResponse> {
     try {
       const {
         documentId,
         query,
         limit = 10,
-        similarityThreshold = 0.7,
-        rerankerType = 'ml-cross-encoder',
+        rerankerType = RerankerType.MATHEMATICAL,
+        bm25Weight,
+        embeddingWeight,
       } = searchDto;
 
       this.logger.log(
@@ -294,6 +318,18 @@ export class DatasetController implements CrudController<Dataset> {
       if (!document) {
         throw new NotFoundException('Document not found');
       }
+
+      // Get dataset to retrieve stored search weights if not provided in request
+      const dataset = await this.service.findById(document.datasetId);
+
+      // Use request weights if provided, otherwise use dataset defaults, finally fallback to hardcoded defaults
+      const finalBm25Weight = bm25Weight ?? dataset?.bm25Weight ?? 0.4;
+      const finalEmbeddingWeight =
+        embeddingWeight ?? dataset?.embeddingWeight ?? 0.6;
+
+      this.logger.log(
+        `⚖️ Using search weights - BM25: ${finalBm25Weight}, Embedding: ${finalEmbeddingWeight}`,
+      );
 
       // Check if document has segments
       const segmentsCount =
@@ -315,14 +351,14 @@ export class DatasetController implements CrudController<Dataset> {
         `📊 Document has ${segmentsCount} segments available for search`,
       );
 
-      // Use hybrid search (BM25 + Semantic + Reranker)
+      // Use hybrid search with configured weights
       const hybridResults = await this.hybridSearchService.hybridSearch(
         documentId,
         query,
         limit,
-        0.4, // semantic weight (reduced from 0.6)
-        0.6, // keyword weight (increased from 0.4)
-        rerankerType as 'mathematical' | 'ml-cross-encoder', // Use the selected reranker type
+        finalEmbeddingWeight, // semantic weight
+        finalBm25Weight, // keyword weight
+        rerankerType,
       );
 
       this.logger.log(`✅ Hybrid search found ${hybridResults.count} results`);
@@ -334,147 +370,81 @@ export class DatasetController implements CrudController<Dataset> {
     }
   }
 
-  @Get('/debug/:id')
-  async debugDataset(@Param('id') datasetId: string) {
+  @Get('/effective-config/:id')
+  async getEffectiveConfig(@Param('id') datasetId: string) {
     try {
-      // Get dataset info
       const dataset = await this.service.findOne({ where: { id: datasetId } });
       if (!dataset) {
-        throw new NotFoundException('Dataset not found');
+        throw new Error('Dataset not found');
       }
 
-      // Get all segments for the dataset
-      const segments =
-        await this.documentSegmentService.findByDatasetId(datasetId);
-
-      // Get segments with embeddings
-      const segmentsWithEmbeddings = await Promise.all(
-        segments
-          .filter((segment) => segment.embeddingId)
-          .map(async (segment) => {
-            const segmentWithEmbedding =
-              await this.documentSegmentService.findOne({
-                where: { id: segment.id },
-                relations: ['embedding', 'document'],
-              });
-            return segmentWithEmbedding;
-          }),
-      );
-
-      const validSegments = segmentsWithEmbeddings.filter(
-        (segment) => segment !== null && segment.embedding !== null,
-      );
-
-      // Get dimension analysis
-      const dimensionAnalysis =
-        validSegments.length > 0 && validSegments[0]?.document
-          ? await this.documentSegmentService.getEmbeddingDimensionsForDocument(
-              validSegments[0].document.id,
-            )
-          : null;
-
-      // Parse index structure
-      let parsedIndexStruct = null;
+      // Parse the index structure to get current configuration
+      let indexStruct: any = {};
       try {
-        parsedIndexStruct = dataset.indexStruct
+        indexStruct = dataset.indexStruct
           ? JSON.parse(dataset.indexStruct)
-          : null;
-      } catch {
-        parsedIndexStruct = {
-          error: 'Failed to parse indexStruct',
-          raw: dataset.indexStruct,
-        };
+          : {};
+      } catch (error) {
+        this.logger.warn(
+          `Failed to parse indexStruct for dataset ${datasetId}: ${error.message}`,
+        );
       }
+
+      const userChunkSize = indexStruct.chunkSize || 1000;
+      const userChunkOverlap = indexStruct.chunkOverlap || 200;
+      const embeddingModel =
+        (dataset.embeddingModel as EmbeddingModel) ||
+        EmbeddingModel.XENOVA_BGE_M3;
+      const useModelDefaults = indexStruct.useModelDefaults !== false; // Default to true
+
+      // Calculate effective values
+      const effectiveChunkSize = getEffectiveChunkSize(
+        userChunkSize,
+        embeddingModel,
+        useModelDefaults,
+      );
+      const effectiveChunkOverlap = getEffectiveChunkOverlap(
+        userChunkOverlap,
+        embeddingModel,
+        effectiveChunkSize,
+        useModelDefaults,
+      );
+
+      // Get model defaults for additional info
+      const modelDefaults = getModelDefaults(embeddingModel);
 
       return {
-        dataset: {
-          id: dataset.id,
-          name: dataset.name,
-          embeddingModel: dataset.embeddingModel,
-          embeddingModelProvider: dataset.embeddingModelProvider,
-          indexStruct: parsedIndexStruct,
-          rawIndexStruct: dataset.indexStruct,
+        datasetId: dataset.id,
+        embeddingModel: dataset.embeddingModel,
+        userConfiguration: {
+          chunkSize: userChunkSize,
+          chunkOverlap: userChunkOverlap,
+          useModelDefaults: useModelDefaults,
         },
-        embeddingAnalysis: {
-          configuredModel: dataset.embeddingModel,
-          actualModelFromEmbeddings:
-            validSegments.length > 0 && validSegments[0]?.embedding
-              ? validSegments[0].embedding.modelName
-              : null,
-          dimensionAnalysis,
-          embeddingDimensions: validSegments
-            .filter(
-              (s): s is NonNullable<typeof s> =>
-                s != null && s.embedding != null,
-            )
-            .map((s) => ({
-              segmentId: s.id,
-              embeddingId: s.embedding.id,
-              modelName: s.embedding.modelName,
-              dimensions: s.embedding.embedding?.length || 0,
-              hasEmbedding: !!s.embedding.embedding,
-            }))
-            .slice(0, 5), // First 5 for sample
+        effectiveConfiguration: {
+          chunkSize: effectiveChunkSize,
+          chunkOverlap: effectiveChunkOverlap,
+          textSplitter:
+            indexStruct.textSplitter || modelDefaults.recommendedTextSplitter,
         },
-        segments: {
-          total: segments.length,
-          withEmbeddings: validSegments.length,
-          withoutEmbeddings: segments.length - validSegments.length,
-          sampleSegments: validSegments
-            .slice(0, 3)
-            .map((segment) => {
-              if (!segment) return null;
-              return {
-                id: segment.id,
-                position: segment.position,
-                status: segment.status,
-                wordCount: segment.wordCount,
-                hasEmbedding: !!segment.embedding,
-                embeddingDimensions: segment.embedding?.embedding?.length || 0,
-                embeddingModelName: segment.embedding?.modelName,
-                content: segment.content.substring(0, 100) + '...',
-                contentLength: segment.content.length,
-                documentEmbeddingModel: segment.document?.embeddingModel,
-                documentEmbeddingDimensions:
-                  segment.document?.embeddingDimensions,
-              };
-            })
-            .filter(Boolean),
-          allSegmentStatuses: segments.map((s) => ({
-            id: s.id,
-            position: s.position,
-            status: s.status,
-            embeddingId: s.embeddingId,
-            hasEmbeddingId: !!s.embeddingId,
-          })),
+        modelOptimizations: {
+          enabled: useModelDefaults,
+          description: modelDefaults.description,
+          recommendedChunkSize: modelDefaults.recommendedChunkSize,
+          recommendedChunkOverlap: modelDefaults.recommendedChunkOverlap,
+          maxTokens: modelDefaults.maxTokens,
         },
-        documents:
-          segments.length > 0
-            ? await Promise.all(
-                Array.from(new Set(segments.map((s) => s.documentId))).map(
-                  async (docId) => {
-                    const doc = await this.documentService.findById(docId);
-                    if (!doc) return null;
-                    return {
-                      id: doc.id,
-                      name: doc.name,
-                      embeddingModel: doc.embeddingModel,
-                      embeddingDimensions: doc.embeddingDimensions,
-                      indexingStatus: doc.indexingStatus,
-                      wordCount: doc.wordCount,
-                      tokens: doc.tokens,
-                    };
-                  },
-                ),
-              ).then((docs) => docs.filter(Boolean))
-            : [],
-        environment: {
-          hasHuggingFaceToken: !!process.env.HUGGINGFACE_API_TOKEN,
-          nodeEnv: process.env.NODE_ENV,
-        },
+        optimizationApplied:
+          effectiveChunkSize !== userChunkSize ||
+          effectiveChunkOverlap !== userChunkOverlap,
       };
     } catch (error) {
-      throw new BadRequestException(`Debug failed: ${error.message}`);
+      this.logger.error(
+        `Failed to get effective config for dataset ${datasetId}: ${error.message}`,
+      );
+      throw new Error(
+        `Failed to get effective configuration: ${error.message}`,
+      );
     }
   }
 
@@ -621,162 +591,5 @@ export class DatasetController implements CrudController<Dataset> {
         `Failed to cleanup orphaned embeddings: ${error.message}`,
       );
     }
-  }
-
-  @Get('/debug-embeddings/:documentId')
-  async debugEmbeddingsForDocument(@Param('documentId') documentId: string) {
-    try {
-      // Get document info
-      const document = await this.documentService.findById(documentId);
-      if (!document) {
-        throw new NotFoundException('Document not found');
-      }
-
-      // Get all segments for this document
-      const segments =
-        await this.documentSegmentService.findByDocumentId(documentId);
-
-      // Get segments with embeddings
-      const segmentsWithEmbeddings = await Promise.all(
-        segments
-          .filter((segment) => segment.embeddingId)
-          .map(async (segment) => {
-            const segmentWithEmbedding =
-              await this.documentSegmentService.findOne({
-                where: { id: segment.id },
-                relations: ['embedding'],
-              });
-            return segmentWithEmbedding;
-          }),
-      );
-
-      const validSegments = segmentsWithEmbeddings.filter(
-        (s) => s && s.embedding,
-      );
-
-      // Analyze dimensions
-      const dimensionAnalysis = validSegments.reduce(
-        (acc, segment) => {
-          if (segment?.embedding?.embedding) {
-            const dims = segment.embedding.embedding.length;
-            acc[dims] = (acc[dims] || 0) + 1;
-          }
-          return acc;
-        },
-        {} as Record<number, number>,
-      );
-
-      // Check database-wide embedding dimensions
-      const allEmbeddingDimensions =
-        await this.service.getAllEmbeddingDimensions();
-
-      return {
-        document: {
-          id: document.id,
-          name: document.name,
-          embeddingModel: document.embeddingModel,
-          embeddingDimensions: document.embeddingDimensions,
-          datasetId: document.datasetId,
-        },
-        segments: {
-          total: segments.length,
-          withEmbeddings: validSegments.length,
-          dimensionAnalysis,
-          hasConsistentDimensions: Object.keys(dimensionAnalysis).length <= 1,
-        },
-        databaseWide: {
-          allDimensions: allEmbeddingDimensions,
-          hasMixedDimensions: Object.keys(allEmbeddingDimensions).length > 1,
-          recommendation:
-            Object.keys(allEmbeddingDimensions).length > 1
-              ? 'Mixed dimensions detected. Use cleanup endpoints to remove orphaned embeddings.'
-              : 'All embeddings have consistent dimensions.',
-        },
-        sampleEmbeddings: validSegments
-          .slice(0, 3)
-          .filter(
-            (s): s is NonNullable<typeof s> => s != null && s.embedding != null,
-          )
-          .map((s) => ({
-            segmentId: s.id,
-            embeddingId: s.embedding.id,
-            modelName: s.embedding.modelName,
-            dimensions: s.embedding.embedding?.length || 0,
-            content: s.content.substring(0, 100) + '...',
-          })),
-      };
-    } catch (error) {
-      throw new BadRequestException(`Debug failed: ${error.message}`);
-    }
-  }
-
-  @Get('/debug-all-embeddings')
-  async debugAllEmbeddings() {
-    try {
-      const allDimensions = await this.service.getAllEmbeddingDimensions();
-      const orphanedEmbeddings = await this.service.findOrphanedEmbeddings();
-
-      // Get sample embeddings for each dimension
-      const samplesByDimension =
-        await this.service.getSampleEmbeddingsByDimension();
-
-      return {
-        summary: {
-          totalDimensionTypes: Object.keys(allDimensions).length,
-          hasMixedDimensions: Object.keys(allDimensions).length > 1,
-          orphanedCount: orphanedEmbeddings.length,
-        },
-        dimensionCounts: allDimensions,
-        orphanedEmbeddings: orphanedEmbeddings.map((e) => ({
-          id: e.id,
-          modelName: e.modelName,
-          dimensions: e.embedding?.length || 0,
-          createdAt: e.createdAt,
-        })),
-        samplesByDimension,
-        recommendations: this.generateCleanupRecommendations(
-          allDimensions,
-          orphanedEmbeddings.length,
-        ),
-      };
-    } catch (error) {
-      throw new BadRequestException(`Debug failed: ${error.message}`);
-    }
-  }
-
-  private generateCleanupRecommendations(
-    dimensionCounts: Record<number, number>,
-    orphanedCount: number,
-  ): string[] {
-    const recommendations: string[] = [];
-
-    if (Object.keys(dimensionCounts).length > 1) {
-      recommendations.push(
-        '🚨 Mixed embedding dimensions detected - this will cause search failures',
-      );
-      recommendations.push(
-        '📋 Use GET /datasets/debug-all-embeddings to identify problematic embeddings',
-      );
-      recommendations.push(
-        '🧹 Use POST /datasets/cleanup-all-orphaned-embeddings to remove orphaned embeddings',
-      );
-      recommendations.push(
-        '🗑️ Consider deleting datasets with wrong dimensions and recreating them',
-      );
-    }
-
-    if (orphanedCount > 0) {
-      recommendations.push(
-        `🧹 ${orphanedCount} orphaned embeddings found - clean them up with POST /datasets/cleanup-all-orphaned-embeddings`,
-      );
-    }
-
-    if (recommendations.length === 0) {
-      recommendations.push(
-        '✅ All embeddings have consistent dimensions - no cleanup needed',
-      );
-    }
-
-    return recommendations;
   }
 }

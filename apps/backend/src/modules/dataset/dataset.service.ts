@@ -6,6 +6,8 @@ import { Dataset } from './entities/dataset.entity';
 import { Document } from './entities/document.entity';
 import { DocumentSegment } from './entities/document-segment.entity';
 import { Embedding } from './entities/embedding.entity';
+import { ChatConversation } from '../chat/entities/chat-conversation.entity';
+import { ChatMessage } from '../chat/entities/chat-message.entity';
 import { TypeOrmCrudService } from '@dataui/crud-typeorm';
 import { Cache } from 'cache-manager';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -19,6 +21,7 @@ import {
 import { EventTypes } from '../event/constants/event-types';
 import { DocumentUploadedEvent } from '../event/interfaces/document-events.interface';
 import { Logger } from '@nestjs/common';
+import { EmbeddingConfigProcessorService } from './services/embedding-config-processor.service';
 
 @Injectable()
 export class DatasetService extends TypeOrmCrudService<Dataset> {
@@ -33,9 +36,14 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     private readonly segmentRepository: Repository<DocumentSegment>,
     @InjectRepository(Embedding)
     private readonly embeddingRepository: Repository<Embedding>,
+    @InjectRepository(ChatConversation)
+    private readonly chatConversationRepository: Repository<ChatConversation>,
+    @InjectRepository(ChatMessage)
+    private readonly chatMessageRepository: Repository<ChatMessage>,
     @Inject(CACHE_MANAGER)
     private readonly cacheManager: Cache,
     private readonly eventEmitter: EventEmitter2,
+    private readonly embeddingConfigProcessor: EmbeddingConfigProcessorService,
   ) {
     super(datasetRepository);
   }
@@ -83,61 +91,77 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     await queryRunner.startTransaction();
 
     try {
-      // First, get all segments for this dataset to find embeddings to delete
-      const segments = await queryRunner.manager.find(DocumentSegment, {
+      // Get counts for logging
+      const segmentCount = await queryRunner.manager.count(DocumentSegment, {
         where: { datasetId: id },
-        select: ['id', 'embeddingId'],
       });
-
-      this.logger.log(`🗑️ Found ${segments.length} segments to analyze`);
-
-      // Collect all embedding IDs that need to be deleted
-      const embeddingIds = segments
-        .filter((segment) => segment.embeddingId)
-        .map((segment) => segment.embeddingId)
-        .filter(Boolean) // Remove null/undefined values
-        .filter((id, index, self) => self.indexOf(id) === index); // Remove duplicates
-
+      const documentCount = await queryRunner.manager.count(Document, {
+        where: { datasetId: id },
+      });
       this.logger.log(
-        `🗑️ Found ${embeddingIds.length} unique embeddings to delete`,
+        `🗑️ Found ${segmentCount} segments and ${documentCount} documents to delete`,
       );
 
-      // Debug: Show first few embedding IDs
-      if (embeddingIds.length > 0) {
-        this.logger.log(
-          `🔍 Sample embedding IDs: ${embeddingIds.slice(0, 3).join(', ')}`,
-        );
-      }
+      // Step 1: Delete all segments for this dataset
+      this.logger.log(`🗑️ Deleting segments for dataset ${id}...`);
 
-      // Delete document segments first (they reference embeddings via foreign key)
-      const deletedSegments = await queryRunner.manager.delete(
-        DocumentSegment,
-        { datasetId: id },
+      // First, clear parent_id references to break foreign key chains
+      await queryRunner.query(
+        `UPDATE document_segments SET parent_id = NULL WHERE dataset_id = $1`,
+        [id],
       );
-      this.logger.log(`✅ Deleted ${deletedSegments.affected || 0} segments`);
+      this.logger.log(`✅ Cleared parent_id references`);
 
-      // Now delete embeddings (no longer referenced by segments)
-      if (embeddingIds.length > 0) {
-        try {
-          // Use repository method to delete embeddings
-          const repoDeleteResult = await queryRunner.manager.delete(
-            Embedding,
-            embeddingIds,
-          );
-          this.logger.log(
-            `✅ Deleted ${repoDeleteResult.affected || 0} embeddings`,
-          );
-        } catch (error) {
-          this.logger.error(`❌ Failed to delete embeddings: ${error.message}`);
-          throw error;
-        }
-      }
+      // Delete all segments
+      const deletedSegments = await queryRunner.query(
+        `DELETE FROM document_segments WHERE dataset_id = $1`,
+        [id],
+      );
+      this.logger.log(`✅ Deleted ${deletedSegments.length || 0} segments`);
 
-      // Delete all documents related to this dataset
-      const deletedDocuments = await queryRunner.manager.delete(Document, {
-        datasetId: id,
-      });
-      this.logger.log(`✅ Deleted ${deletedDocuments.affected || 0} documents`);
+      // Step 2: Delete all documents for this dataset
+      this.logger.log(`🗑️ Deleting documents for dataset ${id}...`);
+      const deletedDocuments = await queryRunner.query(
+        `DELETE FROM documents WHERE dataset_id = $1`,
+        [id],
+      );
+      this.logger.log(`✅ Deleted ${deletedDocuments.length || 0} documents`);
+
+      // Step 3: Delete embeddings that are no longer referenced by any segments
+      this.logger.log(`🗑️ Cleaning up orphaned embeddings...`);
+      const deletedEmbeddings = await queryRunner.query(`
+        DELETE FROM embeddings 
+        WHERE id NOT IN (
+          SELECT DISTINCT embedding_id 
+          FROM document_segments 
+          WHERE embedding_id IS NOT NULL
+        )
+      `);
+      this.logger.log(
+        `✅ Deleted ${deletedEmbeddings.length || 0} orphaned embeddings`,
+      );
+
+      // Delete all chat messages related to this dataset first
+      const deletedChatMessages = await queryRunner.manager.delete(
+        ChatMessage,
+        {
+          datasetId: id,
+        },
+      );
+      this.logger.log(
+        `✅ Deleted ${deletedChatMessages.affected || 0} chat messages`,
+      );
+
+      // Delete all chat conversations related to this dataset
+      const deletedChatConversations = await queryRunner.manager.delete(
+        ChatConversation,
+        {
+          datasetId: id,
+        },
+      );
+      this.logger.log(
+        `✅ Deleted ${deletedChatConversations.affected || 0} chat conversations`,
+      );
 
       // Finally, delete the dataset itself
       const deletedDataset = await queryRunner.manager.delete(Dataset, id);
@@ -161,6 +185,140 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
       // Release the query runner
       await queryRunner.release();
     }
+  }
+
+  /**
+   * Recursively delete segments to handle complex parent-child relationships
+   */
+  private async deleteSegmentsRecursively(
+    queryRunner: any,
+    datasetId: string,
+  ): Promise<void> {
+    this.logger.log(
+      `🔄 Starting recursive segment deletion for dataset ${datasetId}`,
+    );
+
+    let deletedCount = 0;
+    let maxIterations = 20; // Increased limit for complex hierarchies
+    let iteration = 0;
+
+    while (iteration < maxIterations) {
+      iteration++;
+      this.logger.log(`🔄 Recursive deletion iteration ${iteration}`);
+
+      // Get all segments for this dataset
+      const segments = await queryRunner.manager.find(DocumentSegment, {
+        where: { datasetId },
+        select: ['id', 'parentId'],
+      });
+
+      if (segments.length === 0) {
+        this.logger.log(`✅ No more segments to delete`);
+        break;
+      }
+
+      this.logger.log(`📊 Found ${segments.length} segments remaining`);
+
+      // Find segments that have no children (leaf nodes)
+      const segmentIds = segments.map((s: DocumentSegment) => s.id);
+      const segmentsWithChildren = await queryRunner.manager
+        .createQueryBuilder()
+        .select('parentId')
+        .from(DocumentSegment, 'ds')
+        .where('ds.parentId IN (:...segmentIds)', { segmentIds })
+        .andWhere('ds.datasetId = :datasetId', { datasetId })
+        .getRawMany();
+
+      const parentIdsWithChildren = new Set(
+        segmentsWithChildren.map((s: any) => s.parentId),
+      );
+
+      // Delete only leaf segments (segments with no children)
+      const leafSegmentIds = segments
+        .filter((s: DocumentSegment) => !parentIdsWithChildren.has(s.id))
+        .map((s: DocumentSegment) => s.id);
+
+      if (leafSegmentIds.length === 0) {
+        this.logger.warn(
+          `⚠️ No leaf segments found, this might indicate a circular reference. Forcing deletion of remaining ${segments.length} segments`,
+        );
+
+        // Try to delete segments one by one to avoid foreign key constraints
+        for (const segmentId of segmentIds) {
+          try {
+            const deleted = await queryRunner.manager.delete(
+              DocumentSegment,
+              segmentId,
+            );
+            if (deleted.affected && deleted.affected > 0) {
+              deletedCount++;
+              this.logger.log(`🔧 Force deleted segment ${segmentId}`);
+            }
+          } catch (error) {
+            this.logger.warn(
+              `⚠️ Failed to delete segment ${segmentId}: ${error.message}`,
+            );
+          }
+        }
+        break;
+      }
+
+      this.logger.log(`🗑️ Deleting ${leafSegmentIds.length} leaf segments`);
+
+      // Delete leaf segments in batches to avoid constraint issues
+      const batchSize = 100;
+      for (let i = 0; i < leafSegmentIds.length; i += batchSize) {
+        const batch = leafSegmentIds.slice(i, i + batchSize);
+        try {
+          const deleted = await queryRunner.manager.delete(
+            DocumentSegment,
+            batch,
+          );
+          deletedCount += deleted.affected || 0;
+          this.logger.log(
+            `✅ Deleted batch of ${deleted.affected || 0} segments`,
+          );
+        } catch (error) {
+          this.logger.warn(
+            `⚠️ Failed to delete batch, trying individual deletion: ${error.message}`,
+          );
+          // Try deleting one by one
+          for (const segmentId of batch) {
+            try {
+              const deleted = await queryRunner.manager.delete(
+                DocumentSegment,
+                segmentId,
+              );
+              if (deleted.affected && deleted.affected > 0) {
+                deletedCount++;
+              }
+            } catch (individualError) {
+              this.logger.warn(
+                `⚠️ Failed to delete individual segment ${segmentId}: ${individualError.message}`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // Final verification
+    const remainingSegments = await queryRunner.manager.count(DocumentSegment, {
+      where: { datasetId },
+    });
+
+    if (remainingSegments > 0) {
+      this.logger.error(
+        `💥 CRITICAL: ${remainingSegments} segments still remain after recursive deletion!`,
+      );
+      throw new Error(
+        `Failed to delete all segments: ${remainingSegments} segments remain after ${iteration} iterations`,
+      );
+    }
+
+    this.logger.log(
+      `🎉 Recursive deletion completed: ${deletedCount} segments deleted in ${iteration} iterations`,
+    );
   }
 
   async getDatasetWithDetails(id: string): Promise<Dataset | null> {
@@ -292,13 +450,18 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     // Update dataset with embedding configuration
     await this.datasetRepository.update(processDto.datasetId, {
       embeddingModel: processDto.embeddingModel,
-      embeddingModelProvider: 'local',
+      embeddingModelProvider: processDto.embeddingProvider || 'local',
+      bm25Weight: processDto.bm25Weight ?? 0.4,
+      embeddingWeight: processDto.embeddingWeight ?? 0.6,
       indexStruct: JSON.stringify({
         textSplitter: processDto.textSplitter,
         chunkSize: processDto.chunkSize,
         chunkOverlap: processDto.chunkOverlap,
         separators: processDto.separators,
         customModelName: processDto.customModelName,
+        enableLangChainRAG: processDto.enableLangChainRAG,
+        langChainConfig: processDto.langChainConfig,
+        configMode: processDto.configMode,
       }),
     });
 
@@ -322,13 +485,17 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
         embeddingConfig: {
           model: processDto.embeddingModel,
           customModelName: processDto.customModelName,
-          provider: 'local',
+          provider: processDto.embeddingProvider || 'local',
           textSplitter: processDto.textSplitter,
           chunkSize: processDto.chunkSize,
           chunkOverlap: processDto.chunkOverlap,
           separators: processDto.separators,
           // 🆕 Pass parent-child chunking option
           enableParentChildChunking: processDto.enableParentChildChunking,
+          // 🆕 Pass LangChain RAG configuration
+          enableLangChainRAG: processDto.enableLangChainRAG,
+          langChainConfig: processDto.langChainConfig,
+          configMode: processDto.configMode,
         },
         userId: _userId,
       });
@@ -356,16 +523,40 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
       throw new Error('Dataset not found');
     }
 
-    // Update dataset with final configuration
+    // Process the embedding configuration
+    const processedConfig =
+      this.embeddingConfigProcessor.processConfig(setupDto);
+
+    // Validate the configuration
+    const validation =
+      this.embeddingConfigProcessor.validateConfig(processedConfig);
+    if (!validation.isValid) {
+      throw new Error(`Invalid configuration: ${validation.errors.join(', ')}`);
+    }
+
+    // Log configuration summary
+    const configSummary =
+      this.embeddingConfigProcessor.getConfigSummary(processedConfig);
+    this.logger.log(
+      `Processing dataset ${datasetId} with config: ${configSummary}`,
+    );
+
+    // Update dataset with processed configuration
     await this.datasetRepository.update(datasetId, {
-      embeddingModel: setupDto.embeddingModel,
-      embeddingModelProvider: 'local',
+      embeddingModel: processedConfig.embeddingModel,
+      embeddingModelProvider: processedConfig.embeddingModelProvider || 'local',
+      bm25Weight: processedConfig.bm25Weight ?? 0.4,
+      embeddingWeight: processedConfig.embeddingWeight ?? 0.6,
       indexStruct: JSON.stringify({
-        textSplitter: setupDto.textSplitter,
-        chunkSize: setupDto.chunkSize,
-        chunkOverlap: setupDto.chunkOverlap,
-        separators: setupDto.separators,
-        customModelName: setupDto.customModelName,
+        mode: processedConfig.mode,
+        textSplitter: processedConfig.textSplitter,
+        chunkSize: processedConfig.chunkSize,
+        chunkOverlap: processedConfig.chunkOverlap,
+        separators: processedConfig.separators,
+        customModelName: processedConfig.customModelName,
+        enableParentChildChunking: processedConfig.enableParentChildChunking,
+        useModelDefaults: processedConfig.useModelDefaults,
+        langChainConfig: processedConfig.langChainConfig,
       }),
     });
 
@@ -373,7 +564,9 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     await this.invalidateDatasetCache(datasetId);
 
     // Log the completion for the user
-    this.logger.log(`Dataset setup completed by user ${userId}: ${datasetId}`);
+    this.logger.log(
+      `Dataset setup completed by user ${userId}: ${datasetId} (${processedConfig.mode} mode)`,
+    );
 
     return updatedDataset!;
   }

@@ -8,16 +8,17 @@ This document specifies the setup and configuration requirements for the Knowled
 
 ### Prerequisites
 
-| Component | Version | Purpose |
-|-----------|---------|---------|
-| Node.js | v18+ | Runtime environment |
-| PostgreSQL | v13+ | Primary database |
-| Redis | v6+ | Caching and queues |
-| Docker | v20+ | Containerization (optional) |
+| Component  | Version | Purpose                     |
+| ---------- | ------- | --------------------------- |
+| Node.js    | v18+    | Runtime environment         |
+| PostgreSQL | v13+    | Primary database            |
+| Redis      | v6+     | Caching and queues          |
+| Docker     | v20+    | Containerization (optional) |
 
 ### Environment Variables
 
 #### Database Configuration
+
 ```bash
 DB_HOST=localhost
 DB_PORT=5432
@@ -27,6 +28,7 @@ DB_DATABASE=knowledge_hub
 ```
 
 #### Cache Configuration
+
 ```bash
 REDIS_HOST=localhost
 REDIS_PORT=6379
@@ -34,6 +36,7 @@ REDIS_PASSWORD=your_redis_password
 ```
 
 #### LLM Provider Configuration
+
 ```bash
 # OpenRouter
 OPENROUTER_API_KEY=your_openrouter_key
@@ -49,6 +52,7 @@ DASHSCOPE_API_KEY=your_dashscope_key
 ## Installation Process
 
 ### 1. Repository Setup
+
 ```bash
 git clone <repository-url>
 cd knowledge-hub
@@ -56,17 +60,20 @@ cd apps/backend
 ```
 
 ### 2. Dependencies Installation
+
 ```bash
 npm install
 ```
 
 ### 3. Environment Configuration
+
 ```bash
 cp .env.example .env
 # Edit .env with your configuration
 ```
 
 ### 4. Database Setup
+
 ```bash
 # Create database
 createdb -U postgres knowledge_hub
@@ -79,6 +86,7 @@ npm run seed
 ```
 
 ### 5. Service Startup
+
 ```bash
 # Development mode
 npm run dev
@@ -112,22 +120,26 @@ src/
 ### API Endpoints
 
 #### Authentication
+
 - `POST /auth/login` - User authentication
 - `POST /auth/register` - User registration
 - `POST /auth/refresh` - Token refresh
 
 #### Dataset Management
+
 - `GET /datasets` - List datasets
 - `POST /datasets` - Create dataset
 - `PUT /datasets/:id` - Update dataset
 - `DELETE /datasets/:id` - Delete dataset
 
 #### Document Processing
+
 - `POST /documents/upload` - Upload documents
 - `POST /datasets/process-documents` - Process documents
 - `GET /documents/:id/segments` - Get document segments
 
 #### Chat Interface
+
 - `POST /chat/with-documents` - Chat with documents
 - `GET /chat/conversations` - List conversations
 - `GET /chat/conversations/:id/messages` - Get conversation messages
@@ -136,14 +148,15 @@ src/
 
 ### Test Categories
 
-| Test Type | Command | Coverage |
-|-----------|---------|----------|
-| Unit Tests | `npm test` | Service logic |
-| Integration Tests | `npm run test:e2e` | API endpoints |
-| Embedding Tests | `npm run test:embedding` | ML functionality |
-| Comprehensive Tests | `npm run test:comprehensive` | Full workflows |
+| Test Type           | Command                      | Coverage         |
+| ------------------- | ---------------------------- | ---------------- |
+| Unit Tests          | `npm test`                   | Service logic    |
+| Integration Tests   | `npm run test:e2e`           | API endpoints    |
+| Embedding Tests     | `npm run test:embedding`     | ML functionality |
+| Comprehensive Tests | `npm run test:comprehensive` | Full workflows   |
 
 ### Test Database Setup
+
 ```bash
 # Create test database
 createdb -U postgres knowledge_hub_test
@@ -157,33 +170,36 @@ npm run typeorm:migration:run
 
 ### Response Time Requirements
 
-| Endpoint | Max Response Time | Target |
-|----------|------------------|---------|
-| Authentication | 500ms | 200ms |
-| Document Upload | 5s | 2s |
-| Search Queries | 2s | 1s |
-| Chat Responses | 10s | 5s |
+| Endpoint        | Max Response Time | Target |
+| --------------- | ----------------- | ------ |
+| Authentication  | 500ms             | 200ms  |
+| Document Upload | 5s                | 2s     |
+| Search Queries  | 2s                | 1s     |
+| Chat Responses  | 10s               | 5s     |
 
 ### Resource Requirements
 
-| Environment | CPU | Memory | Storage |
-|-------------|-----|--------|---------|
-| Development | 2 cores | 4GB | 20GB |
-| Production | 4 cores | 8GB | 100GB |
+| Environment | CPU     | Memory | Storage |
+| ----------- | ------- | ------ | ------- |
+| Development | 2 cores | 4GB    | 20GB    |
+| Production  | 4 cores | 8GB    | 100GB   |
 
 ## Security Specifications
 
 ### Authentication
+
 - JWT-based authentication
 - Token expiration: 24 hours
 - Refresh token: 7 days
 
 ### Authorization
+
 - Role-based access control (RBAC)
 - Resource-level permissions
 - API rate limiting
 
 ### Data Protection
+
 - Input validation with class-validator
 - SQL injection prevention via TypeORM
 - XSS protection in responses
@@ -191,12 +207,14 @@ npm run typeorm:migration:run
 ## Monitoring & Logging
 
 ### Log Levels
+
 - `ERROR`: System errors and exceptions
 - `WARN`: Warning conditions
 - `INFO`: General information
 - `DEBUG`: Detailed debugging information
 
 ### Metrics Collection
+
 - Request/response times
 - Error rates
 - Database query performance
@@ -205,6 +223,7 @@ npm run typeorm:migration:run
 ## Deployment Specifications
 
 ### Docker Configuration
+
 ```dockerfile
 FROM node:18-alpine
 WORKDIR /app
@@ -216,6 +235,7 @@ CMD ["node", "dist/main"]
 ```
 
 ### Health Checks
+
 - `GET /health` - Basic health check
 - `GET /health/detailed` - Detailed system status
 
@@ -223,14 +243,15 @@ CMD ["node", "dist/main"]
 
 ### Common Issues
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| Database connection failed | Wrong credentials | Check .env configuration |
-| Ollama timeout | Model too large | Increase OLLAMA_TIMEOUT |
-| Memory issues | Insufficient RAM | Increase container memory |
-| Slow responses | Missing indexes | Run database optimization |
+| Issue                      | Cause             | Solution                  |
+| -------------------------- | ----------------- | ------------------------- |
+| Database connection failed | Wrong credentials | Check .env configuration  |
+| Ollama timeout             | Model too large   | Increase OLLAMA_TIMEOUT   |
+| Memory issues              | Insufficient RAM  | Increase container memory |
+| Slow responses             | Missing indexes   | Run database optimization |
 
 ### Debug Mode
+
 ```bash
 # Enable debug logging
 DEBUG=* npm run dev

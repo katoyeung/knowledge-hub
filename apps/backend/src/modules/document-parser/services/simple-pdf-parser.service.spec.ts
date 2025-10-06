@@ -4,7 +4,7 @@ import * as fs from 'fs';
 
 // Mock for pdf-parse
 jest.mock('pdf-parse', () => {
-  return jest.fn().mockImplementation((buffer: Buffer) => {
+  const mockPdfParse = jest.fn().mockImplementation((buffer: Buffer) => {
     return Promise.resolve({
       text: 'Sample PDF content for testing.\n\nThis is a simple PDF document that contains basic text content.',
       numpages: 1,
@@ -17,6 +17,11 @@ jest.mock('pdf-parse', () => {
       },
     });
   });
+
+  return {
+    __esModule: true,
+    default: mockPdfParse,
+  };
 });
 
 // Mock fs
@@ -24,6 +29,7 @@ jest.mock('fs');
 
 describe('SimplePdfParserService', () => {
   let service: SimplePdfParserService;
+  let mockPdfParse: jest.MockedFunction<any>;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -31,6 +37,10 @@ describe('SimplePdfParserService', () => {
     }).compile();
 
     service = module.get<SimplePdfParserService>(SimplePdfParserService);
+
+    // Get the mocked function
+    const pdfParse = require('pdf-parse');
+    mockPdfParse = pdfParse.default;
 
     // Reset mocks
     jest.clearAllMocks();
@@ -78,8 +88,7 @@ describe('SimplePdfParserService', () => {
     });
 
     it('should handle PDF parsing errors', async () => {
-      const pdfParse = require('pdf-parse');
-      pdfParse.mockImplementationOnce(() => {
+      mockPdfParse.mockImplementationOnce(() => {
         throw new Error('Invalid PDF format');
       });
 
@@ -114,8 +123,7 @@ describe('SimplePdfParserService', () => {
     });
 
     it('should handle PDF parsing errors from buffer', async () => {
-      const pdfParse = require('pdf-parse');
-      pdfParse.mockImplementationOnce(() => {
+      mockPdfParse.mockImplementationOnce(() => {
         throw new Error('Corrupted PDF buffer');
       });
 
@@ -129,8 +137,7 @@ describe('SimplePdfParserService', () => {
 
   describe('word counting', () => {
     it('should handle empty content', async () => {
-      const pdfParse = require('pdf-parse');
-      pdfParse.mockImplementationOnce(() =>
+      mockPdfParse.mockImplementationOnce(() =>
         Promise.resolve({
           text: '',
           numpages: 1,
@@ -147,8 +154,7 @@ describe('SimplePdfParserService', () => {
     });
 
     it('should handle whitespace-only content', async () => {
-      const pdfParse = require('pdf-parse');
-      pdfParse.mockImplementationOnce(() =>
+      mockPdfParse.mockImplementationOnce(() =>
         Promise.resolve({
           text: '   \n\n  \t  ',
           numpages: 1,
@@ -165,8 +171,7 @@ describe('SimplePdfParserService', () => {
 
   describe('metadata extraction', () => {
     it('should handle missing PDF metadata gracefully', async () => {
-      const pdfParse = require('pdf-parse');
-      pdfParse.mockImplementationOnce(() =>
+      mockPdfParse.mockImplementationOnce(() =>
         Promise.resolve({
           text: 'Some content',
           numpages: 2,

@@ -194,7 +194,7 @@ export class ChineseTextPreprocessorService {
   }
 
   /**
-   * Split Chinese text into meaningful chunks
+   * Split Chinese text into meaningful chunks with better size utilization
    */
   splitChineseText(
     text: string,
@@ -204,6 +204,10 @@ export class ChineseTextPreprocessorService {
     if (!this.isChineseText(text)) {
       return this.fallbackSplit(text, maxChunkSize, overlapSize);
     }
+
+    this.logger.debug(
+      `Splitting Chinese text: ${text.length} chars, maxChunkSize: ${maxChunkSize}, overlap: ${overlapSize}`,
+    );
 
     const chunks: string[] = [];
     const paragraphs = text.split('\n\n').filter((p) => p.trim().length > 0);
@@ -220,6 +224,9 @@ export class ChineseTextPreprocessorService {
       } else {
         if (currentChunk) {
           chunks.push(currentChunk);
+          this.logger.debug(
+            `Created Chinese chunk ${chunks.length}: ${currentChunk.length} chars`,
+          );
 
           // Handle overlap
           if (overlapSize > 0 && currentChunk.length > overlapSize) {
@@ -234,21 +241,40 @@ export class ChineseTextPreprocessorService {
         } else {
           // Single paragraph is too long, split by sentences
           const sentences = this.splitBySentences(paragraph);
-          currentChunk = this.buildChunksFromSentences(
+          const remainingChunk = this.buildChunksFromSentences(
             sentences,
             maxChunkSize,
             overlapSize,
             chunks,
           );
+          currentChunk = remainingChunk;
         }
       }
     }
 
     if (currentChunk.trim()) {
       chunks.push(currentChunk);
+      this.logger.debug(
+        `Created final Chinese chunk: ${currentChunk.length} chars`,
+      );
     }
 
-    return chunks.filter((chunk) => chunk.trim().length > 0);
+    // Remove duplicate chunks (same content)
+    const uniqueChunks = [];
+    const seenContent = new Set();
+
+    for (const chunk of chunks) {
+      const trimmedContent = chunk.trim();
+      if (trimmedContent.length > 0 && !seenContent.has(trimmedContent)) {
+        seenContent.add(trimmedContent);
+        uniqueChunks.push(chunk);
+      }
+    }
+
+    this.logger.debug(
+      `Chinese text splitting completed: ${uniqueChunks.length} chunks, avg size: ${uniqueChunks.reduce((sum, chunk) => sum + chunk.length, 0) / uniqueChunks.length}`,
+    );
+    return uniqueChunks;
   }
 
   /**
@@ -303,6 +329,7 @@ export class ChineseTextPreprocessorService {
     chunks: string[],
   ): string {
     let currentChunk = '';
+    const minChunkSize = Math.max(50, maxChunkSize * 0.1); // Minimum 10% of max size or 50 chars
 
     for (const sentence of sentences) {
       const potentialChunk = currentChunk
@@ -333,6 +360,17 @@ export class ChineseTextPreprocessorService {
       }
     }
 
+    // If the remaining chunk is too small and we have previous chunks, merge it
+    if (
+      currentChunk &&
+      currentChunk.length < minChunkSize &&
+      chunks.length > 0
+    ) {
+      const lastChunk = chunks[chunks.length - 1];
+      chunks[chunks.length - 1] = lastChunk + ' ' + currentChunk;
+      return '';
+    }
+
     return currentChunk;
   }
 
@@ -346,10 +384,24 @@ export class ChineseTextPreprocessorService {
   ): string[] {
     const chunks: string[] = [];
     let start = 0;
+    const minChunkSize = Math.max(50, maxChunkSize * 0.1); // Minimum 10% of max size or 50 chars
 
     while (start < text.length) {
       const end = Math.min(start + maxChunkSize, text.length);
-      chunks.push(text.slice(start, end));
+      const chunk = text.slice(start, end);
+
+      // If this is the last chunk and it's too small, merge with previous chunk
+      if (
+        chunks.length > 0 &&
+        chunk.length < minChunkSize &&
+        end === text.length
+      ) {
+        const lastChunk = chunks[chunks.length - 1];
+        chunks[chunks.length - 1] = lastChunk + chunk;
+      } else {
+        chunks.push(chunk);
+      }
+
       start = end - overlapSize;
 
       if (start >= end) break;

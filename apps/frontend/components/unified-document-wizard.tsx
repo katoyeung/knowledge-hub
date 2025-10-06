@@ -152,7 +152,7 @@ export function UnifiedDocumentWizard({
 
         // Show warnings if any
         if (validation.warnings.length > 0) {
-            console.warn('Configuration warnings:', validation.warnings)
+            // Configuration warnings can be handled by UI notifications
         }
 
         setLoading(true)

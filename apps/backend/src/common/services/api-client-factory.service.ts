@@ -1,9 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { ApiClient } from '../interfaces/api-client.interface';
 import { OpenRouterApiClient } from './openrouter-api-client.service';
-import { OpenAIApiClient } from './openai-api-client.service';
 import { LLMClient } from '../interfaces/llm-client.interface';
 import { PerplexityApiClient } from './perplexity-api-client.service';
+import { OllamaApiClient } from './ollama-api-client.service';
+import { LocalModelApiClient } from './local-model-api-client.service';
+import { LocalLLMClient } from './local-llm-client.service';
+import { DashScopeApiClient } from './dashscope-api-client.service';
 
 export enum ApiClientType {
   EODHD = 'eodhd',
@@ -12,17 +15,23 @@ export enum ApiClientType {
 }
 
 export enum LLMProvider {
-  OPENAI = 'openai',
   OPENROUTER = 'openrouter',
   PERPLEXITY = 'perplexity',
+  OLLAMA = 'ollama',
+  LOCAL_API = 'local-api', // External local API server
+  LOCAL_DIRECT = 'local-direct', // Direct function calls in same project
+  DASHSCOPE = 'dashscope', // Alibaba Cloud DashScope API
 }
 
 @Injectable()
 export class ApiClientFactory {
   constructor(
     private readonly openRouterClient: OpenRouterApiClient,
-    private readonly openAIClient: OpenAIApiClient,
     private readonly perplexityClient: PerplexityApiClient,
+    private readonly ollamaClient: OllamaApiClient,
+    private readonly localModelClient: LocalModelApiClient,
+    private readonly localLLMClient: LocalLLMClient,
+    private readonly dashScopeClient: DashScopeApiClient,
   ) {}
 
   getClient(type: ApiClientType): ApiClient {
@@ -38,14 +47,20 @@ export class ApiClientFactory {
 
   getLLMClient(provider: LLMProvider): LLMClient {
     switch (provider) {
-      case LLMProvider.OPENAI:
-        return this.openAIClient;
       case LLMProvider.OPENROUTER:
         return this.openRouterClient;
       case LLMProvider.PERPLEXITY:
         return this.perplexityClient;
+      case LLMProvider.OLLAMA:
+        return this.ollamaClient;
+      case LLMProvider.LOCAL_API:
+        return this.localModelClient;
+      case LLMProvider.LOCAL_DIRECT:
+        return this.localLLMClient;
+      case LLMProvider.DASHSCOPE:
+        return this.dashScopeClient;
       default:
-        throw new Error(`Unknown LLM provider: ${provider}`);
+        throw new Error(`Unknown LLM provider: ${String(provider)}`);
     }
   }
 }

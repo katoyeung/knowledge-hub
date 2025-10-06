@@ -95,4 +95,55 @@ export class OpenRouterApiClient extends BaseLLMClient {
       throw error;
     }
   }
+
+  async isServiceAvailable(): Promise<boolean> {
+    try {
+      // Test with a simple request to check if the service is available
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.config.baseUrl}/models`, {
+          headers: {
+            Authorization: `Bearer ${this.config.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000, // Short timeout for health check
+        }),
+      );
+      return response.status === 200;
+    } catch (error) {
+      this.logger.warn(`OpenRouter service unavailable: ${error.message}`);
+      return false;
+    }
+  }
+
+  async getAvailableModels(): Promise<string[]> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.config.baseUrl}/models`, {
+          headers: {
+            Authorization: `Bearer ${this.config.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 10000,
+        }),
+      );
+
+      if (response.data && response.data.data) {
+        return response.data.data.map((model: any) => model.id).slice(0, 10); // Return first 10 models
+      }
+      return [];
+    } catch (error) {
+      this.logger.error(`Failed to get OpenRouter models: ${error.message}`);
+      return [];
+    }
+  }
+
+  async healthCheck(): Promise<{ status: string; models: string[] }> {
+    const isAvailable = await this.isServiceAvailable();
+    const models = isAvailable ? await this.getAvailableModels() : [];
+
+    return {
+      status: isAvailable ? 'healthy' : 'unhealthy',
+      models,
+    };
+  }
 }

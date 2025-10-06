@@ -6,7 +6,7 @@ import { CustomValidationPipe } from './common/pipes/validation.pipe';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  
+
   const configService = app.get(ConfigService);
 
   // Get CORS origins from environment variable and split by comma

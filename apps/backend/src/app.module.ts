@@ -5,7 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UserModule } from '@modules/user';
 import { AuthModule } from '@modules/auth';
-import { getDatabaseConfig } from './config';
+import { getDatabaseConfig, localModelsConfig } from './config';
 import { AccessModule } from '@modules/access';
 import { DatasetModule } from '@modules/dataset';
 import { CacheModule } from '@nestjs/cache-manager';
@@ -17,10 +17,14 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventModule } from '@modules/event/event.module';
 import { SchedulerModule } from '@modules/scheduler/scheduler.module';
 import { DocumentParserModule } from '@modules/document-parser/document-parser.module';
+import { ChatModule } from '@modules/chat/chat.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      load: [localModelsConfig],
+    }),
     ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -38,6 +42,7 @@ import { DocumentParserModule } from '@modules/document-parser/document-parser.m
     AccessModule,
     DatasetModule,
     DocumentParserModule,
+    ChatModule,
     NotificationModule,
     QueueModule,
     EventEmitterModule.forRoot(),

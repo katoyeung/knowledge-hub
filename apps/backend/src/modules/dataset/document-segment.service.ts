@@ -5,7 +5,7 @@ import { TypeOrmCrudService } from '@dataui/crud-typeorm';
 import { DocumentSegment } from './entities/document-segment.entity';
 import { Document } from './entities/document.entity';
 import { Embedding } from './entities/embedding.entity';
-import { EmbeddingService } from './services/embedding.service';
+import { EmbeddingV2Service } from './services/embedding-v2.service';
 import { UpdateDocumentSegmentDto } from './dto/update-document-segment.dto';
 import * as crypto from 'crypto';
 import { DataSource } from 'typeorm';
@@ -21,7 +21,7 @@ export class DocumentSegmentService extends TypeOrmCrudService<DocumentSegment> 
     private readonly documentRepository: Repository<Document>,
     @InjectRepository(Embedding)
     private readonly embeddingRepository: Repository<Embedding>,
-    private readonly embeddingService: EmbeddingService,
+    private readonly embeddingService: EmbeddingV2Service,
     private readonly dataSource: DataSource,
   ) {
     super(segmentRepository);
@@ -236,7 +236,7 @@ export class DocumentSegmentService extends TypeOrmCrudService<DocumentSegment> 
 
   private getProviderName(model: string): string {
     // Map model names to provider names
-    if (model.includes('openai')) return 'openai';
+    if (model.includes('dashscope')) return 'dashscope';
     if (model.includes('huggingface')) return 'huggingface';
     if (model.includes('mixedbread')) return 'mixedbread';
     if (model.includes('xenova')) return 'xenova';

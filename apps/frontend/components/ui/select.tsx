@@ -137,8 +137,6 @@ export function SelectItem({ value, className, children }: SelectItemProps) {
                 className
             )}
             onClick={() => {
-                console.log('SelectItem clicked:', value);
-                console.log('onValueChange function:', onValueChange);
                 onValueChange?.(value)
                 setOpen(false)
             }}

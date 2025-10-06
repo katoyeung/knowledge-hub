@@ -19,7 +19,6 @@ export function DatasetDetailPage({ dataset }: DatasetDetailPageProps) {
         setShowUploadWizard(false)
 
         // Optionally show a success message or refresh the page
-        console.log(`Successfully uploaded ${newDocuments.length} documents to ${dataset.name}`)
     }
 
     const handleUploadClose = () => {
