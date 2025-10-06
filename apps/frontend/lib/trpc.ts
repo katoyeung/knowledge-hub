@@ -1,6 +1,6 @@
 import { createTRPCNext } from "@trpc/next";
 import { httpBatchLink } from "@trpc/client";
-import type { AppRouter } from "@knowledge-hub/shared-types";
+// import type { AppRouter } from "@knowledge-hub/shared-types";
 
 function getBaseUrl() {
   if (typeof window !== "undefined")
@@ -16,7 +16,8 @@ function getBaseUrl() {
   return `http://localhost:${process.env.PORT ?? 3001}`;
 }
 
-export const trpc = createTRPCNext<AppRouter>({
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const trpc = createTRPCNext<any>({
   config(opts) {
     const { ctx } = opts;
     if (typeof window !== "undefined") {

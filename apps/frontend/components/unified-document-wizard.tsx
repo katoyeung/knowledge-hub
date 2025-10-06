@@ -11,10 +11,11 @@ import {
     X,
     Loader2,
     CheckCircle,
-    Settings,
     Database
 } from 'lucide-react'
 import { datasetApi, type Dataset, type Document } from '@/lib/api'
+import { EmbeddingConfigStep, EmbeddingConfigData } from './embedding-config/embedding-config-step'
+import { EmbeddingConfigService } from '@/lib/services/embedding-config.service'
 
 // Unified wizard that can handle both create dataset and upload documents flows
 interface UnifiedDocumentWizardProps {
@@ -29,24 +30,8 @@ interface UnifiedDocumentWizardProps {
     onClose?: () => void
 }
 
-// Embedding models enum mapping - 1024D Models Only
-const EMBEDDING_MODELS = {
-    // 1024-Dimension Models Only (for consistency and compatibility)
-    'Xenova/bge-m3': 'BGE M3 - Multilingual (1024 dims) ⭐',
-    'mixedbread-ai/mxbai-embed-large-v1': 'MixedBread AI - High Quality English (1024 dims)',
-    'WhereIsAI/UAE-Large-V1': 'UAE Large V1 - Universal Angle (1024 dims)',
-    'custom': 'Custom Model (must be 1024 dimensions)',
-}
 
-const TEXT_SPLITTERS = {
-    'recursive_character': 'Recursive Character Text Splitter',
-    'character': 'Character Text Splitter',
-    'token': 'Token Text Splitter',
-    'markdown': 'Markdown Text Splitter',
-    'python_code': 'Python Code Text Splitter',
-}
-
-type WizardStep = 'dataset-info' | 'upload-documents' | 'embedding-config' | 'complete'
+type WizardStep = 'dataset-and-upload' | 'embedding-config' | 'complete'
 
 export function UnifiedDocumentWizard({
     mode,
@@ -56,30 +41,29 @@ export function UnifiedDocumentWizard({
 }: UnifiedDocumentWizardProps) {
     // Determine initial step based on mode
     const getInitialStep = (): WizardStep => {
-        return mode === 'create-dataset' ? 'dataset-info' : 'upload-documents'
+        return mode === 'create-dataset' ? 'dataset-and-upload' : 'dataset-and-upload'
     }
 
     const [currentStep, setCurrentStep] = useState<WizardStep>(getInitialStep())
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
-    // Step 1: Dataset Info (only for create-dataset mode)
+    // Step 1: Dataset Info and Document Upload
     const [datasetName, setDatasetName] = useState('')
-    const [datasetDescription, setDatasetDescription] = useState('')
     const [createdDataset, setCreatedDataset] = useState<Dataset | null>(existingDataset || null)
-
-    // Step 2: Document Upload
     const [selectedFiles, setSelectedFiles] = useState<File[]>([])
     const [uploadedDocuments, setUploadedDocuments] = useState<Document[]>([])
 
-    // Step 3: Embedding Configuration
-    const [embeddingModel, setEmbeddingModel] = useState<keyof typeof EMBEDDING_MODELS>('Xenova/bge-m3')
-    const [customModelName, setCustomModelName] = useState('')
-    const [textSplitter, setTextSplitter] = useState<keyof typeof TEXT_SPLITTERS>('recursive_character')
-    const [chunkSize, setChunkSize] = useState(800)
-    const [chunkOverlap, setChunkOverlap] = useState(80)
-    // 🆕 Parent-Child Chunking state - enabled by default
-    const [enableParentChildChunking, setEnableParentChildChunking] = useState(true)
+    // Step 2: Embedding Configuration
+    const [embeddingConfig, setEmbeddingConfig] = useState<EmbeddingConfigData>(() => {
+        const recommended = EmbeddingConfigService.getRecommendedConfig('general')
+        return recommended
+    })
+
+    // Validate embedding configuration
+    const validateEmbeddingConfig = useCallback(() => {
+        return EmbeddingConfigService.validateConfig(embeddingConfig)
+    }, [embeddingConfig])
 
     const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files || [])
@@ -115,11 +99,11 @@ export function UnifiedDocumentWizard({
         try {
             const result = await datasetApi.createStepOne({
                 name: datasetName.trim(),
-                description: datasetDescription.trim() || undefined,
             })
 
             setCreatedDataset(result.data)
-            setCurrentStep('upload-documents')
+            // After creating dataset, upload documents
+            await handleUploadDocuments(result.data)
         } catch (err: unknown) {
             const error = err as { response?: { data?: { message?: string } } }
             setError(error.response?.data?.message || 'Failed to create dataset')
@@ -129,8 +113,8 @@ export function UnifiedDocumentWizard({
     }
 
     // Step 2: Upload Documents
-    const handleUploadDocuments = async () => {
-        const targetDataset = createdDataset || existingDataset
+    const handleUploadDocuments = async (dataset?: Dataset) => {
+        const targetDataset = dataset || createdDataset || existingDataset
         if (!targetDataset || selectedFiles.length === 0) {
             setError('Please select files to upload')
             return
@@ -159,27 +143,30 @@ export function UnifiedDocumentWizard({
             return
         }
 
-        // Validate custom model name if custom is selected
-        if (embeddingModel === 'custom' && !customModelName.trim()) {
-            setError('Custom model name is required when using custom model')
+        // Validate embedding configuration
+        const validation = validateEmbeddingConfig()
+        if (!validation.isValid) {
+            setError(`Configuration error: ${validation.errors.join(', ')}`)
             return
+        }
+
+        // Show warnings if any
+        if (validation.warnings.length > 0) {
+            console.warn('Configuration warnings:', validation.warnings)
         }
 
         setLoading(true)
         setError(null)
 
         try {
+            // Convert configuration to backend DTO format
+            const configDto = EmbeddingConfigService.toBackendDto(embeddingConfig)
+
             await datasetApi.processDocuments({
                 datasetId: targetDataset.id,
                 documentIds: uploadedDocuments.map(doc => doc.id),
-                embeddingModel,
-                customModelName: embeddingModel === 'custom' ? customModelName.trim() : undefined,
-                textSplitter,
-                chunkSize,
-                chunkOverlap,
-                // 🆕 Include Parent-Child Chunking option
-                enableParentChildChunking,
-            })
+                ...configDto,
+            } as Parameters<typeof datasetApi.processDocuments>[0])
 
             setCurrentStep('complete')
         } catch (err: unknown) {
@@ -202,40 +189,25 @@ export function UnifiedDocumentWizard({
     }
 
     const handleBack = () => {
-        if (currentStep === 'upload-documents' && mode === 'create-dataset') {
-            setCurrentStep('dataset-info')
-        } else if (currentStep === 'embedding-config') {
-            setCurrentStep('upload-documents')
+        if (currentStep === 'embedding-config') {
+            setCurrentStep('dataset-and-upload')
         }
+        // For dataset-and-upload step, there's no previous step
     }
 
     const getStepNumber = () => {
-        if (mode === 'create-dataset') {
-            switch (currentStep) {
-                case 'dataset-info': return 1
-                case 'upload-documents': return 2
-                case 'embedding-config': return 3
-                case 'complete': return 4
-                default: return 1
-            }
-        } else {
-            switch (currentStep) {
-                case 'upload-documents': return 1
-                case 'embedding-config': return 2
-                case 'complete': return 3
-                default: return 1
-            }
+        switch (currentStep) {
+            case 'dataset-and-upload': return 1
+            case 'embedding-config': return 2
+            case 'complete': return 3
+            default: return 1
         }
     }
 
 
 
     const getStepLabels = () => {
-        if (mode === 'create-dataset') {
-            return ['Dataset Info', 'Upload Documents', 'Embedding Config', 'Complete']
-        } else {
-            return ['Upload Documents', 'Embedding Config', 'Complete']
-        }
+        return ['Dataset & Upload', 'Embedding Config', 'Complete']
     }
 
     const getTitle = () => {
@@ -248,12 +220,15 @@ export function UnifiedDocumentWizard({
 
     const canGoNext = () => {
         switch (currentStep) {
-            case 'dataset-info':
-                return datasetName.trim().length > 0
-            case 'upload-documents':
-                return selectedFiles.length > 0
+            case 'dataset-and-upload':
+                if (mode === 'create-dataset') {
+                    return datasetName.trim().length > 0 && selectedFiles.length > 0
+                } else {
+                    return selectedFiles.length > 0
+                }
             case 'embedding-config':
-                return embeddingModel !== 'custom' || customModelName.trim().length > 0
+                const validation = validateEmbeddingConfig()
+                return validation.isValid
             default:
                 return false
         }
@@ -261,11 +236,14 @@ export function UnifiedDocumentWizard({
 
     const handleNext = () => {
         switch (currentStep) {
-            case 'dataset-info':
-                handleCreateDataset()
-                break
-            case 'upload-documents':
-                handleUploadDocuments()
+            case 'dataset-and-upload':
+                if (mode === 'create-dataset') {
+                    // First create dataset, then upload documents
+                    handleCreateDataset()
+                } else {
+                    // Just upload documents
+                    handleUploadDocuments()
+                }
                 break
             case 'embedding-config':
                 handleProcessDocuments()
@@ -315,50 +293,32 @@ export function UnifiedDocumentWizard({
 
             {/* Step Content */}
             <div className="bg-white rounded-lg border border-gray-200 p-6">
-                {/* Step 1: Dataset Info (only for create-dataset mode) */}
-                {currentStep === 'dataset-info' && mode === 'create-dataset' && (
+                {/* Step 1: Dataset Info and Upload Documents */}
+                {currentStep === 'dataset-and-upload' && (
                     <div className="space-y-6">
                         <div className="flex items-center space-x-3 mb-4">
                             <Database className="h-6 w-6 text-blue-600" />
-                            <h2 className="text-xl font-semibold text-gray-900">Dataset Information</h2>
+                            <h2 className="text-xl font-semibold text-gray-900">
+                                {mode === 'create-dataset' ? 'Create Dataset & Upload Documents' : 'Upload Documents'}
+                            </h2>
                         </div>
 
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Dataset Name *
-                                </label>
-                                <Input
-                                    value={datasetName}
-                                    onChange={(e) => setDatasetName(e.target.value)}
-                                    placeholder="Enter dataset name"
-                                    className="w-full"
-                                />
+                        {/* Dataset Name (only for create-dataset mode) */}
+                        {mode === 'create-dataset' && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Dataset Name *
+                                    </label>
+                                    <Input
+                                        value={datasetName}
+                                        onChange={(e) => setDatasetName(e.target.value)}
+                                        placeholder="Enter dataset name"
+                                        className="w-full"
+                                    />
+                                </div>
                             </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Description (Optional)
-                                </label>
-                                <textarea
-                                    value={datasetDescription}
-                                    onChange={(e) => setDatasetDescription(e.target.value)}
-                                    placeholder="Describe your dataset..."
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    rows={3}
-                                />
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Step 2: Upload Documents */}
-                {currentStep === 'upload-documents' && (
-                    <div className="space-y-6">
-                        <div className="flex items-center space-x-3 mb-4">
-                            <Upload className="h-6 w-6 text-blue-600" />
-                            <h2 className="text-xl font-semibold text-gray-900">Upload Documents</h2>
-                        </div>
+                        )}
 
                         {/* File Upload Area */}
                         <div
@@ -413,154 +373,21 @@ export function UnifiedDocumentWizard({
                                 </div>
                             </div>
                         )}
+
                     </div>
                 )}
 
-                {/* Step 3: Embedding Configuration */}
+                {/* Step 2: Embedding Configuration */}
                 {currentStep === 'embedding-config' && (
-                    <div className="space-y-6">
-                        <div className="flex items-center space-x-3 mb-4">
-                            <Settings className="h-6 w-6 text-blue-600" />
-                            <h2 className="text-xl font-semibold text-gray-900">Embedding Configuration</h2>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {/* Embedding Model */}
-                            <div className="md:col-span-2">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Embedding Model
-                                </label>
-                                <select
-                                    value={embeddingModel}
-                                    onChange={(e) => setEmbeddingModel(e.target.value as keyof typeof EMBEDDING_MODELS)}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                    {Object.entries(EMBEDDING_MODELS).map(([key, label]) => (
-                                        <option key={key} value={key}>{label}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            {embeddingModel === 'custom' && (
-                                <div className="md:col-span-2">
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                                        Custom Model Name
-                                    </label>
-                                    <Input
-                                        value={customModelName}
-                                        onChange={(e) => setCustomModelName(e.target.value)}
-                                        placeholder="e.g., sentence-transformers/all-MiniLM-L6-v2"
-                                        className="w-full"
-                                    />
-                                    <p className="text-xs text-gray-500 mt-1">
-                                        Must be a 1024-dimension model for compatibility
-                                    </p>
-                                </div>
-                            )}
-
-                            {/* Text Splitter */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Text Splitter
-                                </label>
-                                <select
-                                    value={textSplitter}
-                                    onChange={(e) => setTextSplitter(e.target.value as keyof typeof TEXT_SPLITTERS)}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                    {Object.entries(TEXT_SPLITTERS).map(([key, label]) => (
-                                        <option key={key} value={key}>{label}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            {/* Chunk Size */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Chunk Size
-                                </label>
-                                <Input
-                                    type="number"
-                                    value={chunkSize}
-                                    onChange={(e) => setChunkSize(parseInt(e.target.value) || 1000)}
-                                    min={100}
-                                    max={4000}
-                                    className="w-full"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    Characters per chunk (100-4000)
-                                </p>
-                            </div>
-
-                            {/* Chunk Overlap */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Chunk Overlap
-                                </label>
-                                <Input
-                                    type="number"
-                                    value={chunkOverlap}
-                                    onChange={(e) => setChunkOverlap(parseInt(e.target.value) || 200)}
-                                    min={0}
-                                    max={Math.floor(chunkSize / 2)}
-                                    className="w-full"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    Overlap between chunks (0-{Math.floor(chunkSize / 2)})
-                                </p>
-                            </div>
-
-                            {/* 🆕 Parent-Child Chunking */}
-                            <div className="md:col-span-2">
-                                <div className="flex items-center space-x-3">
-                                    <input
-                                        type="checkbox"
-                                        id="enableParentChildChunking"
-                                        checked={enableParentChildChunking}
-                                        onChange={(e) => setEnableParentChildChunking(e.target.checked)}
-                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                                    />
-                                    <label htmlFor="enableParentChildChunking" className="text-sm font-medium text-gray-700">
-                                        Enable Parent-Child Chunking (Advanced)
-                                    </label>
-                                </div>
-                                <p className="text-xs text-gray-500 mt-2 ml-7">
-                                    🔗 Creates hierarchical chunks (parent paragraphs + child sentences) for improved recall and context.
-                                    Only works with PDF documents. <span className="text-blue-600">+60-90% recall improvement</span> expected.
-                                </p>
-                                {enableParentChildChunking && (
-                                    <div className="mt-3 ml-7 p-3 bg-blue-50 border border-blue-200 rounded-md">
-                                        <div className="flex items-start space-x-2">
-                                            <div className="text-blue-600 mt-0.5">ℹ️</div>
-                                            <div className="text-xs text-blue-700">
-                                                <strong>How it works:</strong>
-                                                <ul className="mt-1 space-y-1">
-                                                    <li>• <strong>Parent chunks:</strong> Larger sections (~{Math.floor(chunkSize * 1.5)} chars) for context</li>
-                                                    <li>• <strong>Child chunks:</strong> Smaller segments (~{Math.floor(chunkSize * 0.6)} chars) for precision</li>
-                                                    <li>• <strong>Smart retrieval:</strong> Find precise matches, include parent context</li>
-                                                </ul>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Uploaded Documents Summary */}
-                        {uploadedDocuments.length > 0 && (
-                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                <h3 className="text-sm font-medium text-blue-900 mb-2">
-                                    Ready to Process
-                                </h3>
-                                <p className="text-sm text-blue-700">
-                                    {uploadedDocuments.length} document{uploadedDocuments.length !== 1 ? 's' : ''} will be processed with the selected configuration.
-                                </p>
-                            </div>
-                        )}
-                    </div>
+                    <EmbeddingConfigStep
+                        config={embeddingConfig}
+                        onChange={setEmbeddingConfig}
+                        disabled={loading}
+                        uploadedDocumentsCount={uploadedDocuments.length}
+                    />
                 )}
 
-                {/* Step 4: Complete */}
+                {/* Step 3: Complete */}
                 {currentStep === 'complete' && (
                     <div className="text-center space-y-6">
                         <div className="flex justify-center">
@@ -578,7 +405,7 @@ export function UnifiedDocumentWizard({
                             </p>
                         </div>
                         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                            <h3 className="text-sm font-medium text-green-900 mb-2">What's Next?</h3>
+                            <h3 className="text-sm font-medium text-green-900 mb-2">What&apos;s Next?</h3>
                             <ul className="text-sm text-green-700 space-y-1">
                                 <li>• Documents are being processed in the background</li>
                                 <li>• Embeddings are being generated for search</li>

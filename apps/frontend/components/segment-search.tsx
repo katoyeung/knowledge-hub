@@ -12,14 +12,14 @@ interface SearchResult {
 }
 
 interface SegmentSearchProps {
-    datasetId: string
+    documentId: string
     onSearchResults?: (results: SearchResult[]) => void
     placeholder?: string
     className?: string
 }
 
 export default function SegmentSearch({
-    datasetId,
+    documentId,
     onSearchResults,
     placeholder = "Search segments using semantic similarity...",
     className = ""
@@ -49,7 +49,7 @@ export default function SegmentSearch({
 
         try {
             const response = await datasetApi.search({
-                datasetId,
+                documentId: documentId,
                 query: query.trim(),
                 limit: 20,
                 similarityThreshold: 0.3

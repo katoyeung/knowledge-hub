@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { documentApi, datasetApi, type Document, type Dataset } from '@/lib/api'
 import { DocumentUploadWizard } from './document-upload-wizard'
+import { DocumentPreviewModal } from './document-preview-modal'
 import { useToast } from './ui/simple-toast'
 
 interface DocumentListProps {
@@ -29,6 +30,8 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
     const [showUpload, setShowUpload] = useState(false)
     const [deletingId, setDeletingId] = useState<string | null>(null)
     const [deletingDataset, setDeletingDataset] = useState(false)
+    const [previewDocument, setPreviewDocument] = useState<Document | null>(null)
+    const [showPreview, setShowPreview] = useState(false)
     const toast = useToast()
 
     // Ref to track if fetch is in progress to prevent duplicate calls
@@ -37,7 +40,6 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
 
     // Reset upload view when datasetId changes (when clicking different dataset in sidebar)
     useEffect(() => {
-        console.log('🔄 Dataset changed, resetting upload view')
         setShowUpload(false)
     }, [datasetId])
 
@@ -45,11 +47,8 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
     const fetchDocuments = useCallback(async () => {
         // Prevent duplicate calls for the same dataset
         if (fetchInProgressRef.current && currentDatasetIdRef.current === datasetId) {
-            console.log('🚫 Skipping duplicate API call for datasetId:', datasetId)
             return
         }
-
-        console.log('🔍 fetchDocuments called for datasetId:', datasetId)
         fetchInProgressRef.current = true
         currentDatasetIdRef.current = datasetId
 
@@ -57,7 +56,6 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
             setLoading(true)
             setError(null)
             const docs = await documentApi.getByDataset(datasetId)
-            console.log('📄 Documents fetched:', docs.length, 'documents')
             setDocuments(docs)
             onDocumentsChange?.(docs)
         } catch (err) {
@@ -71,7 +69,6 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
     }, [datasetId])
 
     useEffect(() => {
-        console.log('🔄 useEffect triggered with datasetId:', datasetId)
         if (datasetId) {
             fetchDocuments()
         }
@@ -109,10 +106,23 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
         }
     }
 
+
     // Handle view segments
     const handleViewSegments = (document: Document) => {
         // Navigate to document-specific segments page
         window.location.href = `/datasets/${datasetId}/documents/${document.id}/segments`
+    }
+
+    // Handle document preview
+    const handlePreviewDocument = (document: Document) => {
+        setPreviewDocument(document)
+        setShowPreview(true)
+    }
+
+    // Handle close preview
+    const handleClosePreview = () => {
+        setShowPreview(false)
+        setPreviewDocument(null)
     }
 
     // Handle back from segments view - no longer needed since we navigate to separate page
@@ -330,17 +340,24 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
                         {documents.map((document) => (
                             <div
                                 key={document.id}
-                                className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
-                                onClick={() => handleViewSegments(document)}
+                                className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                             >
                                 <div className="flex items-center space-x-4 flex-1 min-w-0">
                                     <div className="flex-shrink-0">
-                                        <File className="h-8 w-8 text-blue-500" />
+                                        {document.indexingStatus === 'processing' ? (
+                                            <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+                                        ) : (
+                                            <File className="h-8 w-8 text-blue-500" />
+                                        )}
                                     </div>
 
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center space-x-3 mb-1">
-                                            <h4 className="text-sm font-medium text-gray-900 truncate">
+                                            <h4
+                                                className="text-sm font-medium text-gray-900 truncate cursor-pointer hover:text-blue-600 transition-colors"
+                                                onClick={() => handlePreviewDocument(document)}
+                                                title="Click to preview document content"
+                                            >
                                                 {document.name}
                                             </h4>
                                             <span
@@ -377,13 +394,22 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
                                 </div>
 
                                 <div className="flex items-center space-x-2">
+                                    {/* View segments button */}
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDelete(document.id);
-                                        }}
+                                        onClick={() => handleViewSegments(document)}
+                                        className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                    >
+                                        <FileText className="h-4 w-4 mr-1" />
+                                        View Segments
+                                    </Button>
+
+                                    {/* Delete button */}
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleDelete(document.id)}
                                         disabled={deletingId === document.id}
                                         className="text-red-600 hover:text-red-700 hover:bg-red-50"
                                     >
@@ -399,6 +425,13 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
                     </div>
                 )}
             </div>
+
+            {/* Document Preview Modal */}
+            <DocumentPreviewModal
+                document={previewDocument}
+                isOpen={showPreview}
+                onClose={handleClosePreview}
+            />
         </div>
     )
 } 

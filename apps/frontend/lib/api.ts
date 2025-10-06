@@ -3,7 +3,7 @@ import axios from "axios";
 // Create axios instance with base configuration
 const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
-  timeout: 10000,
+  timeout: 30000, // Increased timeout to 30 seconds for delete operations
   headers: {
     "Content-Type": "application/json",
   },
@@ -149,6 +149,18 @@ export const datasetApi = {
     pageCount: number;
   }> => {
     const response = await apiClient.get("/datasets", { params });
+
+    // Handle both direct array response and paginated response
+    if (Array.isArray(response.data)) {
+      return {
+        data: response.data,
+        count: response.data.length,
+        total: response.data.length,
+        page: 1,
+        pageCount: 1,
+      };
+    }
+
     return response.data;
   },
 
@@ -176,6 +188,35 @@ export const datasetApi = {
   delete: async (id: string): Promise<boolean> => {
     await apiClient.delete(`/datasets/${id}`);
     return true;
+  },
+
+  // Get effective configuration for a dataset
+  getEffectiveConfig: async (
+    id: string
+  ): Promise<{
+    datasetId: string;
+    embeddingModel: string;
+    userConfiguration: {
+      chunkSize: number;
+      chunkOverlap: number;
+      useModelDefaults: boolean;
+    };
+    effectiveConfiguration: {
+      chunkSize: number;
+      chunkOverlap: number;
+      textSplitter: string;
+    };
+    modelOptimizations: {
+      enabled: boolean;
+      description: string;
+      recommendedChunkSize: number;
+      recommendedChunkOverlap: number;
+      maxTokens: number;
+    };
+    optimizationApplied: boolean;
+  }> => {
+    const response = await apiClient.get(`/datasets/effective-config/${id}`);
+    return response.data;
   },
 
   // Step-by-step dataset creation
@@ -239,6 +280,12 @@ export const datasetApi = {
     separators?: string[];
     // 🆕 Parent-Child Chunking option
     enableParentChildChunking?: boolean;
+    // 🆕 Search Weight Configuration
+    bm25Weight?: number;
+    embeddingWeight?: number;
+    // 🆕 LangChain RAG Configuration
+    enableLangChainRAG?: boolean;
+    langChainConfig?: string;
   }): Promise<{
     success: boolean;
     message: string;
@@ -261,6 +308,9 @@ export const datasetApi = {
       chunkSize: number;
       chunkOverlap: number;
       separators?: string[];
+      // 🆕 Search Weight Configuration
+      bm25Weight?: number;
+      embeddingWeight?: number;
     }
   ): Promise<{
     success: boolean;
@@ -280,7 +330,10 @@ export const datasetApi = {
     query: string;
     limit?: number;
     similarityThreshold?: number;
-    rerankerType?: "mathematical" | "ml-cross-encoder";
+    rerankerType?: "mathematical" | "ml-cross-encoder" | "none";
+    // 🆕 Search Weight Configuration
+    bm25Weight?: number;
+    embeddingWeight?: number;
   }): Promise<{
     results: Array<{
       id: string;
@@ -298,7 +351,7 @@ export const datasetApi = {
     query: string;
     count: number;
     model?: string;
-    rerankerType?: "mathematical" | "ml-cross-encoder";
+    rerankerType?: "mathematical" | "ml-cross-encoder" | "none";
     message?: string;
   }> => {
     const response = await apiClient.post("/datasets/search-documents", data);
@@ -326,6 +379,15 @@ export const documentApi = {
       datasetId?: string;
       datasetName?: string;
       datasetDescription?: string;
+      enableLangChainRAG?: boolean;
+      langChainConfig?: {
+        chunkSize: number;
+        chunkOverlap: number;
+        numChunks: number;
+        llmProvider: string;
+        llmModel: string;
+        embeddingModel: string;
+      };
     } = {}
   ): Promise<{
     success: boolean;
@@ -357,6 +419,15 @@ export const documentApi = {
     }
     if (options.datasetDescription) {
       formData.append("datasetDescription", options.datasetDescription);
+    }
+    if (options.enableLangChainRAG) {
+      formData.append("enableLangChainRAG", "true");
+    }
+    if (options.langChainConfig) {
+      formData.append(
+        "langChainConfig",
+        JSON.stringify(options.langChainConfig)
+      );
     }
 
     const response = await apiClient.post("/documents/upload", formData, {
@@ -459,6 +530,117 @@ export const documentSegmentApi = {
   ): Promise<{ updated: number }> =>
     apiClient
       .post("/document-segments/bulk/update-status", { segmentIds, enabled })
+      .then((res) => res.data),
+};
+
+// Chat API functions
+export const chatApi = {
+  // Get available models
+  getModels: (): Promise<{
+    providers: Array<{
+      id: string;
+      name: string;
+      models: Array<{
+        id: string;
+        name: string;
+        provider: string;
+        description?: string;
+        maxTokens?: number;
+        contextWindow?: number;
+        pricing?: {
+          input: number;
+          output: number;
+        };
+      }>;
+    }>;
+  }> => apiClient.get("/chat/models").then((res) => res.data),
+
+  // Chat with documents
+  chatWithDocuments: (data: {
+    message: string;
+    datasetId: string;
+    documentIds?: string[];
+    segmentIds?: string[];
+    llmProvider?: string;
+    model?: string;
+    maxChunks?: number;
+    temperature?: number;
+    conversationId?: string;
+    conversationTitle?: string;
+  }): Promise<{
+    message: {
+      id: string;
+      content: string;
+      role: string;
+      status: string;
+      createdAt: string;
+      updatedAt: string;
+      sourceChunkIds?: string;
+      sourceDocuments?: string;
+      metadata?: {
+        tokensUsed?: number;
+        model?: string;
+        provider?: string;
+      };
+    };
+    conversationId: string;
+    sourceChunks: Array<{
+      id: string;
+      content: string;
+      documentId: string;
+      documentName: string;
+      similarity: number;
+    }>;
+    metadata: {
+      tokensUsed?: number;
+      processingTime?: number;
+      model?: string;
+      provider?: string;
+    };
+  }> => apiClient.post("/chat/with-documents", data).then((res) => res.data),
+
+  // Get conversations
+  getConversations: (
+    datasetId?: string
+  ): Promise<
+    Array<{
+      id: string;
+      title: string;
+      description?: string;
+      selectedDocumentIds?: string[];
+      selectedSegmentIds?: string[];
+      metadata?: any;
+      userId: string;
+      datasetId: string;
+      createdAt: string;
+      updatedAt: string;
+      messages?: any[];
+    }>
+  > => {
+    const params = datasetId ? { datasetId } : {};
+    return apiClient
+      .get("/chat/conversations", { params })
+      .then((res) => res.data);
+  },
+
+  // Get conversation messages
+  getConversationMessages: (
+    conversationId: string
+  ): Promise<
+    Array<{
+      id: string;
+      content: string;
+      role: string;
+      status: string;
+      createdAt: string;
+      updatedAt: string;
+      sourceChunkIds?: string;
+      sourceDocuments?: string;
+      metadata?: any;
+    }>
+  > =>
+    apiClient
+      .get(`/chat/conversations/${conversationId}/messages`)
       .then((res) => res.data),
 };
 

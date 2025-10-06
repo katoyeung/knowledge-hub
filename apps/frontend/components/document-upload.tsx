@@ -3,13 +3,17 @@
 import React, { useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import {
     Upload,
     File,
     X,
     Loader2,
     CheckCircle,
-    AlertCircle
+    AlertCircle,
+    Brain,
+    Settings
 } from 'lucide-react'
 import { documentApi, type Dataset, type Document } from '@/lib/api'
 
@@ -32,6 +36,16 @@ export function DocumentUpload({ datasetId, onUploadSuccess, onClose }: Document
         success: boolean
         message: string
     } | null>(null)
+
+    // LangChain RAG options
+    const [enableLangChainRAG, setEnableLangChainRAG] = useState(false)
+    const [showAdvancedOptions, setShowAdvancedOptions] = useState(false)
+    const [chunkSize, setChunkSize] = useState(1000)
+    const [chunkOverlap, setChunkOverlap] = useState(200)
+    const [numChunks, setNumChunks] = useState(5)
+    const [llmProvider, setLlmProvider] = useState('local-direct')
+    const [llmModel, setLlmModel] = useState('google/gemma-2-9b-it')
+    const [embeddingModel, setEmbeddingModel] = useState('BAAI/bge-m3')
 
     // Handle drag events
     const handleDrag = useCallback((e: React.DragEvent) => {
@@ -96,6 +110,18 @@ export function DocumentUpload({ datasetId, onUploadSuccess, onClose }: Document
                 datasetId,
                 datasetName: datasetName.trim() || undefined,
                 datasetDescription: datasetDescription.trim() || undefined,
+                // Add LangChain RAG options if enabled
+                ...(enableLangChainRAG && {
+                    enableLangChainRAG: true,
+                    langChainConfig: {
+                        chunkSize,
+                        chunkOverlap,
+                        numChunks,
+                        llmProvider,
+                        llmModel,
+                        embeddingModel,
+                    }
+                })
             })
 
             setUploadResult({
@@ -199,6 +225,138 @@ export function DocumentUpload({ datasetId, onUploadSuccess, onClose }: Document
                     </div>
                 </div>
             )}
+
+            {/* LangChain RAG Options */}
+            <div className="mb-6 p-4 border border-gray-200 rounded-lg bg-gray-50" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center space-x-2 mb-4">
+                    <Brain className="h-5 w-5 text-blue-600" />
+                    <h4 className="text-sm font-medium text-gray-900">LangChain RAG Processing</h4>
+                </div>
+
+                <div className="flex items-center space-x-2 mb-4">
+                    <Checkbox
+                        id="enable-langchain-rag"
+                        checked={enableLangChainRAG}
+                        onCheckedChange={(checked) => setEnableLangChainRAG(checked as boolean)}
+                    />
+                    <Label htmlFor="enable-langchain-rag" className="text-sm text-gray-700">
+                        Enable LangChain RAG processing (advanced document analysis with retrieval-augmented generation)
+                    </Label>
+                </div>
+
+                {enableLangChainRAG && (
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-600">Advanced Options</span>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                                className="flex items-center space-x-1"
+                            >
+                                <Settings className="h-4 w-4" />
+                                <span>{showAdvancedOptions ? 'Hide' : 'Show'}</span>
+                            </Button>
+                        </div>
+
+                        {showAdvancedOptions && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-white rounded border">
+                                <div>
+                                    <Label htmlFor="chunk-size" className="text-xs font-medium text-gray-700">
+                                        Chunk Size
+                                    </Label>
+                                    <Input
+                                        id="chunk-size"
+                                        type="number"
+                                        value={chunkSize}
+                                        onChange={(e) => setChunkSize(parseInt(e.target.value) || 1000)}
+                                        min="100"
+                                        max="8000"
+                                        className="mt-1"
+                                    />
+                                </div>
+                                <div>
+                                    <Label htmlFor="chunk-overlap" className="text-xs font-medium text-gray-700">
+                                        Chunk Overlap
+                                    </Label>
+                                    <Input
+                                        id="chunk-overlap"
+                                        type="number"
+                                        value={chunkOverlap}
+                                        onChange={(e) => setChunkOverlap(parseInt(e.target.value) || 200)}
+                                        min="0"
+                                        max="500"
+                                        className="mt-1"
+                                    />
+                                </div>
+                                <div>
+                                    <Label htmlFor="num-chunks" className="text-xs font-medium text-gray-700">
+                                        Number of Chunks to Retrieve
+                                    </Label>
+                                    <Input
+                                        id="num-chunks"
+                                        type="number"
+                                        value={numChunks}
+                                        onChange={(e) => setNumChunks(parseInt(e.target.value) || 5)}
+                                        min="1"
+                                        max="20"
+                                        className="mt-1"
+                                    />
+                                </div>
+                                <div>
+                                    <Label htmlFor="embedding-model" className="text-xs font-medium text-gray-700">
+                                        Embedding Model
+                                    </Label>
+                                    <select
+                                        id="embedding-model"
+                                        value={embeddingModel}
+                                        onChange={(e) => setEmbeddingModel(e.target.value)}
+                                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                    >
+                                        <option value="BAAI/bge-m3">BAAI/bge-m3 (Multilingual)</option>
+                                        <option value="mixedbread-ai/mxbai-embed-large-v1">MixedBread mxbai-embed-large-v1</option>
+                                        <option value="WhereIsAI/UAE-Large-V1">WhereIsAI UAE-Large-V1</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <Label htmlFor="llm-provider" className="text-xs font-medium text-gray-700">
+                                        LLM Provider
+                                    </Label>
+                                    <select
+                                        id="llm-provider"
+                                        value={llmProvider}
+                                        onChange={(e) => setLlmProvider(e.target.value)}
+                                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                    >
+                                        <option value="local-direct">Local Direct</option>
+                                        <option value="openrouter">OpenRouter</option>
+                                        <option value="ollama">Ollama</option>
+                                        <option value="dashscope">DashScope</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <Label htmlFor="llm-model" className="text-xs font-medium text-gray-700">
+                                        LLM Model
+                                    </Label>
+                                    <Input
+                                        id="llm-model"
+                                        value={llmModel}
+                                        onChange={(e) => setLlmModel(e.target.value)}
+                                        placeholder="e.g., google/gemma-2-9b-it"
+                                        className="mt-1"
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded">
+                            <strong>What this does:</strong> LangChain RAG will process your documents using advanced retrieval-augmented generation.
+                            It will split documents into chunks, create embeddings, and set up a vector database for intelligent question-answering.
+                        </div>
+                    </div>
+                )}
+            </div>
 
             {/* Drag and drop area */}
             <div

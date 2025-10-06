@@ -49,7 +49,7 @@ const cn = (...classes: (string | undefined)[]) => {
 
 const ToastIcon = ({ variant }: ToastIconProps) => {
   const iconClass = "h-5 w-5 flex-shrink-0"
-  
+
   switch (variant) {
     case "success":
       return <CheckCircle className={cn(iconClass, "text-green-600")} />
@@ -66,7 +66,7 @@ const ToastIcon = ({ variant }: ToastIconProps) => {
 
 const getToastStyles = (variant: ToastVariant) => {
   const baseStyles = "group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-md border p-4 pr-8 shadow-lg transition-all animate-in slide-in-from-top-2"
-  
+
   switch (variant) {
     case "destructive":
       return cn(baseStyles, "border-red-500 bg-red-50 text-red-900")
@@ -119,7 +119,7 @@ const Toast = React.forwardRef<HTMLDivElement, ToastProps>(
 )
 Toast.displayName = "Toast"
 
-interface ToastTitleProps extends React.HTMLAttributes<HTMLDivElement> {}
+type ToastTitleProps = React.HTMLAttributes<HTMLDivElement>
 
 const ToastTitle = React.forwardRef<HTMLDivElement, ToastTitleProps>(
   ({ className, ...props }, ref) => (
@@ -132,7 +132,7 @@ const ToastTitle = React.forwardRef<HTMLDivElement, ToastTitleProps>(
 )
 ToastTitle.displayName = "ToastTitle"
 
-interface ToastDescriptionProps extends React.HTMLAttributes<HTMLDivElement> {}
+type ToastDescriptionProps = React.HTMLAttributes<HTMLDivElement>
 
 const ToastDescription = React.forwardRef<HTMLDivElement, ToastDescriptionProps>(
   ({ className, ...props }, ref) => (
