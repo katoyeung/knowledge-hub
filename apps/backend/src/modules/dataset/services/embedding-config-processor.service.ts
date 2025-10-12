@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { CreateDatasetStepTwoDto } from '../dto/create-dataset-step.dto';
 
 export interface ProcessedEmbeddingConfig {
-  mode: 'langchain' | 'advanced';
+  mode: 'advanced';
   embeddingModel: string;
   customModelName?: string;
   textSplitter: string;
@@ -14,13 +14,6 @@ export interface ProcessedEmbeddingConfig {
   bm25Weight?: number;
   embeddingWeight?: number;
   embeddingModelProvider?: string;
-
-  // LangChain specific
-  langChainConfig?: {
-    numChunks: number;
-    llmProvider: string;
-    llmModel: string;
-  };
 }
 
 @Injectable()
@@ -35,23 +28,11 @@ export class EmbeddingConfigProcessorService {
       `Processing embedding configuration with mode: ${(dto as any).configMode || 'advanced'}`,
     );
 
-    const mode = (dto as any).configMode || 'advanced';
-    const enableLangChain = (dto as any).enableLangChainRAG || false;
-
-    // Parse LangChain config if provided
-    let langChainConfig: any = {};
-    if ((dto as any).langChainConfig) {
-      try {
-        langChainConfig = JSON.parse((dto as any).langChainConfig);
-      } catch (error) {
-        this.logger.warn('Failed to parse LangChain config, using defaults');
-        langChainConfig = {};
-      }
-    }
+    const mode = 'advanced';
 
     // Determine effective configuration based on mode
     const config: ProcessedEmbeddingConfig = {
-      mode: enableLangChain ? 'langchain' : mode,
+      mode: 'advanced',
       embeddingModel: dto.embeddingModel,
       customModelName: dto.customModelName,
       textSplitter: dto.textSplitter,
@@ -65,15 +46,6 @@ export class EmbeddingConfigProcessorService {
       embeddingWeight: dto.embeddingWeight,
       embeddingModelProvider: dto.embeddingModelProvider,
     };
-
-    // Add LangChain specific configuration
-    if (config.mode === 'langchain') {
-      config.langChainConfig = {
-        numChunks: langChainConfig.numChunks || 5,
-        llmProvider: langChainConfig.llmProvider || 'dashscope',
-        llmModel: langChainConfig.llmModel || 'gpt-4o-mini',
-      };
-    }
 
     // Apply model-specific optimizations if enabled
     // DISABLED: Model optimizations override user-specified chunk sizes
@@ -226,16 +198,6 @@ export class EmbeddingConfigProcessorService {
       }
     }
 
-    // Validate LangChain specific settings
-    if (config.mode === 'langchain' && config.langChainConfig) {
-      if (
-        config.langChainConfig.numChunks < 1 ||
-        config.langChainConfig.numChunks > 20
-      ) {
-        errors.push('Number of chunks must be between 1 and 20');
-      }
-    }
-
     return {
       isValid: errors.length === 0,
       errors,
@@ -256,19 +218,11 @@ export class EmbeddingConfigProcessorService {
       useModelDefaults: config.useModelDefaults,
     };
 
-    if (config.mode === 'langchain' && config.langChainConfig) {
-      return (
-        `LangChain RAG: ${config.langChainConfig.llmProvider}/${config.langChainConfig.llmModel}, ` +
-        `chunks: ${config.chunkSize}/${config.chunkOverlap}, ` +
-        `retrieval: ${config.langChainConfig.numChunks} chunks`
-      );
-    } else {
-      return (
-        `Advanced: ${config.embeddingModel}, ` +
-        `chunks: ${config.chunkSize}/${config.chunkOverlap}, ` +
-        `splitter: ${config.textSplitter}`
-      );
-    }
+    return (
+      `Advanced: ${config.embeddingModel}, ` +
+      `chunks: ${config.chunkSize}/${config.chunkOverlap}, ` +
+      `splitter: ${config.textSplitter}`
+    );
   }
 
   /**
@@ -290,25 +244,7 @@ export class EmbeddingConfigProcessorService {
       embeddingWeight: config.embeddingWeight,
       embeddingModelProvider: config.embeddingModelProvider,
       configMode: config.mode,
-      enableLangChainRAG: config.mode === 'langchain',
     };
-
-    if (config.mode === 'langchain' && config.langChainConfig) {
-      (dto as any).langChainConfig = JSON.stringify({
-        numChunks: config.langChainConfig.numChunks,
-        llmProvider: config.langChainConfig.llmProvider,
-        llmModel: config.langChainConfig.llmModel,
-        embeddingModel: config.embeddingModel,
-        textSplitter: config.textSplitter,
-        chunkSize: config.chunkSize,
-        chunkOverlap: config.chunkOverlap,
-        separators: config.separators,
-        enableParentChildChunking: config.enableParentChildChunking,
-        bm25Weight: config.bm25Weight,
-        embeddingWeight: config.embeddingWeight,
-        useModelDefaults: config.useModelDefaults,
-      });
-    }
 
     return dto;
   }

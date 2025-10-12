@@ -23,5 +23,6 @@ export interface LLMClient {
     messages: LLMMessage[],
     model: string,
     jsonSchema?: Record<string, any>,
+    temperature?: number,
   ): Promise<ApiResponse<LLMResponse>>;
 }

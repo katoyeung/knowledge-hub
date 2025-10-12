@@ -1,0 +1,483 @@
+# Knowledge Hub - Cursor Rules
+
+## Project Overview
+
+This is a comprehensive knowledge management system with advanced document processing, vector search, and AI-powered features. It's a monorepo containing:
+
+- **Backend** (`apps/backend`): NestJS API with advanced document processing
+- **Frontend** (`apps/frontend`): Next.js web application
+- **CMS** (`apps/cms`): Refine.js admin interface
+- **Shared Types** (`packages/shared-types`): Common TypeScript definitions
+
+## Architecture & Technology Stack
+
+### Backend (NestJS)
+
+- **Framework**: NestJS with TypeScript
+- **Database**: PostgreSQL with TypeORM, snake_case naming strategy
+- **Cache**: Redis for caching and queues
+- **AI/ML**: Multiple LLM providers (OpenAI, OpenRouter, Ollama, DashScope), local embedding models (BGE-M3)
+- **Search**: Hybrid search with vector similarity + keyword search
+- **Authentication**: JWT with role-based access control
+- **Document Processing**: RAGFlow integration for PDF parsing
+- **Queue System**: Bull queues for background processing
+
+### Frontend (Next.js)
+
+- **Framework**: Next.js 15 with React 19, TypeScript
+- **Styling**: Tailwind CSS with custom design system
+- **UI Components**: Custom components with Radix UI primitives
+- **State Management**: TanStack Query for server state
+- **API**: tRPC for type-safe API calls
+- **Authentication**: Client-side auth with guards
+
+### CMS (Refine.js)
+
+- **Framework**: Refine.js with React 18, Ant Design
+- **Build Tool**: Vite
+- **Data Provider**: NestJSx CRUD integration
+- **Authentication**: Refine auth provider
+
+### Shared
+
+- **Monorepo**: Turbo for build orchestration
+- **Types**: Zod schemas for validation, shared TypeScript definitions
+- **Package Manager**: npm workspaces
+
+## Code Patterns & Conventions
+
+### Backend Patterns
+
+#### Module Structure
+
+```typescript
+// Standard NestJS module pattern
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([Entity1, Entity2]),
+    HttpModule,
+    ConfigModule,
+    CacheModule.register(),
+    EventModule,
+  ],
+  providers: [Service1, Service2],
+  exports: [Service1],
+  controllers: [Controller1],
+})
+export class FeatureModule {}
+```
+
+#### Service Pattern
+
+```typescript
+@Injectable()
+export class FeatureService {
+  private readonly logger = new Logger(FeatureService.name);
+
+  constructor(
+    @InjectRepository(Entity)
+    private readonly entityRepository: Repository<Entity>,
+    private readonly configService: ConfigService
+  ) {}
+
+  async methodName(): Promise<ReturnType> {
+    // Implementation
+  }
+}
+```
+
+#### Entity Pattern
+
+```typescript
+@Entity("table_name")
+export class Entity extends BaseEntity {
+  @PrimaryGeneratedColumn("uuid")
+  id: string;
+
+  @Column({ type: "varchar", length: 255 })
+  name: string;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+}
+```
+
+#### Controller Pattern
+
+```typescript
+@Controller("api/feature")
+@ApiTags("Feature")
+export class FeatureController {
+  constructor(private readonly featureService: FeatureService) {}
+
+  @Post()
+  @ApiOperation({ summary: "Create feature" })
+  async create(@Body() createDto: CreateFeatureDto): Promise<Feature> {
+    return this.featureService.create(createDto);
+  }
+}
+```
+
+### Frontend Patterns
+
+#### Component Structure
+
+```typescript
+interface ComponentProps {
+  // Props definition
+}
+
+export function Component({ prop1, prop2 }: ComponentProps) {
+  // Component logic
+  return (
+    <div className="tailwind-classes">
+      {/* JSX */}
+    </div>
+  );
+}
+```
+
+#### UI Component Pattern
+
+```typescript
+// Custom UI components extend Radix primitives
+function CustomComponent({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "base-classes",
+        className
+      )}
+      {...props}
+    />
+  );
+}
+```
+
+#### API Integration
+
+```typescript
+// Use tRPC for type-safe API calls
+const { data, isLoading, error } = api.dataset.list.useQuery({
+  page: 1,
+  limit: 10,
+});
+```
+
+### CMS Patterns
+
+#### Refine Page Pattern
+
+```typescript
+export const ResourceList = () => {
+  return (
+    <List>
+      <Table>
+        <Table.Column dataIndex="name" title="Name" />
+        <Table.Column dataIndex="description" title="Description" />
+      </Table>
+    </List>
+  );
+};
+```
+
+## File Organization
+
+### Backend Structure
+
+```
+src/
+├── common/                 # Shared utilities and interfaces
+│   ├── enums/             # System enumerations
+│   ├── interfaces/        # Type definitions
+│   ├── services/          # Shared services
+│   └── validators/        # Custom validators
+├── config/                # Configuration management
+├── database/              # Database setup and migrations
+├── modules/               # Feature modules
+│   ├── auth/             # Authentication
+│   ├── dataset/          # Dataset management
+│   ├── chat/             # Chat functionality
+│   └── document-parser/   # Document processing
+└── main.ts               # Application entry point
+```
+
+### Frontend Structure
+
+```
+app/                      # Next.js app router
+├── datasets/            # Dataset pages
+├── login/               # Auth pages
+└── page.tsx             # Home page
+components/              # Reusable components
+├── ui/                  # Base UI components
+└── feature/             # Feature-specific components
+lib/                     # Utilities and configurations
+├── api.ts              # API client
+├── auth.ts             # Auth utilities
+└── utils.ts            # General utilities
+```
+
+### CMS Structure
+
+```
+src/
+├── components/          # Reusable components
+├── pages/              # Page components
+│   ├── users/          # User management
+│   ├── posts/          # Content management
+│   └── datasets/       # Dataset management
+├── contexts/           # React contexts
+└── utils/              # Utilities
+```
+
+## Configuration Patterns
+
+### Environment Variables
+
+```bash
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_USERNAME=postgres
+DB_PASSWORD=password
+DB_DATABASE=knowledge_hub
+
+# Cache
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# AI Providers
+OPENROUTER_API_KEY=key
+OLLAMA_BASE_URL=http://localhost:11434
+DASHSCOPE_API_KEY=key
+```
+
+### Configuration Files
+
+```typescript
+// Use registerAs for config modules
+export default registerAs("feature", () => ({
+  setting1: process.env.SETTING_1 || "default",
+  setting2: parseInt(process.env.SETTING_2 || "100", 10),
+}));
+```
+
+## Testing Patterns
+
+### Backend Testing
+
+```typescript
+// E2E tests use real database and API calls
+describe("Feature E2E", () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    // Setup test database
+  });
+
+  it("should create feature", async () => {
+    const response = await request(app.getHttpServer())
+      .post("/api/feature")
+      .send(createData)
+      .expect(201);
+  });
+});
+```
+
+### Frontend Testing
+
+```typescript
+// Component testing with React Testing Library
+import { render, screen } from '@testing-library/react';
+import { Component } from './Component';
+
+test('renders component', () => {
+  render(<Component prop="value" />);
+  expect(screen.getByText('Expected Text')).toBeInTheDocument();
+});
+```
+
+## Development Guidelines
+
+### TypeScript
+
+- Use strict TypeScript configuration
+- Prefer interfaces over types for object shapes
+- Use Zod for runtime validation
+- Leverage shared types from `@knowledge-hub/shared-types`
+
+### Error Handling
+
+```typescript
+// Use NestJS exception filters
+throw new BadRequestException("Invalid input");
+throw new NotFoundException("Resource not found");
+```
+
+### Logging
+
+```typescript
+// Use NestJS Logger
+private readonly logger = new Logger(ServiceName.name);
+this.logger.log('Info message');
+this.logger.error('Error message', error.stack);
+```
+
+### Database
+
+- Use migrations for schema changes
+- Follow snake_case naming convention
+- Use TypeORM repositories
+- Implement soft deletes where appropriate
+
+### API Design
+
+- Use RESTful endpoints
+- Implement proper HTTP status codes
+- Use DTOs for request/response validation
+- Document APIs with Swagger/OpenAPI
+
+### Security
+
+- Implement JWT authentication
+- Use role-based access control
+- Validate all inputs
+- Sanitize user data
+
+## Build & Deployment
+
+### Development
+
+```bash
+# Install dependencies
+npm install
+
+# Start all services
+npm run dev
+
+# Start specific service
+npm run dev:backend
+npm run dev:frontend
+npm run dev:cms
+```
+
+### Production
+
+```bash
+# Build all services
+npm run build
+
+# Start production
+npm run start
+```
+
+### Docker
+
+- Use multi-stage Dockerfiles
+- Implement health checks
+- Use docker-compose for local development
+
+## AI/ML Integration
+
+### Embedding Models
+
+- Support multiple providers (local, Ollama, DashScope)
+- Use BGE-M3 for local embeddings
+- Implement dimension consistency checks
+
+### LLM Providers
+
+- Support OpenAI, OpenRouter, Ollama, DashScope
+- Implement model-specific configurations
+- Use temperature and token limits
+
+### Vector Search
+
+- Use PostgreSQL with pgvector
+- Implement hybrid search (semantic + keyword)
+- Support HNSW and IVFFlat indexes
+
+## Performance Considerations
+
+### Backend
+
+- Use Redis for caching
+- Implement connection pooling
+- Use background queues for heavy operations
+- Monitor database query performance
+
+### Frontend
+
+- Use React Query for caching
+- Implement code splitting
+- Optimize bundle size
+- Use Next.js optimizations
+
+### Database
+
+- Use proper indexing
+- Implement pagination
+- Monitor query performance
+- Use connection pooling
+
+## Common Commands
+
+### Backend
+
+```bash
+npm run dev                    # Start development server
+npm run build                  # Build for production
+npm run test                   # Run unit tests
+npm run test:e2e              # Run e2e tests
+npm run typeorm:migration:run  # Run migrations
+npm run seed                   # Seed database
+```
+
+### Frontend
+
+```bash
+npm run dev                    # Start development server
+npm run build                  # Build for production
+npm run lint                   # Run linter
+npm run type-check            # Type check
+```
+
+### CMS
+
+```bash
+npm run dev                    # Start development server
+npm run build                  # Build for production
+npm run refine                 # Refine CLI commands
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Database Connection**: Check environment variables and PostgreSQL status
+2. **Redis Connection**: Ensure Redis is running and accessible
+3. **AI Provider**: Verify API keys and model availability
+4. **Port Conflicts**: Check if ports 3000, 3001, 5173 are available
+
+### Debug Mode
+
+```bash
+# Backend debug
+npm run start:debug
+
+# Frontend debug
+npm run dev -- --inspect
+```
+
+## Documentation
+
+- All documentation is in the `docs/` directory
+- Use JSDoc for code documentation
+- Keep README files updated
+- Document API endpoints with Swagger
+
+Remember: This is a complex AI-powered knowledge management system. Always consider the full stack implications when making changes, especially around AI model integration, vector search, and document processing workflows.

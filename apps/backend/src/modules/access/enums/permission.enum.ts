@@ -13,4 +13,5 @@ export enum Resource {
   INSTRUMENT = 'instrument',
   INDICATOR = 'indicator',
   DATASET = 'dataset',
+  AI_PROVIDER = 'ai-provider',
 }

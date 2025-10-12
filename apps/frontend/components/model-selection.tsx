@@ -67,16 +67,16 @@ export function ModelSelection({
 
     const setDefaultSelection = (providers: ProviderInfo[]) => {
         if (providers.length > 0) {
-            // Prefer DashScope with Qwen Max if available, otherwise use first available provider
+            // Prefer DashScope with Qwen Turbo if available, otherwise use first available provider
             const dashscopeProvider = providers.find(p => p.id === 'dashscope' && p.available)
             let defaultProvider = dashscopeProvider
-            let defaultModel = 'qwen-max-latest' // Qwen Max model ID
+            let defaultModel = 'qwen-turbo-latest' // Qwen Turbo model ID
 
             if (dashscopeProvider) {
-                // Check if Qwen Max is available in DashScope
-                const qwenMaxModel = dashscopeProvider.models.find(m => m.id === 'qwen-max-latest' && (m as ModelInfo).available)
-                if (qwenMaxModel) {
-                    defaultModel = 'qwen-max-latest'
+                // Check if Qwen Turbo is available in DashScope
+                const qwenTurboModel = dashscopeProvider.models.find(m => m.id === 'qwen-turbo-latest' && (m as ModelInfo).available)
+                if (qwenTurboModel) {
+                    defaultModel = 'qwen-turbo-latest'
                 } else {
                     // Fallback to first available model in DashScope
                     const availableModel = dashscopeProvider.models.find(m => (m as ModelInfo).available) || dashscopeProvider.models[0]

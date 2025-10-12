@@ -77,4 +77,8 @@ export class CreateDatasetDto {
   @IsOptional()
   @IsObject()
   retrievalModel?: object;
+
+  @IsOptional()
+  @IsObject()
+  settings?: object;
 }

@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation'
 import { Navbar } from '@/components/navbar'
 import { DatasetGrid } from '@/components/dataset-grid'
 import { DatasetCreateWizard } from '@/components/dataset-create-wizard'
+import { AuthGuard } from '@/components/auth-guard'
 import { type Dataset } from '@/lib/api'
 
-export default function Home() {
+function HomeContent() {
   const [showCreateWizard, setShowCreateWizard] = useState(false)
   const router = useRouter()
 
@@ -66,5 +67,13 @@ export default function Home() {
         />
       </div>
     </div>
+  )
+}
+
+export default function Home() {
+  return (
+    <AuthGuard>
+      <HomeContent />
+    </AuthGuard>
   )
 }

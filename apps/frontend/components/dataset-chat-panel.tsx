@@ -1,28 +1,40 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, Settings, MessageSquare } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { Send, Bot, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ModelSelection } from '@/components/model-selection'
 import { SourceChunksDisplay } from '@/components/source-chunks-display'
 import { DocumentPreviewModal } from '@/components/document-preview-modal'
-import { chatApi, documentApi, Document } from '@/lib/api'
+import { ChatSettingsPopup } from '@/components/chat-settings-popup'
+import { chatApi, documentApi, datasetApi, Document } from '@/lib/api'
 import { ChatMessage, SourceChunk } from '@/lib/types/chat'
+import { useToast } from '@/components/ui/simple-toast'
 
 interface DatasetChatPanelProps {
     datasetId: string
     selectedDocumentId?: string
     selectedSegmentIds?: string[]
     datasetName?: string
+    dataset?: any
+}
+
+interface ChatSettings {
+    provider?: string
+    model?: string
+    promptId?: string
+    temperature?: number
+    maxChunks?: number
 }
 
 export function DatasetChatPanel({
     datasetId,
     selectedDocumentId,
     selectedSegmentIds,
-    datasetName: _datasetName
+    datasetName: _datasetName,
+    dataset: propDataset
 }: DatasetChatPanelProps) {
+    const { success, error } = useToast()
     const [messages, setMessages] = useState<ChatMessage[]>([])
     const [inputValue, setInputValue] = useState('')
     const [isLoading, setIsLoading] = useState(false)
@@ -30,15 +42,58 @@ export function DatasetChatPanel({
     const [sourceChunks, setSourceChunks] = useState<SourceChunk[]>([])
     const [selectedProvider, setSelectedProvider] = useState<string>('dashscope')
     const [selectedModel, setSelectedModel] = useState<string>('qwen-max-latest')
-    const [showSettings, setShowSettings] = useState(false)
     const [previewDocument, setPreviewDocument] = useState<Document | null>(null)
     const [showPreview, setShowPreview] = useState(false)
     const [loadingDocument, setLoadingDocument] = useState(false)
+    const [chatSettings, setChatSettings] = useState<ChatSettings>({})
+    const [dataset, setDataset] = useState<any>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
+
+    const loadDataset = useCallback(async () => {
+        try {
+            const datasetData = await datasetApi.getById(datasetId)
+            setDataset(datasetData)
+
+            // Load chat settings from dataset
+            if (datasetData.settings && datasetData.settings.chat_settings) {
+                setChatSettings(datasetData.settings.chat_settings)
+                // Update local state with saved settings
+                if (datasetData.settings.chat_settings.provider) {
+                    setSelectedProvider(datasetData.settings.chat_settings.provider)
+                }
+                if (datasetData.settings.chat_settings.model) {
+                    setSelectedModel(datasetData.settings.chat_settings.model)
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load dataset:', err)
+        }
+    }, [datasetId])
+
+    // Load dataset and chat settings on mount
+    useEffect(() => {
+        if (propDataset) {
+            // Use dataset passed as prop
+            setDataset(propDataset)
+            if (propDataset.settings && propDataset.settings.chat_settings) {
+                setChatSettings(propDataset.settings.chat_settings)
+                // Update local state with saved settings
+                if (propDataset.settings.chat_settings.provider) {
+                    setSelectedProvider(propDataset.settings.chat_settings.provider)
+                }
+                if (propDataset.settings.chat_settings.model) {
+                    setSelectedModel(propDataset.settings.chat_settings.model)
+                }
+            }
+        } else {
+            // Fallback to fetching dataset if not provided as prop
+            loadDataset()
+        }
+    }, [datasetId, propDataset, loadDataset])
 
     useEffect(() => {
         scrollToBottom()
@@ -61,16 +116,20 @@ export function DatasetChatPanel({
         setIsLoading(true)
 
         try {
+            // Use chat settings if available, otherwise fallback to defaults
+            const settings = chatSettings.provider ? chatSettings : {
+                temperature: 0.7,
+                maxChunks: 5
+            }
+
             const response = await chatApi.chatWithDocuments({
                 message: inputValue.trim(),
                 datasetId,
                 documentIds: selectedDocumentId ? [selectedDocumentId] : undefined,
                 segmentIds: selectedSegmentIds,
-                llmProvider: selectedProvider,
-                model: selectedModel,
                 conversationId,
-                maxChunks: 10,
-                temperature: 0.7
+                maxChunks: settings.maxChunks || 5,
+                temperature: settings.temperature || 0.7
             })
 
             // Update conversation ID if this is a new conversation
@@ -130,6 +189,38 @@ export function DatasetChatPanel({
         setPreviewDocument(null)
     }
 
+    const handleChatSettingsChange = (newSettings: ChatSettings) => {
+        setChatSettings(newSettings)
+        // Update local state immediately for UI responsiveness
+        if (newSettings.provider) {
+            setSelectedProvider(newSettings.provider)
+        }
+        if (newSettings.model) {
+            setSelectedModel(newSettings.model)
+        }
+    }
+
+    const handleSaveChatSettings = async (newSettings: ChatSettings) => {
+        try {
+            await datasetApi.update(datasetId, {
+                settings: {
+                    chat_settings: newSettings
+                }
+            })
+            setChatSettings(newSettings)
+            setDataset((prev: any) => prev ? {
+                ...prev,
+                settings: {
+                    ...prev.settings,
+                    chat_settings: newSettings
+                }
+            } : null)
+        } catch (err) {
+            console.error('Failed to save chat settings:', err)
+            throw err
+        }
+    }
+
     return (
         <div className="h-full flex flex-col bg-white border border-gray-200 rounded-lg">
             {/* Header */}
@@ -142,33 +233,13 @@ export function DatasetChatPanel({
                         <p className="text-sm text-gray-500">Chatting with selected document</p>
                     )}
                 </div>
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowSettings(!showSettings)}
-                    className="text-gray-500 hover:text-gray-700"
-                >
-                    <Settings className="h-4 w-4" />
-                </Button>
+                <ChatSettingsPopup
+                    datasetId={datasetId}
+                    currentSettings={chatSettings}
+                    onSettingsChange={handleChatSettingsChange}
+                    onSaveSettings={handleSaveChatSettings}
+                />
             </div>
-
-            {/* Model Selection */}
-            {showSettings && (
-                <div className="p-4 border-b border-gray-200 bg-gray-50">
-                    <div className="space-y-3">
-                        <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
-                            <MessageSquare className="h-4 w-4" />
-                            Model Configuration
-                        </div>
-                        <ModelSelection
-                            selectedProvider={selectedProvider}
-                            selectedModel={selectedModel}
-                            onProviderChange={setSelectedProvider}
-                            onModelChange={setSelectedModel}
-                        />
-                    </div>
-                </div>
-            )}
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">

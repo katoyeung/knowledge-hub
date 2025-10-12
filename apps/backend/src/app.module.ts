@@ -8,6 +8,8 @@ import { AuthModule } from '@modules/auth';
 import { getDatabaseConfig, localModelsConfig } from './config';
 import { AccessModule } from '@modules/access';
 import { DatasetModule } from '@modules/dataset';
+import { AiProviderModule } from '@modules/ai-provider';
+import { PromptsModule } from '@modules/prompts';
 import { CacheModule } from '@nestjs/cache-manager';
 import { getCacheConfig } from './config/cache.config';
 import { NotificationModule } from '@modules/notification/notification.module';
@@ -41,6 +43,8 @@ import { ChatModule } from '@modules/chat/chat.module';
     AuthModule,
     AccessModule,
     DatasetModule,
+    AiProviderModule,
+    PromptsModule,
     DocumentParserModule,
     ChatModule,
     NotificationModule,

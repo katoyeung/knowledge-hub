@@ -4,12 +4,9 @@ import { Cache } from 'cache-manager';
 export interface CacheableConfig<T = any> {
   keyPrefix: string;
   keyGenerator: (...args: any[]) => string;
-  shouldRefresh?: (data: T) => boolean;
   ttl: number | ((...args: any[]) => number);
-  // Keep only cache-related features
   onCacheHit?: (key: string, result: any) => void;
   onCacheMiss?: (key: string) => void;
-  tags?: string[];
 }
 
 export function Cacheable<T = any>(config: CacheableConfig<T>) {
@@ -33,35 +30,26 @@ export function Cacheable<T = any>(config: CacheableConfig<T>) {
         );
       }
 
-      const cacheKey = config.keyGenerator(...args);
+      const cacheKey = `${config.keyPrefix}:${config.keyGenerator(...args)}`;
       const ttl =
         typeof config.ttl === 'function' ? config.ttl(...args) : config.ttl;
-      const shouldRefresh = config.shouldRefresh?.(args[1]) || false;
 
       try {
-        // Try to get from cache if not forcing refresh
-        if (!shouldRefresh) {
-          const cachedResult = await this.cacheManager.get(cacheKey);
-          if (cachedResult) {
-            logger.debug(`Cache hit for key: ${cacheKey}`);
-            config.onCacheHit?.(cacheKey, cachedResult);
-            return cachedResult;
-          }
-          logger.debug(`Cache miss for key: ${cacheKey}`);
-          config.onCacheMiss?.(cacheKey);
+        // Try to get from cache
+        const cachedResult = await this.cacheManager.get(cacheKey);
+        if (cachedResult) {
+          logger.debug(`Cache hit for key: ${cacheKey}`);
+          config.onCacheHit?.(cacheKey, cachedResult);
+          return cachedResult;
         }
+        logger.debug(`Cache miss for key: ${cacheKey}`);
+        config.onCacheMiss?.(cacheKey);
 
         // Execute original method
         const result = await originalMethod.apply(this, args);
 
         // Cache the result
         await this.cacheManager.set(cacheKey, result, ttl);
-
-        // Store cache tags if provided
-        if (config.tags?.length) {
-          const tagKey = `tags:${cacheKey}`;
-          await this.cacheManager.set(tagKey, config.tags, ttl);
-        }
 
         return result;
       } catch (error) {

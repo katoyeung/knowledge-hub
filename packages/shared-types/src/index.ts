@@ -37,10 +37,25 @@ export const ApiResponseSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
     message: z.string().optional(),
   });
 
+// Chat Settings schema
+export const ChatSettingsSchema = z.object({
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  promptId: z.string().optional(),
+  temperature: z.number().min(0).max(1).optional(),
+  maxChunks: z.number().min(1).max(20).optional(),
+});
+
+// User Settings schema
+export const UserSettingsSchema = z.object({
+  chat_settings: ChatSettingsSchema.optional(),
+});
+
 // User schema
 export const UserSchema = BaseEntitySchema.extend({
   name: z.string().optional(),
   email: z.string().email(),
+  settings: UserSettingsSchema.optional(),
   roles: z
     .array(
       z.object({
@@ -192,3 +207,7 @@ export type {
   AuthError,
   TokenPayload,
 } from "./auth-types";
+
+// Export settings types
+export type ChatSettings = z.infer<typeof ChatSettingsSchema>;
+export type UserSettings = z.infer<typeof UserSettingsSchema>;

@@ -10,6 +10,7 @@ import {
   UploadedFiles,
   Param,
   Get,
+  Put,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
@@ -28,6 +29,7 @@ import { plainToInstance, classToPlain } from 'class-transformer';
 import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
 import { CreateDatasetDto } from './dto/create-dataset.dto';
 import { UpdateDatasetDto } from './dto/update-dataset.dto';
+import { UpdateChatSettingsDto } from './dto/update-chat-settings.dto';
 import {
   getEffectiveChunkSize,
   getEffectiveChunkOverlap,
@@ -303,7 +305,7 @@ export class DatasetController implements CrudController<Dataset> {
         documentId,
         query,
         limit = 10,
-        rerankerType = RerankerType.MATHEMATICAL,
+        rerankerType = RerankerType.NONE,
         bm25Weight,
         embeddingWeight,
       } = searchDto;
@@ -367,6 +369,37 @@ export class DatasetController implements CrudController<Dataset> {
     } catch (error) {
       this.logger.error('🚨 Hybrid search error:', error);
       throw new BadRequestException(`Search failed: ${error.message}`);
+    }
+  }
+
+  @Put('/:id/chat-settings')
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async updateChatSettings(
+    @Param('id') datasetId: string,
+    @Body() updateChatSettingsDto: UpdateChatSettingsDto,
+    @Request() req: any,
+  ) {
+    try {
+      const userId = req.user?.id || req.user?.sub;
+      if (!userId) {
+        throw new BadRequestException('User not authenticated');
+      }
+
+      const updatedDataset = await this.service.updateChatSettings(
+        datasetId,
+        updateChatSettingsDto,
+        userId,
+      );
+
+      return {
+        success: true,
+        dataset: updatedDataset,
+        message: 'Chat settings updated successfully',
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to update chat settings: ${error.message}`,
+      );
     }
   }
 

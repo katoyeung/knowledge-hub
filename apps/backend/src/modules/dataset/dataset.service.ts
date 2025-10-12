@@ -354,6 +354,9 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
       dataSourceType: 'upload_file',
       indexingTechnique: 'high_quality',
       userId,
+      settings: {
+        chat_settings: {},
+      },
     });
 
     return this.datasetRepository.save(dataset);
@@ -459,9 +462,6 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
         chunkOverlap: processDto.chunkOverlap,
         separators: processDto.separators,
         customModelName: processDto.customModelName,
-        enableLangChainRAG: processDto.enableLangChainRAG,
-        langChainConfig: processDto.langChainConfig,
-        configMode: processDto.configMode,
       }),
     });
 
@@ -492,10 +492,6 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
           separators: processDto.separators,
           // 🆕 Pass parent-child chunking option
           enableParentChildChunking: processDto.enableParentChildChunking,
-          // 🆕 Pass LangChain RAG configuration
-          enableLangChainRAG: processDto.enableLangChainRAG,
-          langChainConfig: processDto.langChainConfig,
-          configMode: processDto.configMode,
         },
         userId: _userId,
       });
@@ -556,7 +552,6 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
         customModelName: processedConfig.customModelName,
         enableParentChildChunking: processedConfig.enableParentChildChunking,
         useModelDefaults: processedConfig.useModelDefaults,
-        langChainConfig: processedConfig.langChainConfig,
       }),
     });
 
@@ -705,5 +700,54 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     }
 
     return samples;
+  }
+
+  async updateChatSettings(
+    datasetId: string,
+    chatSettings: any,
+    userId: string,
+  ): Promise<Dataset> {
+    this.logger.log(`Updating chat settings for dataset ${datasetId}`);
+
+    const dataset = await this.datasetRepository.findOne({
+      where: { id: datasetId, userId },
+    });
+
+    if (!dataset) {
+      throw new Error('Dataset not found or access denied');
+    }
+
+    // Get existing settings or create new ones
+    const existingSettings = (dataset.settings as any) || {};
+    const updatedSettings = {
+      ...existingSettings,
+      chat_settings: {
+        ...(existingSettings.chat_settings || {}),
+        ...chatSettings,
+      },
+    };
+
+    // Update the dataset with new settings
+    await this.datasetRepository.update(datasetId, {
+      settings: updatedSettings,
+    });
+
+    // Invalidate cache
+    await this.invalidateDatasetCache(datasetId);
+
+    // Return updated dataset
+    const updatedDataset = await this.datasetRepository.findOne({
+      where: { id: datasetId },
+    });
+
+    if (!updatedDataset) {
+      throw new Error('Failed to retrieve updated dataset');
+    }
+
+    this.logger.log(
+      `Chat settings updated for dataset ${datasetId}: ${JSON.stringify(chatSettings)}`,
+    );
+
+    return updatedDataset;
   }
 }

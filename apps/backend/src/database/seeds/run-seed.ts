@@ -2,6 +2,8 @@ import { DataSource } from 'typeorm';
 import { InitialPermissionsSeed } from './initial-permissions.seed';
 import { InitialRolesSeed } from './initial-roles.seed';
 import { InitialAdminSeed } from './initial-admin.seed';
+import { InitialAiProvidersSeed } from './initial-ai-providers.seed';
+import { seedPrompts } from './initial-prompts.seed';
 import Keyv from 'keyv';
 
 export class SeedRunner {
@@ -26,6 +28,15 @@ export class SeedRunner {
       const adminSeed = new InitialAdminSeed();
       await adminSeed.run(this.dataSource);
       console.log('✅ Admin user seeded successfully');
+
+      // Create AI providers
+      const aiProvidersSeed = new InitialAiProvidersSeed();
+      await aiProvidersSeed.run(this.dataSource);
+      console.log('✅ AI providers seeded successfully');
+
+      // Create prompts
+      await seedPrompts(this.dataSource);
+      console.log('✅ Prompts seeded successfully');
 
       // Invalidate user cache
       await this.invalidateUserCache();

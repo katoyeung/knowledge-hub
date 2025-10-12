@@ -108,6 +108,50 @@ export class InitialPermissionsSeed {
         resource: Resource.INDICATOR,
         action: Action.DELETE,
       },
+
+      // Dataset permissions
+      {
+        name: 'dataset:create',
+        resource: Resource.DATASET,
+        action: Action.CREATE,
+      },
+      {
+        name: 'dataset:read',
+        resource: Resource.DATASET,
+        action: Action.READ,
+      },
+      {
+        name: 'dataset:update',
+        resource: Resource.DATASET,
+        action: Action.UPDATE,
+      },
+      {
+        name: 'dataset:delete',
+        resource: Resource.DATASET,
+        action: Action.DELETE,
+      },
+
+      // AI Provider permissions
+      {
+        name: 'ai-provider:create',
+        resource: Resource.AI_PROVIDER,
+        action: Action.CREATE,
+      },
+      {
+        name: 'ai-provider:read',
+        resource: Resource.AI_PROVIDER,
+        action: Action.READ,
+      },
+      {
+        name: 'ai-provider:update',
+        resource: Resource.AI_PROVIDER,
+        action: Action.UPDATE,
+      },
+      {
+        name: 'ai-provider:delete',
+        resource: Resource.AI_PROVIDER,
+        action: Action.DELETE,
+      },
     ];
 
     // Create permissions

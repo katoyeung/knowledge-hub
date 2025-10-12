@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronDown, LogOut } from 'lucide-react'
+import { ChevronDown, LogOut, Settings, Bot, FileText } from 'lucide-react'
 // import { Button } from '@/components/ui/simple-button'
 import { authUtil } from '@/lib/auth'
 import type { AuthUser } from '@knowledge-hub/shared-types'
@@ -14,7 +14,8 @@ interface NavbarProps {
 
 export function Navbar({ onLogout }: NavbarProps) {
     const [user, setUser] = useState<AuthUser | null>(null)
-    const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+    const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false)
+    const [isSettingsDropdownOpen, setIsSettingsDropdownOpen] = useState(false)
     const router = useRouter()
 
     useEffect(() => {
@@ -38,6 +39,11 @@ export function Navbar({ onLogout }: NavbarProps) {
         return email.substring(0, 2).toUpperCase()
     }
 
+    const handleSettingsClick = (path: string) => {
+        setIsSettingsDropdownOpen(false)
+        router.push(path)
+    }
+
     if (!user) {
         return null
     }
@@ -55,52 +61,99 @@ export function Navbar({ onLogout }: NavbarProps) {
                     </Link>
                 </div>
 
-                {/* Right side - User avatar and dropdown */}
-                <div className="relative">
-                    <button
-                        className="flex items-center space-x-2 px-3 py-2 rounded-full hover:bg-gray-100"
-                        onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                    >
-                        <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-medium">
-                            {getUserInitials(user.email)}
-                        </div>
-                        <ChevronDown className="w-4 h-4 text-gray-500" />
-                    </button>
+                {/* Right side - Settings and User dropdowns */}
+                <div className="flex items-center space-x-4">
+                    {/* Settings dropdown */}
+                    <div className="relative">
+                        <button
+                            className="flex items-center space-x-2 px-3 py-2 rounded-full hover:bg-gray-100"
+                            onClick={() => setIsSettingsDropdownOpen(!isSettingsDropdownOpen)}
+                        >
+                            <Settings className="w-5 h-5 text-gray-600" />
+                            <span className="text-sm font-medium text-gray-700">Settings</span>
+                            <ChevronDown className="w-4 h-4 text-gray-500" />
+                        </button>
 
-                    {/* Dropdown menu */}
-                    {isDropdownOpen && (
-                        <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
-                            <div className="px-4 py-3 border-b border-gray-100">
-                                <div className="flex items-center space-x-3">
-                                    <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-medium">
-                                        {getUserInitials(user.email)}
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-medium text-gray-900">{user.email}</p>
-                                        <p className="text-xs text-gray-500">User</p>
-                                    </div>
+                        {/* Settings dropdown menu */}
+                        {isSettingsDropdownOpen && (
+                            <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
+                                <div className="py-1">
+                                    <button
+                                        onClick={() => handleSettingsClick('/settings/ai-providers')}
+                                        className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    >
+                                        <Bot className="w-4 h-4 mr-3" />
+                                        AI Providers
+                                    </button>
+                                    <button
+                                        onClick={() => handleSettingsClick('/settings/prompts')}
+                                        className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    >
+                                        <FileText className="w-4 h-4 mr-3" />
+                                        Prompts
+                                    </button>
+                                    <button
+                                        onClick={() => handleSettingsClick('/settings/chat-settings')}
+                                        className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    >
+                                        <Settings className="w-4 h-4 mr-3" />
+                                        Chat Settings
+                                    </button>
                                 </div>
                             </div>
+                        )}
+                    </div>
 
-                            <div className="py-1">
-                                <button
-                                    onClick={handleLogout}
-                                    className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                >
-                                    <LogOut className="w-4 h-4 mr-3" />
-                                    Logout
-                                </button>
+                    {/* User dropdown */}
+                    <div className="relative">
+                        <button
+                            className="flex items-center space-x-2 px-3 py-2 rounded-full hover:bg-gray-100"
+                            onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
+                        >
+                            <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-medium">
+                                {getUserInitials(user.email)}
                             </div>
-                        </div>
-                    )}
+                            <ChevronDown className="w-4 h-4 text-gray-500" />
+                        </button>
+
+                        {/* User dropdown menu */}
+                        {isUserDropdownOpen && (
+                            <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
+                                <div className="px-4 py-3 border-b border-gray-100">
+                                    <div className="flex items-center space-x-3">
+                                        <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-medium">
+                                            {getUserInitials(user.email)}
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-medium text-gray-900">{user.email}</p>
+                                            <p className="text-xs text-gray-500">User</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="py-1">
+                                    <button
+                                        onClick={handleLogout}
+                                        className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    >
+                                        <LogOut className="w-4 h-4 mr-3" />
+                                        Logout
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
-            {/* Overlay to close dropdown when clicking outside */}
-            {isDropdownOpen && (
+            {/* Overlay to close dropdowns when clicking outside */}
+            {(isUserDropdownOpen || isSettingsDropdownOpen) && (
                 <div
                     className="fixed inset-0 z-40"
-                    onClick={() => setIsDropdownOpen(false)}
+                    onClick={() => {
+                        setIsUserDropdownOpen(false)
+                        setIsSettingsDropdownOpen(false)
+                    }}
                 />
             )}
         </nav>

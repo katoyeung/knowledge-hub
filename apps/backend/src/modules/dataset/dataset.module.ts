@@ -17,12 +17,10 @@ import { DocumentService } from './document.service';
 import { DocumentController } from './document.controller';
 import { DocumentSegmentService } from './document-segment.service';
 import { DocumentSegmentController } from './document-segment.controller';
-import { LangChainRAGController } from './controllers/langchain-rag.controller';
 import { DocumentProcessingService } from './services/document-processing.service';
 import { EmbeddingV2Service } from './services/embedding-v2.service';
 import { HybridSearchService } from './services/hybrid-search.service';
 import { EntityExtractionService } from './services/entity-extraction.service';
-import { LangChainRAGService } from './services/langchain-rag.service';
 import { EmbeddingConfigProcessorService } from './services/embedding-config-processor.service';
 import { ApiClientFactory } from '../../common/services/api-client-factory.service';
 import { EmbeddingClientFactory } from '../../common/services/embedding-client-factory.service';
@@ -66,7 +64,6 @@ import { DocumentParserModule } from '../document-parser/document-parser.module'
     EmbeddingV2Service,
     HybridSearchService,
     EntityExtractionService,
-    LangChainRAGService,
     EmbeddingConfigProcessorService,
     ModelMappingService,
     ApiClientFactory,
@@ -91,14 +88,12 @@ import { DocumentParserModule } from '../document-parser/document-parser.module'
     EmbeddingV2Service,
     HybridSearchService,
     EntityExtractionService,
-    LangChainRAGService,
     ModelMappingService,
   ],
   controllers: [
     DatasetController,
     DocumentController,
     DocumentSegmentController,
-    LangChainRAGController,
   ],
 })
 export class DatasetModule {}

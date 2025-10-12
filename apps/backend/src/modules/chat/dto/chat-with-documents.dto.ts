@@ -8,8 +8,6 @@ import {
   Min,
   Max,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { LLMProvider } from '../services/model-config.service';
 import { RerankerType } from '../../dataset/dto/create-dataset-step.dto';
 
 export class ChatWithDocumentsDto {
@@ -29,25 +27,17 @@ export class ChatWithDocumentsDto {
   @IsOptional()
   segmentIds?: string[];
 
-  @IsEnum(LLMProvider)
-  @IsOptional()
-  llmProvider?: LLMProvider = LLMProvider.DASHSCOPE;
-
-  @IsString()
-  @IsOptional()
-  model?: string;
-
   @IsNumber()
   @Min(1)
   @Max(20)
   @IsOptional()
-  maxChunks?: number = 10;
+  maxChunks?: number;
 
   @IsNumber()
   @Min(0)
   @Max(1)
   @IsOptional()
-  temperature?: number = 0.7;
+  temperature?: number;
 
   @IsUUID()
   @IsOptional()
@@ -59,5 +49,5 @@ export class ChatWithDocumentsDto {
 
   @IsEnum(RerankerType)
   @IsOptional()
-  rerankerType?: RerankerType = RerankerType.MATHEMATICAL;
+  rerankerType?: RerankerType = RerankerType.NONE;
 }

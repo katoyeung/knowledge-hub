@@ -6,6 +6,7 @@ import {
   MaxLength,
   Matches,
   IsEmail,
+  IsObject,
 } from 'class-validator';
 import { Role } from '@modules/access/entities/role.entity';
 export class CreateUserDto {
@@ -27,4 +28,8 @@ export class CreateUserDto {
   @IsOptional()
   @IsArray()
   roles?: Role[];
+
+  @IsOptional()
+  @IsObject()
+  settings?: object;
 }

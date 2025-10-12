@@ -55,6 +55,10 @@ export class Dataset extends BaseEntity {
   @Column('decimal', { precision: 3, scale: 2, default: 0.6, nullable: true })
   embeddingWeight: number;
 
+  // 🆕 Settings Configuration
+  @Column('jsonb', { nullable: true })
+  settings: object;
+
   // Foreign key column
   @Exclude({ toPlainOnly: true })
   @Column('uuid')

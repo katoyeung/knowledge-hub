@@ -6,6 +6,11 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
+  "globals": {
+    "ts-jest": {
+      "tsconfig": "<rootDir>/../tsconfig.test.json"
+    }
+  },
   "collectCoverageFrom": [
     "src/**/*.(t|j)s"
   ],

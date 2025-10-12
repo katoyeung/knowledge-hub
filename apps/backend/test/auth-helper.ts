@@ -25,18 +25,23 @@ export class AuthHelper {
   /**
    * Authenticate with the default admin user
    */
-  static async authenticateAsAdmin(app: INestApplication): Promise<AuthResult> {
-    return this.authenticate(app, this.DEFAULT_ADMIN_USER);
+  static async authenticateAsAdmin(
+    appOrUrl: INestApplication | string,
+  ): Promise<AuthResult> {
+    return this.authenticate(appOrUrl, this.DEFAULT_ADMIN_USER);
   }
 
   /**
    * Authenticate with custom user credentials
    */
   static async authenticate(
-    app: INestApplication,
+    appOrUrl: INestApplication | string,
     user: TestUser,
   ): Promise<AuthResult> {
-    const loginResponse = await request(app.getHttpServer())
+    const baseUrl =
+      typeof appOrUrl === 'string' ? appOrUrl : appOrUrl.getHttpServer();
+
+    const loginResponse = await request(baseUrl)
       .post('/auth/login')
       .send({
         email: user.email,

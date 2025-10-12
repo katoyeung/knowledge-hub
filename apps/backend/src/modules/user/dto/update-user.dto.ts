@@ -6,6 +6,7 @@ import {
   MaxLength,
   MinLength,
   IsOptional,
+  IsObject,
 } from 'class-validator';
 import { Role } from '@modules/access/entities/role.entity';
 
@@ -28,4 +29,8 @@ export class UpdateUserDto {
   @IsOptional()
   @IsArray()
   roles?: Role[];
+
+  @IsOptional()
+  @IsObject()
+  settings?: object;
 }

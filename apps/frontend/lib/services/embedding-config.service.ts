@@ -254,7 +254,6 @@ export class EmbeddingConfigService {
       bm25Weight: currentConfig.bm25Weight,
       embeddingWeight: currentConfig.embeddingWeight,
       numChunks: currentConfig.numChunks,
-      enableLangChainRAG: true, // Always enabled for unified config
     };
   }
 

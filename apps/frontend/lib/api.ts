@@ -48,6 +48,16 @@ export interface Dataset {
   provider?: string;
   permission?: string;
   dataSourceType?: string;
+  settings?: {
+    chat_settings?: {
+      provider?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
+      maxChunks?: number;
+    };
+    workflow_settings?: any;
+  };
   createdAt: string;
   updatedAt: string;
   user?: {
@@ -283,9 +293,6 @@ export const datasetApi = {
     // 🆕 Search Weight Configuration
     bm25Weight?: number;
     embeddingWeight?: number;
-    // 🆕 LangChain RAG Configuration
-    enableLangChainRAG?: boolean;
-    langChainConfig?: string;
   }): Promise<{
     success: boolean;
     message: string;
@@ -379,15 +386,6 @@ export const documentApi = {
       datasetId?: string;
       datasetName?: string;
       datasetDescription?: string;
-      enableLangChainRAG?: boolean;
-      langChainConfig?: {
-        chunkSize: number;
-        chunkOverlap: number;
-        numChunks: number;
-        llmProvider: string;
-        llmModel: string;
-        embeddingModel: string;
-      };
     } = {}
   ): Promise<{
     success: boolean;
@@ -419,15 +417,6 @@ export const documentApi = {
     }
     if (options.datasetDescription) {
       formData.append("datasetDescription", options.datasetDescription);
-    }
-    if (options.enableLangChainRAG) {
-      formData.append("enableLangChainRAG", "true");
-    }
-    if (options.langChainConfig) {
-      formData.append(
-        "langChainConfig",
-        JSON.stringify(options.langChainConfig)
-      );
     }
 
     const response = await apiClient.post("/documents/upload", formData, {
@@ -533,6 +522,281 @@ export const documentSegmentApi = {
       .then((res) => res.data),
 };
 
+// AI Provider API interface
+export interface AiProvider {
+  id: string;
+  name: string;
+  type:
+    | "openai"
+    | "anthropic"
+    | "openrouter"
+    | "dashscope"
+    | "perplexity"
+    | "custom";
+  apiKey?: string;
+  baseUrl?: string;
+  isActive: boolean;
+  models?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    maxTokens?: number;
+    contextWindow?: number;
+    pricing?: {
+      input: number;
+      output: number;
+    };
+  }>;
+  createdAt: string;
+  updatedAt: string;
+  userId: string;
+  user?: {
+    id: string;
+    email: string;
+  };
+}
+
+// AI Provider Model interface
+export interface AiProviderModel {
+  id: string;
+  name: string;
+  description?: string;
+  maxTokens?: number;
+  contextWindow?: number;
+  pricing?: {
+    input: number;
+    output: number;
+  };
+}
+
+// Prompt API interface
+export interface Prompt {
+  id: string;
+  name: string;
+  systemPrompt: string;
+  userPromptTemplate?: string;
+  description?: string;
+  jsonSchema?: object;
+  type: string;
+  isGlobal: boolean;
+  isActive: boolean;
+  userId: string;
+  createdAt: string;
+  updatedAt: string;
+  user?: {
+    id: string;
+    email: string;
+  };
+}
+
+// AI Provider API functions
+export const aiProviderApi = {
+  // Get all AI providers
+  getAll: async (params?: {
+    page?: number;
+    limit?: number;
+    sort?: string;
+    filter?: string;
+  }): Promise<{
+    data: AiProvider[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> => {
+    const response = await apiClient.get("/ai-providers", { params });
+
+    // Handle both direct array response and paginated response
+    if (Array.isArray(response.data)) {
+      return {
+        data: response.data,
+        count: response.data.length,
+        total: response.data.length,
+        page: 1,
+        pageCount: 1,
+      };
+    }
+
+    return response.data;
+  },
+
+  // Get AI provider by ID
+  getById: async (id: string): Promise<AiProvider> => {
+    const response = await apiClient.get(`/ai-providers/${id}`);
+    return response.data;
+  },
+
+  // Create new AI provider
+  create: async (
+    data: Omit<AiProvider, "id" | "createdAt" | "updatedAt" | "userId">
+  ): Promise<AiProvider> => {
+    const response = await apiClient.post("/ai-providers", data);
+    return response.data;
+  },
+
+  // Update AI provider
+  update: async (
+    id: string,
+    data: Partial<AiProvider>
+  ): Promise<AiProvider> => {
+    const response = await apiClient.patch(`/ai-providers/${id}`, data);
+    return response.data;
+  },
+
+  // Delete AI provider
+  delete: async (id: string): Promise<boolean> => {
+    await apiClient.delete(`/ai-providers/${id}`);
+    return true;
+  },
+
+  // Model Management Methods
+
+  // Get all models for an AI provider
+  getModels: async (providerId: string): Promise<AiProviderModel[]> => {
+    const response = await apiClient.get(`/ai-providers/${providerId}/models`);
+    return response.data;
+  },
+
+  // Get a specific model from an AI provider
+  getModel: async (
+    providerId: string,
+    modelId: string
+  ): Promise<AiProviderModel> => {
+    const encodedModelId = encodeURIComponent(modelId);
+    const response = await apiClient.get(
+      `/ai-providers/${providerId}/models/${encodedModelId}`
+    );
+    return response.data;
+  },
+
+  // Add a new model to an AI provider
+  addModel: async (
+    providerId: string,
+    modelData: AiProviderModel
+  ): Promise<AiProvider> => {
+    const response = await apiClient.post(
+      `/ai-providers/${providerId}/models`,
+      modelData
+    );
+    return response.data;
+  },
+
+  // Update an existing model in an AI provider
+  updateModel: async (
+    providerId: string,
+    modelId: string,
+    modelData: Partial<AiProviderModel>
+  ): Promise<AiProvider> => {
+    const encodedModelId = encodeURIComponent(modelId);
+    const response = await apiClient.patch(
+      `/ai-providers/${providerId}/models/${encodedModelId}`,
+      modelData
+    );
+    return response.data;
+  },
+
+  // Remove a model from an AI provider
+  removeModel: async (
+    providerId: string,
+    modelId: string
+  ): Promise<AiProvider> => {
+    // URL encode the modelId to handle special characters like / and :
+    const encodedModelId = encodeURIComponent(modelId);
+    console.log("API: Removing model", { providerId, modelId, encodedModelId });
+    console.log(
+      "API: Request URL",
+      `/ai-providers/${providerId}/models/${encodedModelId}`
+    );
+
+    try {
+      const response = await apiClient.delete(
+        `/ai-providers/${providerId}/models/${encodedModelId}`
+      );
+      console.log("API: Delete response", response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error("API: Delete error", error);
+      console.error("API: Error response", error.response?.data);
+      throw error;
+    }
+  },
+};
+
+// Prompt API functions
+export const promptApi = {
+  // Get all prompts
+  getAll: async (params?: {
+    page?: number;
+    limit?: number;
+    sort?: string;
+    filter?: string;
+  }): Promise<{
+    data: Prompt[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> => {
+    const response = await apiClient.get("/prompts", { params });
+
+    // Handle both direct array response and paginated response
+    if (Array.isArray(response.data)) {
+      return {
+        data: response.data,
+        count: response.data.length,
+        total: response.data.length,
+        page: 1,
+        pageCount: 1,
+      };
+    }
+
+    return response.data;
+  },
+
+  // Search prompts with pagination
+  search: async (params: {
+    q?: string;
+    page?: number;
+    limit?: number;
+    sort?: string;
+  }): Promise<{
+    data: Prompt[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> => {
+    const response = await apiClient.get("/prompts/search", { params });
+    return response.data;
+  },
+
+  // Get prompt by ID
+  getById: async (id: string): Promise<Prompt> => {
+    const response = await apiClient.get(`/prompts/${id}`);
+    return response.data;
+  },
+
+  // Create new prompt
+  create: async (
+    data: Omit<Prompt, "id" | "createdAt" | "updatedAt" | "userId">
+  ): Promise<Prompt> => {
+    const response = await apiClient.post("/prompts", data);
+    return response.data;
+  },
+
+  // Update prompt
+  update: async (id: string, data: Partial<Prompt>): Promise<Prompt> => {
+    const response = await apiClient.patch(`/prompts/${id}`, data);
+    return response.data;
+  },
+
+  // Delete prompt
+  delete: async (id: string): Promise<boolean> => {
+    await apiClient.delete(`/prompts/${id}`);
+    return true;
+  },
+};
+
 // Chat API functions
 export const chatApi = {
   // Get available models
@@ -561,8 +825,6 @@ export const chatApi = {
     datasetId: string;
     documentIds?: string[];
     segmentIds?: string[];
-    llmProvider?: string;
-    model?: string;
     maxChunks?: number;
     temperature?: number;
     conversationId?: string;
@@ -642,6 +904,24 @@ export const chatApi = {
     apiClient
       .get(`/chat/conversations/${conversationId}/messages`)
       .then((res) => res.data),
+};
+
+// User API functions
+export const userApi = {
+  // Get user settings
+  getSettings: async (userId: string): Promise<object> => {
+    const response = await apiClient.get(`/users/${userId}/settings`);
+    return response.data;
+  },
+
+  // Update user settings
+  updateSettings: async (userId: string, settings: object): Promise<object> => {
+    const response = await apiClient.patch(
+      `/users/${userId}/settings`,
+      settings
+    );
+    return response.data;
+  },
 };
 
 export default apiClient;

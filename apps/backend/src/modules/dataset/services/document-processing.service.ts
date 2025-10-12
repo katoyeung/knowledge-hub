@@ -32,7 +32,6 @@ import {
   EntityExtractionService,
   EntityExtractionConfig,
 } from './entity-extraction.service';
-import { LangChainRAGService } from './langchain-rag.service';
 import { ModelMappingService } from '../../../common/services/model-mapping.service';
 
 interface EmbeddingConfig {
@@ -45,9 +44,6 @@ interface EmbeddingConfig {
   separators?: string[];
   enableParentChildChunking?: boolean;
   useModelDefaults?: boolean; // 🆕 Enable/disable model-specific optimizations
-  enableLangChainRAG?: boolean; // 🆕 Enable LangChain RAG processing
-  langChainConfig?: string; // 🆕 LangChain configuration JSON string
-  configMode?: 'langchain' | 'advanced'; // 🆕 Configuration mode
 }
 
 @Injectable()
@@ -68,7 +64,6 @@ export class DocumentProcessingService {
     private readonly simplePdfParserService: SimplePdfParserService,
     private readonly chineseTextPreprocessorService: ChineseTextPreprocessorService,
     private readonly entityExtractionService: EntityExtractionService,
-    private readonly langChainRAGService: LangChainRAGService,
     private readonly modelMappingService: ModelMappingService,
   ) {}
 
@@ -285,46 +280,6 @@ export class DocumentProcessingService {
 
     // 🆕 Choose chunking strategy based on configuration
     let segments: DocumentSegment[] = [];
-
-    if (embeddingConfig.enableLangChainRAG && embeddingConfig.langChainConfig) {
-      // Use LangChain RAG processing
-      this.logger.log(
-        `🚀 Using LangChain RAG processing for document ${documentId}`,
-      );
-      try {
-        const langChainConfig = JSON.parse(embeddingConfig.langChainConfig);
-        const ragResult =
-          await this.langChainRAGService.processDocumentsWithLangChainRAG(
-            datasetId,
-            [documentId],
-            langChainConfig,
-            userId,
-          );
-
-        if (ragResult.success) {
-          this.logger.log(
-            `✅ LangChain RAG processing completed for document ${documentId}`,
-          );
-          // Update document status to completed
-          await this.documentRepository.update(documentId, {
-            indexingStatus: 'completed',
-            completedAt: new Date(),
-          });
-          return; // Exit early as LangChain RAG handles everything
-        } else {
-          this.logger.warn(
-            `⚠️ LangChain RAG processing failed for document ${documentId}, falling back to traditional processing`,
-          );
-        }
-      } catch (error) {
-        this.logger.error(
-          `❌ LangChain RAG processing error for document ${documentId}: ${error.message}`,
-        );
-        this.logger.log(
-          `🔄 Falling back to traditional processing for document ${documentId}`,
-        );
-      }
-    }
 
     if (embeddingConfig.enableParentChildChunking) {
       // Use Parent-Child Chunking for all document types

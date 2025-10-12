@@ -14,7 +14,7 @@ export class LocalEmbeddingClient implements EmbeddingClient {
   async generateEmbedding(
     text: string,
     model: string,
-    options?: EmbeddingOptions,
+    _options?: EmbeddingOptions,
   ): Promise<EmbeddingResult> {
     this.logger.log(
       `Generating local embedding for text (${text.length} chars) with model: ${model}`,
@@ -26,37 +26,18 @@ export class LocalEmbeddingClient implements EmbeddingClient {
       if (!extractor) {
         this.logger.log(`🤖 Loading model: ${model}`);
 
-        try {
-          // Dynamic import for ES module compatibility
-          const { pipeline } = await import('@xenova/transformers');
+        // Dynamic import of Xenova Transformers with eval to handle ES modules
+        const transformers = await eval('import("@xenova/transformers")');
+        const { pipeline } = transformers;
 
-          // Load the feature extraction pipeline
-          extractor = await pipeline('feature-extraction', model, {
-            quantized: true, // Use quantized models for better performance
-          });
+        // Load the feature extraction pipeline
+        extractor = await pipeline('feature-extraction', model, {
+          quantized: true, // Use quantized models for better performance
+        });
 
-          // Cache the model for future use
-          this.modelCache.set(model, extractor);
-          this.logger.log(`✅ Model ${model} cached for future use`);
-        } catch (importError) {
-          this.logger.error(`❌ Failed to import @xenova/transformers: ${importError.message}`);
-          
-          // For test environment, create a mock extractor
-          if (process.env.NODE_ENV === 'test') {
-            this.logger.log(`🧪 Creating mock extractor for test environment`);
-            extractor = async (text: string, options?: any) => {
-              // Generate a mock embedding with 1024 dimensions
-              const mockEmbedding = new Float32Array(1024);
-              for (let i = 0; i < 1024; i++) {
-                mockEmbedding[i] = Math.random() * 2 - 1; // Random values between -1 and 1
-              }
-              return { data: mockEmbedding };
-            };
-            this.modelCache.set(model, extractor);
-          } else {
-            throw importError;
-          }
-        }
+        // Cache the model for future use
+        this.modelCache.set(model, extractor);
+        this.logger.log(`✅ Model ${model} cached for future use`);
       } else {
         this.logger.log(`♻️ Using cached model: ${model}`);
       }
@@ -91,20 +72,20 @@ export class LocalEmbeddingClient implements EmbeddingClient {
     }
   }
 
-  async getAvailableModels(): Promise<string[]> {
-    return [
+  getAvailableModels(): Promise<string[]> {
+    return Promise.resolve([
       'Xenova/bge-m3',
       'mixedbread-ai/mxbai-embed-large-v1',
       'WhereIsAI/UAE-Large-V1',
-    ];
+    ]);
   }
 
-  async isServiceAvailable(): Promise<boolean> {
+  isServiceAvailable(): Promise<boolean> {
     // Local models should always be available
-    return true;
+    return Promise.resolve(true);
   }
 
-  async healthCheck(): Promise<boolean> {
-    return true;
+  healthCheck(): Promise<boolean> {
+    return Promise.resolve(true);
   }
 }

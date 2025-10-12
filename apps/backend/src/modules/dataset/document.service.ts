@@ -12,7 +12,6 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { UploadDocumentDto } from './dto/create-dataset-step.dto';
 import { EventTypes } from '../event/constants/event-types';
 import { DocumentUploadedEvent } from '../event/interfaces/document-events.interface';
-import { LangChainRAGService } from './services/langchain-rag.service';
 
 @Injectable()
 export class DocumentService extends TypeOrmCrudService<Document> {
@@ -30,7 +29,6 @@ export class DocumentService extends TypeOrmCrudService<Document> {
     @Inject(CACHE_MANAGER)
     private readonly cacheManager: Cache,
     private readonly eventEmitter: EventEmitter2,
-    private readonly langChainRAGService: LangChainRAGService,
   ) {
     super(documentRepository);
   }
@@ -192,6 +190,14 @@ export class DocumentService extends TypeOrmCrudService<Document> {
         permission: 'only_me',
         dataSourceType: 'upload_file',
         userId,
+        settings: {
+          chat_settings: {
+            provider: 'openrouter',
+            model: 'openai/gpt-oss-20b:free',
+            temperature: 0.7,
+            maxChunks: 5,
+          },
+        },
       });
       dataset = await this.datasetRepository.save(dataset);
     }
@@ -247,35 +253,6 @@ export class DocumentService extends TypeOrmCrudService<Document> {
       };
 
       this.eventEmitter.emit(EventTypes.DOCUMENT_UPLOADED, uploadedEvent);
-    }
-
-    // Handle LangChain RAG processing if enabled
-    if (uploadData.enableLangChainRAG && uploadData.langChainConfig) {
-      try {
-        this.logger.log('🚀 Starting LangChain RAG processing');
-
-        const langChainConfig = JSON.parse(uploadData.langChainConfig);
-        const ragResult =
-          await this.langChainRAGService.processDocumentsWithLangChainRAG(
-            dataset.id,
-            documents.map((doc) => doc.id),
-            langChainConfig,
-            userId,
-          );
-
-        if (ragResult.success) {
-          this.logger.log(
-            `✅ LangChain RAG processing completed: ${ragResult.message}`,
-          );
-        } else {
-          this.logger.error(
-            `❌ LangChain RAG processing failed: ${ragResult.message}`,
-          );
-        }
-      } catch (error) {
-        this.logger.error('❌ LangChain RAG processing error:', error);
-        // Don't fail the upload if RAG processing fails
-      }
     }
 
     await this.invalidateDocumentCache('all');

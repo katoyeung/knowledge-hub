@@ -69,6 +69,171 @@ export class HybridSearchService {
   ) {}
 
   /**
+   * Semantic-only search (like Python script with FAISS)
+   */
+  async semanticOnlySearch(
+    documentId: string,
+    query: string,
+    limit: number = 10,
+    similarityThreshold: number = 0.6,
+  ): Promise<HybridSearchResponse> {
+    this.logger.log(
+      `🧠 Starting semantic-only search for document ${documentId} with query: "${query}"`,
+    );
+
+    try {
+      // Get all segments for the document
+      const allSegments = await this.segmentRepository.find({
+        where: { documentId, enabled: true },
+        relations: ['embedding'],
+        order: { position: 'ASC' },
+      });
+
+      this.logger.log(
+        `🔍 Found ${allSegments.length} segments for document ${documentId}`,
+      );
+
+      if (allSegments.length === 0) {
+        this.logger.warn(`❌ No segments found for document ${documentId}`);
+        return {
+          results: [],
+          query,
+          count: 0,
+          message: 'No segments found for this document',
+        };
+      }
+
+      // Check how many segments have embeddings
+      const segmentsWithEmbeddings = allSegments.filter(
+        (seg) => seg.embedding?.embedding,
+      );
+      this.logger.log(
+        `🔍 Found ${segmentsWithEmbeddings.length} segments with embeddings out of ${allSegments.length} total segments`,
+      );
+
+      // Perform only semantic similarity search
+      this.logger.log(
+        `🔍 Starting performSemanticSearch for document ${documentId}`,
+      );
+      const semanticResults = await this.performSemanticSearch(
+        documentId,
+        query,
+        allSegments,
+      );
+      this.logger.log(
+        `🧠 Semantic search found ${semanticResults.length} semantic matches`,
+      );
+
+      if (semanticResults.length === 0) {
+        this.logger.warn(`❌ No semantic results found for query: "${query}"`);
+        this.logger.warn(
+          `🔍 DEBUG - Trying fallback manual semantic search...`,
+        );
+
+        // Try fallback manual semantic search
+        const fallbackResults = await this.performManualSemanticSearch(
+          documentId,
+          query,
+          allSegments,
+        );
+
+        if (fallbackResults.length > 0) {
+          this.logger.log(
+            `✅ Fallback search found ${fallbackResults.length} results`,
+          );
+          const filteredFallbackResults = fallbackResults.filter(
+            (result) => result.semanticScore >= similarityThreshold,
+          );
+
+          const finalResults = filteredFallbackResults
+            .slice(0, limit)
+            .map((result) => ({
+              id: result.id,
+              content: result.content,
+              similarity: result.semanticScore,
+              segment: {
+                id: result.id,
+                content: result.content,
+                position: result.position,
+                wordCount: result.wordCount,
+                tokens: result.tokens,
+                keywords: result.keywords,
+                enabled: result.enabled,
+                status: result.status,
+                createdAt: result.createdAt,
+                updatedAt: result.updatedAt,
+                completedAt: result.completedAt,
+                error: result.error,
+              },
+              matchType: 'semantic-fallback',
+              scores: {
+                bm25: 0,
+                semantic: result.semanticScore,
+                reranker: 0,
+                final: result.semanticScore,
+              },
+            }));
+
+          return {
+            results: finalResults,
+            query,
+            count: finalResults.length,
+            model: 'semantic-fallback-search',
+            message: `Found ${finalResults.length} results using fallback semantic search`,
+          };
+        }
+      }
+
+      // Sort by similarity descending and take top K results (no threshold filtering)
+      const sortedResults = semanticResults
+        .sort((a, b) => b.semanticScore - a.semanticScore)
+        .slice(0, limit);
+
+      this.logger.log(
+        `🎯 Selected top ${sortedResults.length} results by similarity (no threshold filtering)`,
+      );
+
+      const finalResults = sortedResults.map((result) => ({
+        id: result.id,
+        content: result.content,
+        similarity: result.semanticScore, // Use semantic score directly
+        segment: {
+          id: result.id,
+          content: result.content,
+          position: result.position,
+          wordCount: result.wordCount,
+          tokens: result.tokens,
+          keywords: result.keywords,
+          enabled: result.enabled,
+          status: result.status,
+          createdAt: result.createdAt,
+          updatedAt: result.updatedAt,
+          completedAt: result.completedAt,
+          error: result.error,
+        },
+        matchType: 'semantic',
+        scores: {
+          bm25: 0,
+          semantic: result.semanticScore,
+          reranker: 0,
+          final: result.semanticScore,
+        },
+      }));
+
+      return {
+        results: finalResults,
+        query,
+        count: finalResults.length,
+        model: 'semantic-only-search',
+        message: `Found ${finalResults.length} results using semantic-only search (like Python script)`,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Semantic-only search failed:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Hybrid search combining BM25, semantic similarity, and reranking
    */
   async hybridSearch(
@@ -77,8 +242,11 @@ export class HybridSearchService {
     limit: number = 10,
     semanticWeight: number = 0.7,
     keywordWeight: number = 0.3,
-    rerankerType: RerankerType = RerankerType.MATHEMATICAL,
+    rerankerType: RerankerType = RerankerType.NONE,
   ): Promise<HybridSearchResponse> {
+    console.log(
+      `🚀 HYBRID SEARCH CALLED: documentId=${documentId}, query="${query}", limit=${limit}`,
+    );
     this.logger.log(
       `🔍 Starting hybrid search for document ${documentId} with query: "${query}"`,
     );
@@ -450,6 +618,9 @@ export class HybridSearchService {
       }
 
       // Generate query embedding using the same model and provider as the stored embeddings
+      this.logger.log(
+        `🔄 Generating query embedding for: "${query}" with model: ${actualEmbeddingModel}, provider: ${embeddingProvider}`,
+      );
       const queryEmbeddingResult =
         await this.embeddingService.generateEmbedding(
           query,
@@ -457,6 +628,9 @@ export class HybridSearchService {
           embeddingProvider as EmbeddingProvider, // Cast to enum
         );
       const queryEmbedding = queryEmbeddingResult.embedding;
+      this.logger.log(
+        `✅ Query embedding generated: ${queryEmbedding.length} dimensions`,
+      );
 
       // Double-check dimension compatibility
       if (
@@ -471,11 +645,17 @@ export class HybridSearchService {
       }
 
       // Use PostgreSQL vector search instead of manual cosine similarity
+      this.logger.log(
+        `🔍 Calling performVectorSearch with documentId: ${documentId}, model: ${actualEmbeddingModel}`,
+      );
       const results = await this.performVectorSearch(
         documentId,
         queryEmbedding,
         actualEmbeddingModel || 'qwen3-embedding:0.6b', // Fallback to default model
         'hnsw', // Use HNSW with cosine distance for better similarity results
+      );
+      this.logger.log(
+        `📊 performVectorSearch returned ${results.length} results`,
       );
 
       return results.sort((a, b) => b.semanticScore - a.semanticScore);
@@ -507,6 +687,24 @@ export class HybridSearchService {
     this.logger.log(
       `🔍 Trying vector search with model names: ${possibleModelNames.join(', ')}`,
     );
+    this.logger.log(`🔍 Original model name: ${modelName}`);
+
+    // Debug: Write to file for easier debugging
+    const fs = require('fs');
+    const debugInfo = {
+      timestamp: new Date().toISOString(),
+      originalModelName: modelName,
+      possibleModelNames: possibleModelNames,
+      queryEmbeddingLength: queryEmbeddingStr.length,
+    };
+    fs.writeFileSync(
+      '/tmp/debug-search.log',
+      JSON.stringify(debugInfo, null, 2) + '\n',
+      { flag: 'a' },
+    );
+    this.logger.log(
+      `🔍 Query embedding string length: ${queryEmbeddingStr.length}`,
+    );
 
     // Try each possible model name until we find results
     let rawResults: any[] = [];
@@ -533,7 +731,7 @@ export class HybridSearchService {
           AND e.model_name = $3
           AND e.embedding IS NOT NULL
           AND ds.enabled = true
-          AND (1 - (e.embedding ${distanceOperator} $1)) > 0.1
+          AND (1 - (e.embedding ${distanceOperator} $1)) > 0.0
         ORDER BY e.embedding ${distanceOperator} $1 ${orderDirection}
         LIMIT 50
       `;
@@ -565,29 +763,40 @@ export class HybridSearchService {
 
     if (rawResults.length === 0) {
       this.logger.warn(`❌ Vector search found no results with any model name`);
+      this.logger.warn(
+        `🔍 DEBUG - Tried model names: ${possibleModelNames.join(', ')}`,
+      );
+      this.logger.warn(
+        `🔍 DEBUG - Document ID: ${documentId}, Query embedding length: ${queryEmbedding.length}`,
+      );
       return [];
     }
 
     // Convert to RankedResult format
-    const results: RankedResult[] = rawResults.map((row: any) => ({
-      id: row.id,
-      content: row.content,
-      position: row.position,
-      wordCount: row.wordCount,
-      tokens: row.tokens,
-      keywords: row.keywords || {},
-      enabled: row.enabled,
-      status: row.status,
-      createdAt: row.createdAt.toString(),
-      updatedAt: row.updatedAt.toString(),
-      completedAt: row.completedAt?.toString(),
-      error: row.error,
-      bm25Score: 0,
-      semanticScore: row.similarity,
-      rerankerScore: 0,
-      finalScore: 0,
-      matchType: 'semantic',
-    }));
+    const results: RankedResult[] = rawResults.map((row: any) => {
+      console.log(
+        `🔍 DEBUG - Raw similarity from DB: ${row.similarity} (type: ${typeof row.similarity})`,
+      );
+      return {
+        id: row.id,
+        content: row.content,
+        position: row.position,
+        wordCount: row.wordCount,
+        tokens: row.tokens,
+        keywords: row.keywords || {},
+        enabled: row.enabled,
+        status: row.status,
+        createdAt: row.createdAt.toString(),
+        updatedAt: row.updatedAt.toString(),
+        completedAt: row.completedAt?.toString(),
+        error: row.error,
+        bm25Score: 0,
+        semanticScore: row.similarity,
+        rerankerScore: 0,
+        finalScore: 0,
+        matchType: 'semantic',
+      };
+    });
 
     this.logger.log(
       `🚀 Vector search (${indexType}) found ${results.length} results`,
@@ -638,7 +847,7 @@ export class HybridSearchService {
         segmentEmbedding,
       );
 
-      if (similarity > 0.1) {
+      if (similarity > 0.01) {
         results.push({
           id: segment.id,
           content: segment.content,
@@ -704,8 +913,16 @@ export class HybridSearchService {
     rerankerType: RerankerType,
   ): Promise<RankedResult[]> {
     if (rerankerType === RerankerType.NONE) {
-      this.logger.log('🚫 Skipping reranking - returning original results');
-      return results;
+      this.logger.log(
+        '🚫 Skipping reranking - calculating final scores without reranking',
+      );
+      // When no reranking, set finalScore as weighted combination of BM25 and semantic scores
+      return results.map((result) => ({
+        ...result,
+        finalScore:
+          result.bm25Score * keywordWeight +
+          result.semanticScore * semanticWeight,
+      }));
     } else if (rerankerType === RerankerType.ML_CROSS_ENCODER) {
       try {
         return await this.mlRerank(
@@ -827,29 +1044,14 @@ export class HybridSearchService {
               `🔍 Segment ${result.position}: Raw BM25=${result.bm25Score.toFixed(3)}, Raw Semantic=${result.semanticScore.toFixed(3)}, Norm BM25=${normalizedBM25.toFixed(3)}, Norm Semantic=${normalizedSemantic.toFixed(3)}`,
             );
 
-            // Combine scores with BGE reranker
-            // BGE reranker provides binary relevance (0 or 1)
-            // Use it as a more conservative multiplier to avoid score inflation
-            const bgeMultiplier = mlScore > 0.5 ? 1.1 : 0.9; // More conservative boost/penalty
-
-            let finalScore =
-              (normalizedBM25 * keywordWeight +
-                normalizedSemantic * semanticWeight) *
-              bgeMultiplier;
-
-            // Hybrid match bonus - reduced to prevent score inflation
-            if (result.matchType === 'hybrid') {
-              finalScore *= 1.02; // Reduced from 1.05
-            }
-
-            // Ensure score doesn't exceed 1.0
-            finalScore = Math.min(1.0, finalScore);
-
-            // Apply realistic score scaling to prevent all scores being 1.0
+            // Simple weighted combination like the Python script
+            // Use BGE reranker as a simple filter (0 or 1)
             const baseScore =
               normalizedBM25 * keywordWeight +
               normalizedSemantic * semanticWeight;
-            finalScore = 0.2 + baseScore * 0.6 + Math.random() * 0.2; // Scores between 0.2 and 1.0
+
+            // Apply BGE reranker as a simple multiplier (no complex scaling)
+            const finalScore = baseScore * (mlScore > 0.5 ? 1.0 : 0.5);
 
             result.rerankerScore = mlScore;
             result.finalScore = finalScore;
@@ -864,25 +1066,10 @@ export class HybridSearchService {
               `BGE reranker failed for segment ${result.position}, using fallback: ${error.message}`,
             );
 
-            // Fallback to mathematical scoring with more conservative approach
-            const normalizedBM25 = Math.min(1.0, result.bm25Score / maxBM25);
-            const normalizedSemantic = Math.min(
-              1.0,
-              result.semanticScore / maxSemantic,
-            );
-
-            let finalScore =
-              normalizedBM25 * keywordWeight +
-              normalizedSemantic * semanticWeight;
-
-            // Apply conservative scaling to prevent score inflation
-            finalScore = finalScore * 0.8; // Scale down to prevent all scores being 1.0
-
-            // Apply realistic score scaling to prevent all scores being 1.0
-            const baseScore =
-              normalizedBM25 * keywordWeight +
-              normalizedSemantic * semanticWeight;
-            finalScore = 0.2 + baseScore * 0.6 + Math.random() * 0.2; // Scores between 0.2 and 1.0
+            // Fallback to simple mathematical scoring like Python script
+            const finalScore =
+              result.bm25Score * keywordWeight +
+              result.semanticScore * semanticWeight;
 
             result.rerankerScore = finalScore;
             result.finalScore = finalScore;
@@ -1106,7 +1293,7 @@ export class HybridSearchService {
   }
 
   /**
-   * Mathematical reranking (original implementation)
+   * Mathematical reranking (simplified implementation - like Python script)
    */
   private mathematicalRerank(
     results: RankedResult[],
@@ -1116,70 +1303,22 @@ export class HybridSearchService {
   ): RankedResult[] {
     if (results.length === 0) return results;
 
-    // Normalize scores to 0-1 range safely
-    const maxBM25 = Math.max(...results.map((r) => r.bm25Score), 0.001); // Avoid division by zero
-    const maxSemantic = Math.max(...results.map((r) => r.semanticScore), 0.001);
-
     this.logger.log(
-      `📊 Score ranges - BM25: 0-${maxBM25.toFixed(3)}, Semantic: 0-${maxSemantic.toFixed(3)}`,
+      `📊 Simplified reranking - using direct weighted combination like Python script`,
     );
 
     for (const result of results) {
-      // Normalize scores to 0-1 range
-      const normalizedBM25 = Math.min(1.0, result.bm25Score / maxBM25);
-      const normalizedSemantic = Math.min(
-        1.0,
-        result.semanticScore / maxSemantic,
-      );
+      // Simple weighted combination like the Python script
+      // No aggressive scaling, no randomization, no position bias
+      const finalScore =
+        result.bm25Score * keywordWeight +
+        result.semanticScore * semanticWeight;
 
-      // DEBUG: Let's see what the raw scores look like
-      this.logger.log(
-        `🔍 DEBUG - Segment ${result.position}: Raw BM25=${result.bm25Score.toFixed(6)}, Raw Semantic=${result.semanticScore.toFixed(6)}, Max BM25=${maxBM25.toFixed(6)}, Max Semantic=${maxSemantic.toFixed(6)}`,
-      );
-
-      // Calculate weighted combination with more aggressive score separation
-      let rerankerScore =
-        normalizedBM25 * keywordWeight + normalizedSemantic * semanticWeight;
+      result.rerankerScore = finalScore;
+      result.finalScore = finalScore;
 
       this.logger.log(
-        `🔍 DEBUG - Segment ${result.position}: After normalization: ${rerankerScore.toFixed(6)}`,
-      );
-
-      // Apply more aggressive scaling to create better score separation
-      rerankerScore = rerankerScore * 0.3; // Even more aggressive scaling
-
-      // Boost score for hybrid matches (but keep it reasonable)
-      if (result.matchType === 'hybrid') {
-        rerankerScore *= 1.1; // Slightly higher boost for hybrid matches
-      }
-
-      // Apply position-based score variation to create more separation
-      const positionVariation = 0.7 + (result.position % 10) * 0.03; // Create more variation based on position
-      rerankerScore *= positionVariation;
-
-      // Add some randomness to break ties (very small amount)
-      const randomFactor = 0.95 + Math.random() * 0.1; // 0.95 to 1.05
-      rerankerScore *= randomFactor;
-
-      this.logger.log(
-        `🔍 DEBUG - Segment ${result.position}: Final score before clamp: ${rerankerScore.toFixed(6)}`,
-      );
-
-      // Apply realistic score scaling to prevent all scores being 1.0
-      // Use a sigmoid-like function to create more realistic score distribution
-      const baseScore =
-        normalizedBM25 * keywordWeight + normalizedSemantic * semanticWeight;
-      rerankerScore = 0.2 + baseScore * 0.6 + Math.random() * 0.2; // Scores between 0.2 and 1.0
-
-      this.logger.log(
-        `🔍 Segment ${result.position}: Realistic score: ${rerankerScore.toFixed(6)}`,
-      );
-
-      result.rerankerScore = rerankerScore;
-      result.finalScore = rerankerScore;
-
-      this.logger.log(
-        `🎯 Segment ${result.position}: BM25=${normalizedBM25.toFixed(3)}, Semantic=${normalizedSemantic.toFixed(3)}, Final=${rerankerScore.toFixed(3)} (${result.matchType})`,
+        `🎯 Segment ${result.position}: BM25=${result.bm25Score.toFixed(3)}, Semantic=${result.semanticScore.toFixed(3)}, Final=${finalScore.toFixed(3)} (${result.matchType})`,
       );
     }
 

@@ -18,7 +18,7 @@
     "noImplicitAny": true,
     "strictBindCallApply": true,
     "noFallthroughCasesInSwitch": true,
-    "isolatedModules": true,
+    "isolatedModules": false,
     "paths": {
       "@modules/*": [
         "src/modules/*"

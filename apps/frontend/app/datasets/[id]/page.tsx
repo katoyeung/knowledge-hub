@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { datasetApi, documentApi, type Dataset, type Document } from '@/lib/api'
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, LogOut, MessageSquare, FileText, StickyNote } from 'lucide-react'
@@ -9,37 +9,21 @@ import { authUtil } from '@/lib/auth'
 import type { AuthUser } from '@knowledge-hub/shared-types'
 import { DatasetDocumentsPanel } from '@/components/dataset-documents-panel'
 import { DatasetChatPanel } from '@/components/dataset-chat-panel'
-import { SimpleChatPanel } from '@/components/simple-chat-panel'
 import { DatasetNotesPanel } from '@/components/dataset-notes-panel'
 import { DocumentPreviewModal } from '@/components/document-preview-modal'
+import { AuthGuard } from '@/components/auth-guard'
 
 // Collapsed Documents Panel Component
 interface CollapsedDocumentsPanelProps {
-    datasetId: string
+    documents: Document[]
+    loading: boolean
     onDocumentClick?: (document: Document) => void
     onExpand: () => void
 }
 
-function CollapsedDocumentsPanel({ datasetId, onDocumentClick, onExpand }: CollapsedDocumentsPanelProps) {
-    const [documents, setDocuments] = useState<Document[]>([])
-    const [loading, setLoading] = useState(true)
+function CollapsedDocumentsPanel({ documents, loading, onDocumentClick, onExpand }: CollapsedDocumentsPanelProps) {
     const [previewDocument, setPreviewDocument] = useState<Document | null>(null)
     const [showPreview, setShowPreview] = useState(false)
-
-    useEffect(() => {
-        const loadDocuments = async () => {
-            try {
-                setLoading(true)
-                const docs = await documentApi.getByDataset(datasetId)
-                setDocuments(docs)
-            } catch (err) {
-                console.error('Failed to load documents:', err)
-            } finally {
-                setLoading(false)
-            }
-        }
-        loadDocuments()
-    }, [datasetId])
 
     const handleDocumentClick = (document: Document) => {
         setPreviewDocument(document)
@@ -104,12 +88,14 @@ function CollapsedDocumentsPanel({ datasetId, onDocumentClick, onExpand }: Colla
     )
 }
 
-export default function DatasetDetailPage() {
+function DatasetDetailContent() {
     const params = useParams()
     const router = useRouter()
     const datasetId = params.id as string
 
     const [dataset, setDataset] = useState<Dataset | null>(null)
+    const [documents, setDocuments] = useState<Document[]>([])
+    const [documentsLoading, setDocumentsLoading] = useState(true)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [selectedDocument, setSelectedDocument] = useState<Document | null>(null)
@@ -118,16 +104,24 @@ export default function DatasetDetailPage() {
     const [user, setUser] = useState<AuthUser | null>(null)
     const [isDropdownOpen, setIsDropdownOpen] = useState(false)
     const [activeTab, setActiveTab] = useState<'documents' | 'chat' | 'notes'>('chat')
-    const [isMobile, setIsMobile] = useState(false)
+    const [isMobile, setIsMobile] = useState(() => {
+        if (typeof window !== 'undefined') {
+            return window.innerWidth < 1024
+        }
+        return false
+    })
+
+    // Refs to prevent duplicate API calls in React StrictMode
+    const dataFetchedRef = useRef(false)
+    const currentDatasetIdRef = useRef<string | null>(null)
+    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
     useEffect(() => {
         const currentUser = authUtil.getUser()
         if (currentUser) {
             setUser(currentUser)
-        } else {
-            router.push('/login')
         }
-    }, [router])
+    }, [])
 
     // Handle responsive behavior
     useEffect(() => {
@@ -141,6 +135,11 @@ export default function DatasetDetailPage() {
     }, [])
 
     useEffect(() => {
+        // Prevent duplicate API calls in React StrictMode
+        if (dataFetchedRef.current && currentDatasetIdRef.current === datasetId) {
+            return
+        }
+
         const fetchDataset = async () => {
             try {
                 setLoading(true)
@@ -155,10 +154,102 @@ export default function DatasetDetailPage() {
             }
         }
 
+        const fetchDocuments = async () => {
+            try {
+                setDocumentsLoading(true)
+                const docs = await documentApi.getByDataset(datasetId)
+                setDocuments(docs)
+            } catch (err) {
+                console.error('Failed to load documents:', err)
+            } finally {
+                setDocumentsLoading(false)
+            }
+        }
+
         if (datasetId) {
+            dataFetchedRef.current = true
+            currentDatasetIdRef.current = datasetId
             fetchDataset()
+            fetchDocuments()
         }
     }, [datasetId])
+
+    // Helper function to check if any documents are processing
+    const hasProcessingDocuments = useCallback(() => {
+        return documents.some(doc =>
+            doc.indexingStatus === 'processing' ||
+            doc.indexingStatus === 'parsing' ||
+            doc.indexingStatus === 'splitting' ||
+            doc.indexingStatus === 'indexing'
+        )
+    }, [documents])
+
+    // Polling effect for document status updates
+    useEffect(() => {
+        const startPolling = () => {
+            if (pollingIntervalRef.current) {
+                clearInterval(pollingIntervalRef.current)
+            }
+
+            if (hasProcessingDocuments()) {
+                pollingIntervalRef.current = setInterval(async () => {
+                    try {
+                        const docs = await documentApi.getByDataset(datasetId)
+                        setDocuments(docs)
+                    } catch (err) {
+                        console.error('Failed to refresh documents during polling:', err)
+                    }
+                }, 3000) // Poll every 3 seconds
+            }
+        }
+
+        const stopPolling = () => {
+            if (pollingIntervalRef.current) {
+                clearInterval(pollingIntervalRef.current)
+                pollingIntervalRef.current = null
+            }
+        }
+
+        // Start polling if there are processing documents
+        if (hasProcessingDocuments()) {
+            startPolling()
+        } else {
+            stopPolling()
+        }
+
+        // Cleanup on unmount
+        return () => {
+            stopPolling()
+        }
+    }, [datasetId, hasProcessingDocuments])
+
+    // Handle page visibility changes to pause/resume polling
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.hidden) {
+                // Page is hidden, stop polling
+                if (pollingIntervalRef.current) {
+                    clearInterval(pollingIntervalRef.current)
+                    pollingIntervalRef.current = null
+                }
+            } else if (hasProcessingDocuments()) {
+                // Page is visible and has processing documents, resume polling
+                pollingIntervalRef.current = setInterval(async () => {
+                    try {
+                        const docs = await documentApi.getByDataset(datasetId)
+                        setDocuments(docs)
+                    } catch (err) {
+                        console.error('Failed to refresh documents during polling:', err)
+                    }
+                }, 3000)
+            }
+        }
+
+        document.addEventListener('visibilitychange', handleVisibilityChange)
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange)
+        }
+    }, [datasetId, hasProcessingDocuments])
 
     const handleLogout = async () => {
         try {
@@ -306,6 +397,8 @@ export default function DatasetDetailPage() {
                         {activeTab === 'documents' && (
                             <DatasetDocumentsPanel
                                 datasetId={datasetId}
+                                documents={documents}
+                                loading={documentsLoading}
                                 onDocumentClick={handleDocumentClick}
                                 showCollapseButton={false}
                             />
@@ -315,6 +408,7 @@ export default function DatasetDetailPage() {
                                 datasetId={datasetId}
                                 selectedDocumentId={selectedDocument?.id}
                                 datasetName={dataset?.name}
+                                dataset={loading ? undefined : dataset}
                             />
                         )}
                         {activeTab === 'notes' && (
@@ -332,13 +426,16 @@ export default function DatasetDetailPage() {
                     <div className={`${leftCollapsed ? 'w-12' : 'w-80'} flex-shrink-0 transition-all duration-300`}>
                         {leftCollapsed ? (
                             <CollapsedDocumentsPanel
-                                datasetId={datasetId}
+                                documents={documents}
+                                loading={documentsLoading}
                                 onDocumentClick={handleDocumentClick}
                                 onExpand={() => setLeftCollapsed(false)}
                             />
                         ) : (
                             <DatasetDocumentsPanel
                                 datasetId={datasetId}
+                                documents={documents}
+                                loading={documentsLoading}
                                 onDocumentClick={handleDocumentClick}
                                 onCollapse={() => setLeftCollapsed(true)}
                             />
@@ -351,6 +448,7 @@ export default function DatasetDetailPage() {
                             datasetId={datasetId}
                             selectedDocumentId={selectedDocument?.id}
                             datasetName={dataset?.name}
+                            dataset={loading ? undefined : dataset}
                         />
                     </div>
 
@@ -382,5 +480,13 @@ export default function DatasetDetailPage() {
                 </div>
             )}
         </div>
+    )
+}
+
+export default function DatasetDetailPage() {
+    return (
+        <AuthGuard>
+            <DatasetDetailContent />
+        </AuthGuard>
     )
 }

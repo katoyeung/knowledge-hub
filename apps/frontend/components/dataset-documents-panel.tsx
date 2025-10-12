@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -9,13 +9,22 @@ import { DocumentPreviewModal } from './document-preview-modal'
 
 interface DatasetDocumentsPanelProps {
     datasetId: string
+    documents?: Document[]
+    loading?: boolean
     onDocumentClick?: (document: Document) => void
     onSelectedDocumentsChange?: (selectedDocuments: Document[]) => void
     onCollapse?: () => void
     showCollapseButton?: boolean
 }
 
-export function DatasetDocumentsPanel({ datasetId, onSelectedDocumentsChange, onCollapse, showCollapseButton = true }: DatasetDocumentsPanelProps) {
+export function DatasetDocumentsPanel({
+    datasetId,
+    documents: propDocuments,
+    loading: propLoading,
+    onSelectedDocumentsChange,
+    onCollapse,
+    showCollapseButton = true
+}: DatasetDocumentsPanelProps) {
     const [documents, setDocuments] = useState<Document[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -26,6 +35,7 @@ export function DatasetDocumentsPanel({ datasetId, onSelectedDocumentsChange, on
     const [showPreview, setShowPreview] = useState(false)
     const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
     const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set())
+    const previousDocumentStatuses = useRef<Map<string, string>>(new Map())
 
     const loadDocuments = useCallback(async () => {
         try {
@@ -41,9 +51,15 @@ export function DatasetDocumentsPanel({ datasetId, onSelectedDocumentsChange, on
         }
     }, [datasetId])
 
+    // Use props if provided, otherwise load documents
     useEffect(() => {
-        loadDocuments()
-    }, [loadDocuments])
+        if (propDocuments !== undefined) {
+            setDocuments(propDocuments)
+            setLoading(propLoading || false)
+        } else {
+            loadDocuments()
+        }
+    }, [propDocuments, propLoading, loadDocuments])
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -69,6 +85,35 @@ export function DatasetDocumentsPanel({ datasetId, onSelectedDocumentsChange, on
             onSelectedDocumentsChange(selectedDocs)
         }
     }, [selectedDocuments, documents, onSelectedDocumentsChange])
+
+    // Auto-select documents when they transition from processing to completed
+    useEffect(() => {
+        const currentStatuses = new Map<string, string>()
+
+        documents.forEach(doc => {
+            currentStatuses.set(doc.id, doc.indexingStatus)
+
+            // Check if this document just completed processing
+            const previousStatus = previousDocumentStatuses.current.get(doc.id)
+            const isProcessingStatus = (status: string) =>
+                status === 'processing' ||
+                status === 'parsing' ||
+                status === 'splitting' ||
+                status === 'indexing'
+
+            if (previousStatus &&
+                isProcessingStatus(previousStatus) &&
+                doc.indexingStatus === 'completed' &&
+                !selectedDocuments.has(doc.id)) {
+
+                // Auto-select this document
+                setSelectedDocuments(prev => new Set([...prev, doc.id]))
+            }
+        })
+
+        // Update the previous statuses for next comparison
+        previousDocumentStatuses.current = currentStatuses
+    }, [documents, selectedDocuments])
 
     const handleEdit = (document: Document) => {
         setEditingId(document.id)
@@ -287,7 +332,10 @@ export function DatasetDocumentsPanel({ datasetId, onSelectedDocumentsChange, on
                                                     className="p-1 hover:bg-gray-200 rounded transition-all duration-200"
                                                     title="More actions"
                                                 >
-                                                    {document.indexingStatus === 'processing' ? (
+                                                    {(document.indexingStatus === 'processing' ||
+                                                        document.indexingStatus === 'parsing' ||
+                                                        document.indexingStatus === 'splitting' ||
+                                                        document.indexingStatus === 'indexing') ? (
                                                         <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
                                                     ) : (
                                                         <>

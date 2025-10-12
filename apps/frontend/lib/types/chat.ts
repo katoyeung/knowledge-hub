@@ -66,8 +66,6 @@ export interface ChatWithDocumentsRequest {
   datasetId: string;
   documentIds?: string[];
   segmentIds?: string[];
-  llmProvider?: string;
-  model?: string;
   maxChunks?: number;
   temperature?: number;
   conversationId?: string;

@@ -6,8 +6,10 @@ import { ChatConversation } from './entities/chat-conversation.entity';
 import { ChatController } from './chat.controller';
 import { HealthController } from './controllers/health.controller';
 import { ChatService } from './services/chat.service';
-import { ModelConfigService } from './services/model-config.service';
 import { DatasetModule } from '../dataset/dataset.module';
+import { PromptsModule } from '../prompts/prompts.module';
+import { AiProviderModule } from '../ai-provider/ai-provider.module';
+import { UserModule } from '../user/user.module';
 import { ApiClientFactory } from '../../common/services/api-client-factory.service';
 import { OpenRouterApiClient } from '../../common/services/openrouter-api-client.service';
 import { PerplexityApiClient } from '../../common/services/perplexity-api-client.service';
@@ -29,10 +31,12 @@ import { DashScopeEmbeddingClient } from '../../common/services/dashscope-embedd
     TypeOrmModule.forFeature([ChatMessage, ChatConversation]),
     HttpModule,
     DatasetModule,
+    PromptsModule,
+    AiProviderModule,
+    UserModule,
   ],
   providers: [
     ChatService,
-    ModelConfigService,
     ApiClientFactory,
     OpenRouterApiClient,
     PerplexityApiClient,

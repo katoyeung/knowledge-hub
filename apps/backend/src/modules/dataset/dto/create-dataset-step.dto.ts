@@ -75,12 +75,12 @@ export enum TextSplitter {
  */
 export const EMBEDDING_MODEL_DEFAULTS = {
   [EmbeddingModel.XENOVA_BGE_M3]: {
-    recommendedChunkSize: 2400, // Characters - BGE M3 works well with larger chunks
-    recommendedChunkOverlap: 240, // 10% of chunk size
-    recommendedTextSplitter: TextSplitter.SMART_CHUNKING,
-    maxTokens: 800, // Approximate token limit for optimal performance
+    recommendedChunkSize: 1000, // Characters - Optimized for better retrieval
+    recommendedChunkOverlap: 200, // 20% of chunk size - Prevents information loss
+    recommendedTextSplitter: TextSplitter.CHARACTER,
+    maxTokens: 400, // Approximate token limit
     description:
-      'BGE M3 works best with larger chunks (2400+ chars) for better semantic understanding',
+      'BGE M3: Optimized configuration for high accuracy RAG performance',
   },
   [EmbeddingModel.MIXEDBREAD_MXBAI_EMBED_LARGE_V1]: {
     recommendedChunkSize: 1200, // Characters - Good balance for English text
@@ -345,22 +345,6 @@ export class ProcessDocumentsDto {
   @Min(1, { message: 'Number of chunks must be at least 1' })
   @Max(20, { message: 'Number of chunks must not exceed 20' })
   numChunks?: number;
-
-  // 🆕 LangChain RAG Configuration
-  @IsOptional()
-  @IsBoolean()
-  enableLangChainRAG?: boolean;
-
-  @IsOptional()
-  @IsString()
-  langChainConfig?: string; // JSON string containing LangChain configuration
-
-  // 🆕 Configuration Mode
-  @IsOptional()
-  @IsEnum(['langchain', 'advanced'], {
-    message: 'Configuration mode must be either langchain or advanced',
-  })
-  configMode?: 'langchain' | 'advanced';
 }
 
 export class UploadDocumentDto {
@@ -414,20 +398,6 @@ export class UploadDocumentDto {
   @IsString()
   @MaxLength(255, { message: 'Dataset ID must not exceed 255 characters' })
   datasetId?: string;
-
-  // 🆕 LangChain RAG Configuration
-  @IsOptional()
-  @Transform(({ value }) => {
-    if (value === 'true' || value === true) return true;
-    if (value === 'false' || value === false) return false;
-    return value;
-  })
-  @IsBoolean()
-  enableLangChainRAG?: boolean;
-
-  @IsOptional()
-  @IsString()
-  langChainConfig?: string; // JSON string containing LangChain configuration
 }
 
 export class SearchDocumentsDto {
@@ -453,7 +423,7 @@ export class SearchDocumentsDto {
 
   @IsOptional()
   @IsEnum(RerankerType, { message: 'Invalid reranker type' })
-  rerankerType?: RerankerType;
+  rerankerType?: RerankerType = RerankerType.NONE;
 
   // 🆕 Search Weight Configuration
   @IsOptional()

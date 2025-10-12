@@ -45,11 +45,13 @@ export abstract class BaseLLMClient extends BaseApiClient implements LLMClient {
     messages: LLMMessage[],
     model: string,
     jsonSchema?: Record<string, any>,
+    temperature?: number,
   ): string {
     const content = JSON.stringify({
       messages,
       model,
       jsonSchema,
+      temperature,
     });
     const hash = createHash('sha256').update(content).digest('hex');
     return `${CACHE_KEYS.LLM.RESPONSE}:${this.constructor.name}:${hash}`;
@@ -98,5 +100,6 @@ export abstract class BaseLLMClient extends BaseApiClient implements LLMClient {
     messages: LLMMessage[],
     model?: string,
     jsonSchema?: Record<string, any>,
+    temperature?: number,
   ): Promise<ApiResponse<LLMResponse>>;
 }
