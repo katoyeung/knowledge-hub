@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { chatApi, promptApi, aiProviderApi, userApi, type Prompt, type AiProvider, type ChatSettings } from '@/lib/api'
+import { promptApi, aiProviderApi, userApi, type Prompt, type AiProvider, type ChatSettings } from '@/lib/api'
 import { useToast } from '@/components/ui/simple-toast'
 import { authUtil } from '@/lib/auth'
 import type { AuthUser } from '@knowledge-hub/shared-types'
@@ -21,6 +21,8 @@ export default function ChatSettingsPage() {
     const [settings, setSettings] = useState<ChatSettings>({
         temperature: 0.7,
         maxChunks: 5,
+        includeConversationHistory: true,
+        conversationHistoryLimit: 10,
     })
 
     // Data state
@@ -76,10 +78,6 @@ export default function ChatSettingsPage() {
         }
     }, [settings.promptId])
 
-    // Debug: Log settings changes
-    useEffect(() => {
-        console.log('Settings updated:', settings)
-    }, [settings])
 
     const loadData = async () => {
         if (!user) return
@@ -92,14 +90,12 @@ export default function ChatSettingsPage() {
                 userApi.getSettings(user.id)
             ])
 
-            console.log('AI Providers API response:', providersResponse)
-            console.log('AI Providers:', providersResponse.data?.map(p => ({ id: p.id, name: p.name, type: p.type })))
 
             setProviders(providersResponse.data || [])
             setPrompts(promptsResponse.data || [])
 
             // Load user settings
-            const userSettings = userSettingsResponse as any
+            const userSettings = userSettingsResponse as { chat_settings?: ChatSettings }
             const chatSettings = userSettings?.chat_settings || {}
 
             // Check if user has valid chat settings (not just empty object)
@@ -108,29 +104,54 @@ export default function ChatSettingsPage() {
                 chatSettings.model ||
                 chatSettings.promptId ||
                 chatSettings.temperature !== undefined ||
-                chatSettings.maxChunks !== undefined
+                chatSettings.maxChunks !== undefined ||
+                chatSettings.includeConversationHistory !== undefined ||
+                chatSettings.conversationHistoryLimit !== undefined
             )
 
             if (hasValidUserSettings) {
-                console.log('Using user settings:', chatSettings)
+                // Map provider type to provider ID if needed
+                let providerId = chatSettings.provider
+                if (chatSettings.provider && !chatSettings.provider.includes('-')) {
+                    // This looks like a provider type, find the actual provider ID
+                    const provider = providersResponse.data?.find(p => p.type === chatSettings.provider && p.isActive)
+                    if (provider) {
+                        providerId = provider.id
+                    }
+                }
+
+                // Map model name to model ID if needed
+                let modelId = chatSettings.model
+                if (providerId && chatSettings.model) {
+                    const provider = providersResponse.data?.find(p => p.id === providerId)
+                    if (provider?.models) {
+                        const model = provider.models.find(m => m.name === chatSettings.model || m.id === chatSettings.model)
+                        if (model) {
+                            modelId = model.id
+                        }
+                    }
+                }
+
                 const newSettings = {
                     temperature: 0.7,
                     maxChunks: 5,
-                    ...chatSettings
+                    includeConversationHistory: true,
+                    conversationHistoryLimit: 10,
+                    ...chatSettings,
+                    provider: providerId,
+                    model: modelId
                 }
                 setSettings(newSettings)
 
                 // Load models for the user's provider
-                if (chatSettings.provider) {
-                    await loadModels(chatSettings.provider, providersResponse.data || [])
+                if (providerId) {
+                    await loadModels(providerId, providersResponse.data || [])
                 }
             } else {
-                console.log('No valid user settings, using defaults')
                 // Set default settings if no user settings
                 await setDefaultSettings(providersResponse.data || [], promptsResponse.data || [])
             }
-        } catch (err) {
-            console.error('Failed to load data:', err)
+        } catch {
             error('Failed to Load Data', 'Could not load providers and prompts')
         } finally {
             setLoading(false)
@@ -149,13 +170,14 @@ export default function ChatSettingsPage() {
         ) || prompts[0]
 
         if (defaultProvider) {
-            console.log('Setting default provider:', defaultProvider.name)
             const newSettings = {
                 temperature: 0.7,
                 maxChunks: 5,
                 provider: defaultProvider.id,
                 model: defaultProvider.models?.[0]?.id || undefined,
-                promptId: defaultPrompt?.id || undefined
+                promptId: defaultPrompt?.id || undefined,
+                includeConversationHistory: true,
+                conversationHistoryLimit: 10
             }
             setSettings(newSettings)
 
@@ -165,18 +187,14 @@ export default function ChatSettingsPage() {
     }
 
     const loadModels = async (providerId: string, currentProviders?: AiProvider[]) => {
-        console.log('Loading models for provider ID:', providerId)
         try {
             // Find the provider from the already loaded providers (from AI Providers API)
             const effectiveProviders = currentProviders || providers
             const provider = effectiveProviders.find(p => p.id === providerId)
-            console.log('Found provider in AI Providers:', provider)
-            console.log('Provider models:', provider?.models)
 
             if (provider && provider.models) {
                 setModels(provider.models || [])
             } else {
-                console.warn(`Provider ID ${providerId} not found or has no models`)
                 setModels([])
             }
 
@@ -184,16 +202,13 @@ export default function ChatSettingsPage() {
             if (settings.provider === providerId) {
                 const modelExists = provider?.models?.find(m => m.id === settings.model)
                 if (!modelExists && provider?.models?.length > 0) {
-                    console.log('Auto-selecting first available model:', provider.models[0].name)
                     setSettings(prev => ({ ...prev, model: provider.models[0].id }))
                 } else if (!settings.model && provider?.models?.length > 0) {
                     // If no model is selected, auto-select the first one
-                    console.log('Auto-selecting first model:', provider.models[0].name)
                     setSettings(prev => ({ ...prev, model: provider.models[0].id }))
                 }
             }
-        } catch (err) {
-            console.error('Failed to load models:', err)
+        } catch {
             setModels([])
         }
     }
@@ -202,8 +217,7 @@ export default function ChatSettingsPage() {
         try {
             const prompt = await promptApi.getById(promptId)
             setSelectedPrompt(prompt)
-        } catch (err) {
-            console.error('Failed to load prompt details:', err)
+        } catch {
             setSelectedPrompt(null)
         }
     }
@@ -217,8 +231,7 @@ export default function ChatSettingsPage() {
                 chat_settings: settings
             })
             success('Settings Saved', 'Chat settings have been saved successfully')
-        } catch (err) {
-            console.error('Failed to save settings:', err)
+        } catch {
             error('Failed to Save', 'Could not save chat settings')
         } finally {
             setSaving(false)
@@ -226,17 +239,14 @@ export default function ChatSettingsPage() {
     }
 
     const handleProviderChange = (providerId: string) => {
-        console.log('Provider changed to:', providerId)
         setSettings(prev => ({ ...prev, provider: providerId, model: undefined }))
     }
 
     const handleModelChange = (modelId: string) => {
-        console.log('Model changed to:', modelId)
         setSettings(prev => ({ ...prev, model: modelId }))
     }
 
     const handlePromptChange = (promptId: string) => {
-        console.log('Prompt changed to:', promptId)
         setSettings(prev => ({ ...prev, promptId: promptId || undefined }))
     }
 
@@ -296,16 +306,6 @@ export default function ChatSettingsPage() {
                 {/* Model Selection */}
                 <div className="space-y-2">
                     <Label htmlFor="model">Model</Label>
-                    {settings.provider && (
-                        <div className="text-xs text-gray-500">
-                            Showing models for provider: {settings.provider} ({models.length} models)
-                            {models.length > 0 && (
-                                <div className="mt-1">
-                                    Models: {models.map(m => `${m.name}${m.description ? ` (${m.description})` : ''}`).join(', ')}
-                                </div>
-                            )}
-                        </div>
-                    )}
                     <select
                         id="model"
                         value={settings.model || ''}
@@ -314,14 +314,11 @@ export default function ChatSettingsPage() {
                         className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         <option value="">Select model</option>
-                        {models.map((model) => {
-                            console.log('Rendering model:', model)
-                            return (
-                                <option key={model.id} value={model.id}>
-                                    {model.name} {model.description ? `- ${model.description}` : ''}
-                                </option>
-                            )
-                        })}
+                        {models.map((model) => (
+                            <option key={model.id} value={model.id}>
+                                {model.name} {model.description ? `- ${model.description}` : ''}
+                            </option>
+                        ))}
                     </select>
                 </div>
 
@@ -425,6 +422,53 @@ export default function ChatSettingsPage() {
                         <p className="text-xs text-muted-foreground">
                             Maximum document segments to retrieve
                         </p>
+                    </div>
+                </div>
+
+                {/* Conversation History Settings */}
+                <div className="space-y-4 border-t pt-4">
+                    <h4 className="text-sm font-medium">Conversation History</h4>
+                    <div className="space-y-4">
+                        <div className="flex items-center space-x-2">
+                            <input
+                                id="includeConversationHistory"
+                                type="checkbox"
+                                checked={settings.includeConversationHistory ?? true}
+                                onChange={(e) => setSettings(prev => ({
+                                    ...prev,
+                                    includeConversationHistory: e.target.checked
+                                }))}
+                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <Label htmlFor="includeConversationHistory" className="text-sm">
+                                Include Previous Context
+                            </Label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            Include conversation history in AI responses for better context
+                        </p>
+
+                        {settings.includeConversationHistory && (
+                            <div className="space-y-2">
+                                <Label htmlFor="conversationHistoryLimit">Context Limit</Label>
+                                <Input
+                                    id="conversationHistoryLimit"
+                                    type="number"
+                                    min="1"
+                                    max="50"
+                                    value={settings.conversationHistoryLimit || 10}
+                                    onChange={(e) => {
+                                        const limit = parseInt(e.target.value)
+                                        if (!isNaN(limit) && limit >= 1 && limit <= 50) {
+                                            setSettings(prev => ({ ...prev, conversationHistoryLimit: limit }))
+                                        }
+                                    }}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Maximum number of previous messages to include (1-50)
+                                </p>
+                            </div>
+                        )}
                     </div>
                 </div>
 

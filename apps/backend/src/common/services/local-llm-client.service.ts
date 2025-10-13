@@ -28,6 +28,7 @@ export class LocalLLMClient extends BaseLLMClient {
     messages: LLMMessage[],
     model: string = this.defaultModel,
     jsonSchema?: Record<string, any>,
+    temperature?: number,
   ): Promise<ApiResponse<LLMResponse>> {
     const cacheKey = this.getLLMCacheKey(messages, model, jsonSchema);
 
@@ -54,7 +55,7 @@ export class LocalLLMClient extends BaseLLMClient {
       const response = await this.localLLMService.generateResponse(
         messages,
         model,
-        0.7, // temperature
+        temperature || 0.7, // temperature
         1000, // max tokens
       );
 
@@ -80,6 +81,53 @@ export class LocalLLMClient extends BaseLLMClient {
       return this.localLLMService.getCacheStats().transformersLoaded;
     } catch (error) {
       return false;
+    }
+  }
+
+  async *chatCompletionStream(
+    messages: LLMMessage[],
+    model: string = this.defaultModel,
+    jsonSchema?: Record<string, any>,
+    temperature?: number,
+  ): AsyncGenerator<string, void, unknown> {
+    // Add JSON schema support if provided
+    if (jsonSchema) {
+      const systemMessage = messages.find((m) => m.role === 'system');
+      if (systemMessage) {
+        systemMessage.content += `\n\nIMPORTANT: You must respond with valid JSON that matches this schema: ${JSON.stringify(jsonSchema)}`;
+      } else {
+        messages.unshift({
+          role: 'system',
+          content: `You must respond with valid JSON that matches this schema: ${JSON.stringify(jsonSchema)}`,
+        });
+      }
+    }
+
+    try {
+      // Use the local LLM service to generate streaming response
+      const response = await this.localLLMService.generateResponse(
+        messages,
+        model,
+        temperature || 0.7, // temperature
+        1000, // max tokens
+      );
+
+      // For local LLM, we don't have true streaming, so we simulate it
+      // by yielding the response in chunks
+      const content = response.data.choices[0]?.message?.content || '';
+      const words = content.split(' ');
+
+      for (const word of words) {
+        yield word + ' ';
+        // Add a small delay to simulate streaming
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } catch (error) {
+      this.logger.error(
+        `Local LLM streaming generation failed: ${error.message}`,
+        error.stack,
+      );
+      throw error;
     }
   }
 

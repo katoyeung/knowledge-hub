@@ -25,6 +25,8 @@ interface ChatSettings {
     promptId?: string
     temperature?: number
     maxChunks?: number
+    includeConversationHistory?: boolean
+    conversationHistoryLimit?: number
 }
 
 interface ChatSettingsPopupProps {
@@ -49,7 +51,9 @@ export function ChatSettingsPopup({
     const [settings, setSettings] = useState<ChatSettings>({
         temperature: 0.7,
         maxChunks: 5,
-        ...currentSettings
+        includeConversationHistory: true,
+        conversationHistoryLimit: 10,
+        ...currentSettings,
     })
 
     // Data state
@@ -115,6 +119,19 @@ export function ChatSettingsPopup({
         }
     }, [settings.promptId])
 
+    // Update settings when currentSettings change
+    useEffect(() => {
+        if (currentSettings) {
+            setSettings(prev => ({
+                ...prev,
+                ...currentSettings,
+                // Ensure these values are never undefined
+                includeConversationHistory: currentSettings.includeConversationHistory ?? prev.includeConversationHistory ?? true,
+                conversationHistoryLimit: currentSettings.conversationHistoryLimit ?? prev.conversationHistoryLimit ?? 10,
+            }))
+        }
+    }, [currentSettings])
+
     const loadData = async () => {
         setLoading(true)
         try {
@@ -125,8 +142,6 @@ export function ChatSettingsPopup({
                 user ? userApi.getSettings(user.id) : Promise.resolve({})
             ])
 
-            console.log('AI Providers API response:', providersResponse)
-            console.log('AI Providers:', providersResponse.data?.map(p => ({ id: p.id, name: p.name, type: p.type })))
 
             setProviders(providersResponse.data || [])
             setPrompts(promptsResponse.data || [])
@@ -138,16 +153,39 @@ export function ChatSettingsPopup({
                 const userChatSettings = userSettings?.chat_settings || {}
 
                 if (Object.keys(userChatSettings).length > 0) {
-                    console.log('Using user settings as defaults:', userChatSettings)
+                    // Map provider type to provider ID if needed
+                    let providerId = userChatSettings.provider
+                    if (userChatSettings.provider && !userChatSettings.provider.includes('-')) {
+                        // This looks like a provider type, find the actual provider ID
+                        const provider = providersResponse.data?.find(p => p.type === userChatSettings.provider && p.isActive)
+                        if (provider) {
+                            providerId = provider.id
+                        }
+                    }
+
+                    // Map model name to model ID if needed
+                    let modelId = userChatSettings.model
+                    if (providerId && userChatSettings.model) {
+                        const provider = providersResponse.data?.find(p => p.id === providerId)
+                        if (provider?.models) {
+                            const model = provider.models.find(m => m.name === userChatSettings.model || m.id === userChatSettings.model)
+                            if (model) {
+                                modelId = model.id
+                            }
+                        }
+                    }
+
                     setSettings(prev => ({
                         temperature: 0.7,
                         maxChunks: 5,
-                        ...userChatSettings
+                        ...userChatSettings,
+                        provider: providerId,
+                        model: modelId
                     }))
 
                     // Load models for user's provider
-                    if (userChatSettings.provider) {
-                        await loadModels(userChatSettings.provider)
+                    if (providerId) {
+                        await loadModels(providerId)
                     }
                 } else {
                     await setDefaultSettings(providersResponse.data || [], promptsResponse.data || [])
@@ -159,7 +197,6 @@ export function ChatSettingsPopup({
                 }
             }
         } catch (err) {
-            console.error('Failed to load data:', err)
             error('Failed to Load Data', 'Could not load providers and prompts')
         } finally {
             setLoading(false)
@@ -178,7 +215,6 @@ export function ChatSettingsPopup({
         ) || prompts[0]
 
         if (defaultProvider) {
-            console.log('Setting default provider:', defaultProvider.name)
             setSettings(prev => ({
                 ...prev,
                 provider: defaultProvider.id,
@@ -192,18 +228,14 @@ export function ChatSettingsPopup({
     }
 
     const loadModels = async (providerId: string) => {
-        console.log('Loading models for provider ID:', providerId)
         try {
             // Find the provider from the already loaded providers (from AI Providers API)
             // Look by id since we're passing the provider id
             const provider = providers.find(p => p.id === providerId)
-            console.log('Found provider in AI Providers:', provider)
-            console.log('Provider models:', provider?.models)
 
             if (provider && provider.models) {
                 setModels(provider.models || [])
             } else {
-                console.warn(`Provider ID ${providerId} not found or has no models`)
                 setModels([])
             }
 
@@ -211,16 +243,13 @@ export function ChatSettingsPopup({
             if (settings.provider === providerId) {
                 const modelExists = provider?.models?.find(m => m.id === settings.model)
                 if (!modelExists && provider?.models?.length > 0) {
-                    console.log('Auto-selecting first available model:', provider.models[0].name)
                     setSettings(prev => ({ ...prev, model: provider.models[0].id }))
                 } else if (!settings.model && provider?.models?.length > 0) {
                     // If no model is selected, auto-select the first one
-                    console.log('Auto-selecting first model:', provider.models[0].name)
                     setSettings(prev => ({ ...prev, model: provider.models[0].id }))
                 }
             }
         } catch (err) {
-            console.error('Failed to load models:', err)
             setModels([])
         }
     }
@@ -230,7 +259,6 @@ export function ChatSettingsPopup({
             const prompt = await promptApi.getById(promptId)
             setSelectedPrompt(prompt)
         } catch (err) {
-            console.error('Failed to load prompt details:', err)
             setSelectedPrompt(null)
         }
     }
@@ -243,7 +271,6 @@ export function ChatSettingsPopup({
             setOpen(false)
             success('Settings Saved', 'Chat settings have been saved successfully')
         } catch (err) {
-            console.error('Failed to save settings:', err)
             error('Failed to Save', 'Could not save chat settings')
         } finally {
             setSaving(false)
@@ -251,18 +278,15 @@ export function ChatSettingsPopup({
     }
 
     const handleProviderChange = (providerId: string) => {
-        console.log('Provider changed to:', providerId)
         setSettings(prev => ({ ...prev, provider: providerId, model: undefined }))
         // Don't call loadModels here - let the useEffect handle it
     }
 
     const handleModelChange = (modelId: string) => {
-        console.log('Model changed to:', modelId)
         setSettings(prev => ({ ...prev, model: modelId }))
     }
 
     const handlePromptChange = (promptId: string) => {
-        console.log('Prompt changed to:', promptId)
         setSettings(prev => ({ ...prev, promptId: promptId || undefined }))
     }
 
@@ -297,15 +321,6 @@ export function ChatSettingsPopup({
                 </DialogHeader>
 
                 <div className="space-y-6">
-                    {/* Debug Info */}
-                    <div className="p-2 bg-gray-100 rounded text-xs">
-                        <strong>Debug - Current Settings:</strong>
-                        <pre>{JSON.stringify(settings, null, 2)}</pre>
-                        <strong>Available Models ({models.length}):</strong>
-                        <pre>{JSON.stringify(models.map(m => ({ id: m.id, name: m.name, description: m.description })), null, 2)}</pre>
-                        <strong>Available Providers ({providers.length}):</strong>
-                        <pre>{JSON.stringify(providers.map(p => ({ id: p.id, name: p.name, type: p.type })), null, 2)}</pre>
-                    </div>
 
                     {/* AI Provider Selection */}
                     <div className="space-y-2">
@@ -329,16 +344,6 @@ export function ChatSettingsPopup({
                     {/* Model Selection */}
                     <div className="space-y-2">
                         <Label htmlFor="model">Model</Label>
-                        {settings.provider && (
-                            <div className="text-xs text-gray-500">
-                                Showing models for provider: {settings.provider} ({models.length} models)
-                                {models.length > 0 && (
-                                    <div className="mt-1">
-                                        Models: {models.map(m => `${m.name}${m.description ? ` (${m.description})` : ''}`).join(', ')}
-                                    </div>
-                                )}
-                            </div>
-                        )}
                         <select
                             id="model"
                             value={settings.model || ''}
@@ -347,14 +352,11 @@ export function ChatSettingsPopup({
                             className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             <option value="">Select model</option>
-                            {models.map((model) => {
-                                console.log('Rendering model:', model)
-                                return (
-                                    <option key={model.id} value={model.id}>
-                                        {model.name} {model.description ? `- ${model.description}` : ''}
-                                    </option>
-                                )
-                            })}
+                            {models.map((model) => (
+                                <option key={model.id} value={model.id}>
+                                    {model.name} {model.description ? `- ${model.description}` : ''}
+                                </option>
+                            ))}
                         </select>
                     </div>
 
@@ -437,7 +439,7 @@ export function ChatSettingsPopup({
                                 min="0"
                                 max="1"
                                 step="0.1"
-                                value={settings.temperature}
+                                value={settings.temperature || 0.7}
                                 onChange={(e) => handleTemperatureChange(e.target.value)}
                             />
                             <p className="text-xs text-muted-foreground">
@@ -451,7 +453,7 @@ export function ChatSettingsPopup({
                                 type="number"
                                 min="1"
                                 max="20"
-                                value={settings.maxChunks}
+                                value={settings.maxChunks || 5}
                                 onChange={(e) => handleMaxChunksChange(e.target.value)}
                             />
                             <p className="text-xs text-muted-foreground">
@@ -459,6 +461,54 @@ export function ChatSettingsPopup({
                             </p>
                         </div>
                     </div>
+
+                    {/* Conversation History Settings */}
+                    <div className="space-y-4 border-t pt-4">
+                        <h4 className="text-sm font-medium">Conversation History</h4>
+                        <div className="space-y-4">
+                            <div className="flex items-center space-x-2">
+                                <input
+                                    id="includeConversationHistory"
+                                    type="checkbox"
+                                    checked={settings.includeConversationHistory ?? true}
+                                    onChange={(e) => setSettings(prev => ({
+                                        ...prev,
+                                        includeConversationHistory: e.target.checked
+                                    }))}
+                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <Label htmlFor="includeConversationHistory" className="text-sm">
+                                    Include Previous Context
+                                </Label>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                Include conversation history in AI responses for better context
+                            </p>
+
+                            {settings.includeConversationHistory && (
+                                <div className="space-y-2">
+                                    <Label htmlFor="conversationHistoryLimit">Context Limit</Label>
+                                    <Input
+                                        id="conversationHistoryLimit"
+                                        type="number"
+                                        min="1"
+                                        max="50"
+                                        value={settings.conversationHistoryLimit || 10}
+                                        onChange={(e) => {
+                                            const limit = parseInt(e.target.value)
+                                            if (!isNaN(limit) && limit >= 1 && limit <= 50) {
+                                                setSettings(prev => ({ ...prev, conversationHistoryLimit: limit }))
+                                            }
+                                        }}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Maximum number of previous messages to include (1-50)
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
                 </div>
 
                 <DialogFooter>

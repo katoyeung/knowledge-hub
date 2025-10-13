@@ -10,6 +10,8 @@ export interface ResponseGenerationConfig {
   model: string;
   temperature: number;
   promptId?: string;
+  includeConversationHistory: boolean;
+  conversationHistoryLimit: number;
 }
 
 export interface ResponseGenerationResult {
@@ -43,6 +45,8 @@ export class ResponseGeneratorService {
       model: config.model,
       segmentsCount: segments.length,
       conversationHistoryLength: conversationHistory.length,
+      includeConversationHistory: config.includeConversationHistory,
+      conversationHistoryLimit: config.conversationHistoryLimit,
     });
 
     // Validate model exists in provider's model list
@@ -103,6 +107,126 @@ export class ResponseGeneratorService {
     };
   }
 
+  async generateStreamingResponse(
+    query: string,
+    segments: any[],
+    config: ResponseGenerationConfig,
+    conversationHistory: ChatMessage[] = [],
+    onToken: (token: string) => void,
+  ): Promise<ResponseGenerationResult> {
+    this.logger.log(
+      `🤖 Generating streaming response using AI provider ${config.provider.type}`,
+    );
+
+    this.debugLogger.logResponseGeneration('start', {
+      provider: config.provider.type,
+      model: config.model,
+      segmentsCount: segments.length,
+      conversationHistoryLength: conversationHistory.length,
+    });
+
+    // Validate model exists in provider's model list
+    const modelExists = this.llmClientFactory.validateModelAvailability(
+      config.provider,
+      config.model,
+    );
+    if (!modelExists) {
+      throw new Error(
+        `Model ${config.model} is not available for provider ${config.provider.name}. Available models: ${config.provider.models?.map((m: any) => m.id).join(', ') || 'none'}`,
+      );
+    }
+
+    // Build context from segments
+    const context = this.buildContextFromSegments(segments);
+
+    this.debugLogger.logResponseGeneration('context-built', {
+      contextLength: context.length,
+      contextPreview: context.substring(0, 200),
+    });
+
+    // Build conversation history
+    const messages: LLMMessage[] = await this.buildConversationHistory(
+      conversationHistory,
+      query,
+      context,
+      config,
+    );
+
+    this.debugLogger.logResponseGeneration('messages-built', {
+      messagesCount: messages.length,
+      messages: messages.map((m) => ({
+        role: m.role,
+        contentLength: m.content.length,
+      })),
+    });
+
+    // Create LLM client and generate streaming response
+    const llmClient = this.llmClientFactory.createClient(config.provider);
+
+    let fullContent = '';
+    let tokensUsed = 0;
+
+    // Check if the client supports streaming
+    if (llmClient.chatCompletionStream) {
+      try {
+        for await (const token of llmClient.chatCompletionStream(
+          messages,
+          config.model,
+          undefined,
+          config.temperature,
+        )) {
+          fullContent += token;
+          onToken(token);
+        }
+      } catch (error) {
+        this.logger.error(
+          'Streaming failed, falling back to regular completion',
+          error,
+        );
+        // Fallback to regular completion
+        const response = await llmClient.chatCompletion(
+          messages,
+          config.model,
+          undefined,
+          config.temperature,
+        );
+        fullContent = response.data.choices[0].message.content;
+        tokensUsed = response.data.usage?.total_tokens || 0;
+      }
+    } else {
+      // Fallback to regular completion if streaming not supported
+      this.logger.warn('Streaming not supported, using regular completion');
+      const response = await llmClient.chatCompletion(
+        messages,
+        config.model,
+        undefined,
+        config.temperature,
+      );
+      fullContent = response.data.choices[0].message.content;
+      tokensUsed = response.data.usage?.total_tokens || 0;
+
+      // Simulate streaming by sending chunks
+      const words = fullContent.split(' ');
+      for (let i = 0; i < words.length; i++) {
+        const chunk = (i === 0 ? '' : ' ') + words[i];
+        onToken(chunk);
+        // Small delay to simulate streaming
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
+    this.debugLogger.logResponseGeneration('response-generated', {
+      responseLength: fullContent.length,
+      tokensUsed,
+    });
+
+    return {
+      content: fullContent,
+      tokensUsed,
+      model: config.model,
+    };
+  }
+
   private buildContextFromSegments(segments: any[]): string {
     return segments
       .map((segment, index) => `[${index + 1}] ${segment.content}`)
@@ -116,15 +240,6 @@ export class ResponseGeneratorService {
     config: ResponseGenerationConfig,
   ): Promise<LLMMessage[]> {
     const messages: LLMMessage[] = [];
-
-    // Add conversation history (last 10 messages to avoid token limits)
-    const recentHistory = conversationHistory.slice(-10);
-    for (const msg of recentHistory) {
-      messages.push({
-        role: msg.role as 'user' | 'assistant',
-        content: msg.content,
-      });
-    }
 
     // Load prompt template if specified
     let systemPrompt = this.getDefaultSystemPrompt(context, query);
@@ -141,54 +256,74 @@ export class ResponseGeneratorService {
           systemPrompt = systemPrompt.replace(/\{context\}/g, context);
           systemPrompt = systemPrompt.replace(/\{\{question\}\}/g, query);
           systemPrompt = systemPrompt.replace(/\{query\}/g, query);
-
-          // If there's a user prompt template, use it for the user message
-          if (prompt.userPromptTemplate) {
-            const userPrompt = prompt.userPromptTemplate
-              .replace(/\{\{context\}\}/g, context)
-              .replace(/\{context\}/g, context)
-              .replace(/\{\{question\}\}/g, query)
-              .replace(/\{query\}/g, query);
-
-            messages.push({
-              role: 'system',
-              content: systemPrompt,
-            });
-
-            messages.push({
-              role: 'user',
-              content: userPrompt,
-            });
-          } else {
-            messages.push({
-              role: 'system',
-              content: systemPrompt,
-            });
-          }
-        } else {
-          // Fallback to default if prompt not found
-          messages.push({
-            role: 'system',
-            content: systemPrompt,
-          });
         }
       } catch (error) {
         this.logger.warn(
           `Failed to load prompt ${config.promptId}: ${error.message}`,
         );
-        // Fallback to default
-        messages.push({
-          role: 'system',
-          content: systemPrompt,
-        });
       }
-    } else {
-      // Use default prompt
+    }
+
+    // Add system message first (if not using custom user prompt template)
+    if (
+      !config.promptId ||
+      !(await this.promptService.findPromptById(config.promptId))
+        ?.userPromptTemplate
+    ) {
       messages.push({
         role: 'system',
         content: systemPrompt,
       });
     }
+
+    // Add conversation history only if enabled (limit based on config to avoid token limits)
+    if (config.includeConversationHistory) {
+      const historyLimit = config.conversationHistoryLimit || 10;
+      const recentHistory = conversationHistory.slice(-historyLimit);
+      this.logger.debug(
+        `📚 Including conversation history: ${recentHistory.length} messages (limit: ${historyLimit})`,
+      );
+      for (const msg of recentHistory) {
+        messages.push({
+          role: msg.role as 'user' | 'assistant',
+          content: msg.content,
+        });
+      }
+    } else {
+      this.logger.debug(
+        '📚 Conversation history disabled - not including previous messages',
+      );
+    }
+
+    // Handle custom user prompt template if specified
+    if (config.promptId) {
+      try {
+        const prompt = await this.promptService.findPromptById(config.promptId);
+        if (prompt?.userPromptTemplate) {
+          const userPrompt = prompt.userPromptTemplate
+            .replace(/\{\{context\}\}/g, context)
+            .replace(/\{context\}/g, context)
+            .replace(/\{\{question\}\}/g, query)
+            .replace(/\{query\}/g, query);
+
+          messages.push({
+            role: 'user',
+            content: userPrompt,
+          });
+          return messages; // Return early if using custom user prompt
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Failed to load prompt ${config.promptId}: ${error.message}`,
+        );
+      }
+    }
+
+    // Always add the current user query as the last message
+    messages.push({
+      role: 'user',
+      content: query,
+    });
 
     return messages;
   }

@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { Observable } from 'rxjs';
 import {
   ChatMessage,
   MessageRole,
@@ -62,12 +63,21 @@ export class ChatService {
       );
 
       // Override with DTO values if provided
+
       const effectiveConfig = {
         ...config,
         temperature:
           dto.temperature !== undefined ? dto.temperature : config.temperature,
         maxChunks:
           dto.maxChunks !== undefined ? dto.maxChunks : config.maxChunks,
+        includeConversationHistory:
+          dto.includeConversationHistory !== undefined
+            ? dto.includeConversationHistory
+            : config.includeConversationHistory,
+        conversationHistoryLimit:
+          dto.conversationHistoryLimit !== undefined
+            ? dto.conversationHistoryLimit
+            : config.conversationHistoryLimit,
       };
 
       this.debugLogger.logChatProcess('config-resolved', {
@@ -75,6 +85,8 @@ export class ChatService {
         model: effectiveConfig.model,
         temperature: effectiveConfig.temperature,
         maxChunks: effectiveConfig.maxChunks,
+        includeConversationHistory: effectiveConfig.includeConversationHistory,
+        conversationHistoryLimit: effectiveConfig.conversationHistoryLimit,
       });
 
       // 3. Get or create conversation
@@ -122,7 +134,7 @@ export class ChatService {
           dto.message,
           retrievedSegments,
           effectiveConfig,
-          effectiveConfig.enableConversationHistory
+          effectiveConfig.includeConversationHistory
             ? conversation.messages || []
             : [],
         );
@@ -242,6 +254,8 @@ export class ChatService {
     userId: string,
     datasetId?: string,
   ): Promise<ChatConversation[]> {
+    // IMPORTANT: Conversations are NOT filtered by model/provider
+    // All conversations for the user/dataset are returned regardless of AI model used
     const where: any = { userId };
     if (datasetId) {
       where.datasetId = datasetId;
@@ -252,5 +266,220 @@ export class ChatService {
       order: { updatedAt: 'DESC' },
       relations: ['messages'],
     });
+  }
+
+  async getLatestConversation(
+    datasetId: string,
+    userId: string,
+  ): Promise<ChatConversation | null> {
+    // IMPORTANT: Latest conversation is NOT filtered by model/provider
+    // Returns the most recently updated conversation regardless of AI model used
+    this.logger.log(
+      `🔍 Getting latest conversation for dataset ${datasetId} and user ${userId}`,
+    );
+    const conversation = await this.conversationRepository.findOne({
+      where: { datasetId, userId },
+      order: { updatedAt: 'DESC' },
+    });
+    this.logger.log(
+      `📋 Found conversation: ${conversation ? conversation.id : 'none'}`,
+    );
+    return conversation;
+  }
+
+  async getConversationMessagesPaginated(
+    conversationId: string,
+    userId: string,
+    page: number = 1,
+    limit: number = 10,
+  ): Promise<{
+    messages: ChatMessage[];
+    total: number;
+    hasMore: boolean;
+    page: number;
+    limit: number;
+  }> {
+    // IMPORTANT: Messages are NOT filtered by model/provider
+    // All messages in the conversation are returned regardless of AI model used
+    this.logger.log(
+      `📄 Getting paginated messages for conversation ${conversationId}, page ${page}, limit ${limit}`,
+    );
+    const skip = (page - 1) * limit;
+
+    const [messages, total] = await this.messageRepository.findAndCount({
+      where: { conversationId, userId },
+      order: { createdAt: 'DESC' },
+      skip,
+      take: limit,
+    });
+
+    const hasMore = skip + limit < total;
+    this.logger.log(
+      `📄 Found ${messages.length} messages, total: ${total}, hasMore: ${hasMore}`,
+    );
+
+    return {
+      messages: messages.reverse(), // Reverse to get chronological order (oldest first)
+      total,
+      hasMore,
+      page,
+      limit,
+    };
+  }
+
+  chatWithDocumentsStream(
+    dto: ChatWithDocumentsDto,
+    userId: string,
+  ): Promise<Observable<MessageEvent>> {
+    return Promise.resolve(
+      new Observable((observer) => {
+        this.handleStreamingChat(dto, userId, observer).catch((error) => {
+          observer.error(error);
+        });
+      }),
+    );
+  }
+
+  private async handleStreamingChat(
+    dto: ChatWithDocumentsDto,
+    userId: string,
+    observer: any,
+  ): Promise<void> {
+    const startTime = Date.now();
+    this.logger.log(
+      `💬 Starting streaming chat with documents for user ${userId}`,
+    );
+
+    try {
+      // 1. Validate dataset exists
+      const dataset = await this.datasetService.findById(dto.datasetId);
+      if (!dataset) {
+        throw new NotFoundException('Dataset not found');
+      }
+
+      // 2. Resolve AI configuration
+      const config = await this.aiProviderConfigResolver.resolveForDataset(
+        dto.datasetId,
+        userId,
+      );
+
+      const effectiveConfig = {
+        ...config,
+        temperature:
+          dto.temperature !== undefined ? dto.temperature : config.temperature,
+        maxChunks:
+          dto.maxChunks !== undefined ? dto.maxChunks : config.maxChunks,
+      };
+
+      // 3. Get or create conversation
+      const conversation = await this.getOrCreateConversation(
+        dto.conversationId,
+        dto.conversationTitle || 'New Chat',
+        dto.datasetId,
+        userId,
+        dto.documentIds,
+        dto.segmentIds,
+      );
+
+      // 4. Save user message
+      await this.saveMessage({
+        content: dto.message,
+        role: MessageRole.USER,
+        status: MessageStatus.COMPLETED,
+        userId,
+        datasetId: dto.datasetId,
+        conversationId: conversation.id,
+      });
+
+      // 5. Retrieve relevant segments
+      const retrievedSegments =
+        await this.segmentRetrievalService.retrieveRelevantSegments(
+          dto.datasetId,
+          dto.message,
+          dto.documentIds,
+          dto.segmentIds,
+          effectiveConfig.maxChunks,
+        );
+
+      // 6. Generate streaming response
+      const assistantMessage =
+        await this.responseGeneratorService.generateStreamingResponse(
+          dto.message,
+          retrievedSegments,
+          effectiveConfig,
+          effectiveConfig.includeConversationHistory
+            ? conversation.messages || []
+            : [],
+          (token: string) => {
+            observer.next({
+              data: JSON.stringify({
+                type: 'token',
+                content: token,
+              }),
+            });
+          },
+        );
+
+      // 7. Save assistant message
+      const savedAssistantMessage = await this.saveMessage({
+        content: assistantMessage.content,
+        role: MessageRole.ASSISTANT,
+        status: MessageStatus.COMPLETED,
+        userId,
+        datasetId: dto.datasetId,
+        conversationId: conversation.id,
+        sourceChunkIds: JSON.stringify(retrievedSegments.map((s) => s.id)),
+        sourceDocuments: JSON.stringify(
+          retrievedSegments.map((s) => s.documentId || s.id),
+        ),
+        metadata: {
+          tokensUsed: assistantMessage.tokensUsed,
+          model: assistantMessage.model,
+          provider: effectiveConfig.provider.type,
+        },
+      });
+
+      const processingTime = Date.now() - startTime;
+
+      // Send final response
+      observer.next({
+        data: JSON.stringify({
+          type: 'complete',
+          message: savedAssistantMessage,
+          conversationId: conversation.id,
+          sourceChunks: retrievedSegments.map((segment) => ({
+            id: segment.id,
+            content: segment.content,
+            documentId: segment.documentId || segment.id,
+            documentName: 'Document',
+            similarity: segment.similarity || 0,
+          })),
+          metadata: {
+            tokensUsed: assistantMessage.tokensUsed,
+            processingTime,
+            model: assistantMessage.model,
+            provider: effectiveConfig.provider.type,
+          },
+        }),
+      });
+
+      observer.complete();
+    } catch (error) {
+      this.logger.error(
+        `❌ Streaming chat failed: ${error.message}`,
+        error.stack,
+      );
+
+      // Send a proper error message to the frontend
+      observer.next({
+        data: JSON.stringify({
+          type: 'error',
+          error: error.message || 'An unexpected error occurred',
+          details: error.stack || 'No additional details available',
+        }),
+      });
+
+      observer.complete();
+    }
   }
 }

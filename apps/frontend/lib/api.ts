@@ -1,4 +1,10 @@
 import axios from "axios";
+import {
+  ChatMessage,
+  SourceChunk,
+  Conversation,
+  PaginatedMessagesResponse,
+} from "./types/chat";
 
 // Create axios instance with base configuration
 const apiClient = axios.create({
@@ -819,7 +825,7 @@ export const chatApi = {
     }>;
   }> => apiClient.get("/chat/models").then((res) => res.data),
 
-  // Chat with documents
+  // Chat with documents (non-streaming)
   chatWithDocuments: (data: {
     message: string;
     datasetId: string;
@@ -829,6 +835,8 @@ export const chatApi = {
     temperature?: number;
     conversationId?: string;
     conversationTitle?: string;
+    includeConversationHistory?: boolean;
+    conversationHistoryLimit?: number;
   }): Promise<{
     message: {
       id: string;
@@ -859,7 +867,10 @@ export const chatApi = {
       model?: string;
       provider?: string;
     };
-  }> => apiClient.post("/chat/with-documents", data).then((res) => res.data),
+  }> =>
+    apiClient
+      .post("/chat/with-documents", { ...data, stream: false })
+      .then((res) => res.data),
 
   // Get conversations
   getConversations: (
@@ -885,6 +896,12 @@ export const chatApi = {
       .then((res) => res.data);
   },
 
+  // Get latest conversation for dataset
+  getLatestConversation: (datasetId: string): Promise<Conversation | null> =>
+    apiClient
+      .get(`/chat/conversations/latest?datasetId=${datasetId}`)
+      .then((res) => res.data),
+
   // Get conversation messages
   getConversationMessages: (
     conversationId: string
@@ -904,6 +921,114 @@ export const chatApi = {
     apiClient
       .get(`/chat/conversations/${conversationId}/messages`)
       .then((res) => res.data),
+
+  // Get conversation messages (paginated)
+  getConversationMessagesPaginated: (
+    conversationId: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<PaginatedMessagesResponse> =>
+    apiClient
+      .get(`/chat/conversations/${conversationId}/messages/paginated`, {
+        params: { page, limit },
+      })
+      .then((res) => res.data),
+
+  // Chat with documents (streaming)
+  chatWithDocumentsStream: async (
+    data: {
+      message: string;
+      datasetId: string;
+      documentIds?: string[];
+      segmentIds?: string[];
+      maxChunks?: number;
+      temperature?: number;
+      conversationId?: string;
+      conversationTitle?: string;
+      includeConversationHistory?: boolean;
+      conversationHistoryLimit?: number;
+    },
+    onToken: (token: string) => void,
+    onComplete: (response: {
+      message: ChatMessage;
+      conversationId: string;
+      sourceChunks: SourceChunk[];
+      metadata: any;
+    }) => void,
+    onError: (error: string) => void
+  ): Promise<void> => {
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/chat/with-documents/stream`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("authToken")}`,
+          },
+          body: JSON.stringify({ ...data, stream: true }),
+        }
+      );
+
+      if (!response.ok) {
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.text();
+          errorMessage = `API Error (${response.status}): ${errorData}`;
+        } catch {
+          // If we can't parse the error response, use the default message
+        }
+        throw new Error(errorMessage);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("No response body reader available");
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const eventData = JSON.parse(line.slice(6));
+
+              if (eventData.type === "token" && eventData.content) {
+                onToken(eventData.content);
+              } else if (eventData.type === "complete") {
+                onComplete({
+                  message: eventData.message,
+                  conversationId: eventData.conversationId,
+                  sourceChunks: eventData.sourceChunks,
+                  metadata: eventData.metadata,
+                });
+              } else if (eventData.type === "error") {
+                onError(eventData.error || "Unknown error occurred");
+              }
+            } catch (parseError) {
+              console.error("Failed to parse SSE event:", parseError);
+              // If JSON parsing fails, treat it as an error
+              onError(`Failed to parse server response: ${line.slice(6)}`);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Streaming chat failed:", error);
+      onError(
+        error instanceof Error ? error.message : "Unknown error occurred"
+      );
+    }
+  },
 };
 
 // User API functions

@@ -59,6 +59,7 @@ export class OllamaApiClient extends BaseLLMClient {
     messages: LLMMessage[],
     model: string = this.defaultModel,
     jsonSchema?: Record<string, any>,
+    temperature?: number,
   ): Promise<ApiResponse<LLMResponse>> {
     const cacheKey = this.getLLMCacheKey(messages, model, jsonSchema);
 
@@ -75,7 +76,7 @@ export class OllamaApiClient extends BaseLLMClient {
       messages,
       stream: false,
       options: {
-        temperature: 0.7,
+        temperature: temperature || 0.7,
         top_p: 0.9,
         top_k: 40,
         repeat_penalty: 1.1,
@@ -200,6 +201,88 @@ export class OllamaApiClient extends BaseLLMClient {
         `Failed to get available Ollama models: ${error.message}`,
       );
       return [];
+    }
+  }
+
+  async *chatCompletionStream(
+    messages: LLMMessage[],
+    model: string = this.defaultModel,
+    jsonSchema?: Record<string, any>,
+    temperature?: number,
+  ): AsyncGenerator<string, void, unknown> {
+    // Check if model is available
+    await this.ensureModelAvailable(model);
+
+    const payload: OllamaRequest = {
+      model,
+      messages,
+      stream: true,
+      options: {
+        temperature: temperature || 0.7,
+        top_p: 0.9,
+        top_k: 40,
+        repeat_penalty: 1.1,
+      },
+    };
+
+    // Add JSON schema support if provided
+    if (jsonSchema) {
+      // Add JSON schema instruction to the system message
+      const systemMessage = messages.find((m) => m.role === 'system');
+      if (systemMessage) {
+        systemMessage.content += `\n\nIMPORTANT: You must respond with valid JSON that matches this schema: ${JSON.stringify(jsonSchema)}`;
+      } else {
+        messages.unshift({
+          role: 'system',
+          content: `You must respond with valid JSON that matches this schema: ${JSON.stringify(jsonSchema)}`,
+        });
+      }
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(`${this.config.baseUrl}/api/chat`, payload, {
+          headers,
+          timeout: this.config.timeout,
+          responseType: 'stream',
+        }),
+      );
+
+      const stream = response.data;
+      let buffer = '';
+
+      for await (const chunk of stream) {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed.message?.content) {
+                yield parsed.message.content;
+              }
+              if (parsed.done) {
+                return;
+              }
+            } catch (parseError) {
+              // Skip invalid JSON lines
+              continue;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Ollama streaming API request failed: ${error.message}`,
+        error.stack,
+      );
+      throw error;
     }
   }
 

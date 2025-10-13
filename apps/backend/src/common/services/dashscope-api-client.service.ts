@@ -30,8 +30,14 @@ export class DashScopeApiClient extends BaseLLMClient {
     messages: LLMMessage[],
     model: string = this.defaultModel,
     jsonSchema?: Record<string, any>,
+    temperature?: number,
   ): Promise<ApiResponse<LLMResponse>> {
-    const cacheKey = this.getLLMCacheKey(messages, model, jsonSchema);
+    const cacheKey = this.getLLMCacheKey(
+      messages,
+      model,
+      jsonSchema,
+      temperature,
+    );
 
     // Check cache first
     if (this.cacheTTL > 0) {
@@ -51,7 +57,7 @@ export class DashScopeApiClient extends BaseLLMClient {
         role: msg.role,
         content: msg.content,
       })),
-      temperature: 0.7,
+      temperature: temperature || 0.7,
       max_tokens: 8192,
       stream: false,
     };
@@ -97,6 +103,83 @@ export class DashScopeApiClient extends BaseLLMClient {
         'DashScope API error:',
         error.response?.data || error.message,
       );
+      throw error;
+    }
+  }
+
+  async *chatCompletionStream(
+    messages: LLMMessage[],
+    model: string = this.defaultModel,
+    jsonSchema?: Record<string, any>,
+    temperature?: number,
+  ): AsyncGenerator<string, void, unknown> {
+    const requestBody = {
+      model,
+      messages: messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      })),
+      temperature: temperature || 0.7,
+      max_tokens: 8192,
+      stream: true,
+    };
+
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${this.config.apiKey}`,
+    };
+
+    try {
+      const response = await this.httpService.axiosRef.post(
+        `${this.config.baseUrl}/chat/completions`,
+        requestBody,
+        {
+          headers,
+          timeout: this.config.timeout,
+          responseType: 'stream',
+        },
+      );
+
+      const stream = response.data;
+      let buffer = '';
+
+      for await (const chunk of stream) {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              return;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              const content = parsed.choices?.[0]?.delta?.content;
+              if (content) {
+                yield content;
+              }
+            } catch (parseError) {
+              // Skip invalid JSON lines
+              continue;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error(
+        'DashScope streaming error:',
+        error.response?.data || error.message,
+      );
+
+      // If it's an HTTP error, provide more context
+      if (error.response) {
+        const errorMessage = `API Error (${error.response.status}): ${error.response.data?.message || error.message}`;
+        throw new Error(errorMessage);
+      }
+
       throw error;
     }
   }

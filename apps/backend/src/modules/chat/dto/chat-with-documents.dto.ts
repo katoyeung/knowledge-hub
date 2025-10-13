@@ -5,6 +5,7 @@ import {
   IsUUID,
   IsEnum,
   IsNumber,
+  IsBoolean,
   Min,
   Max,
 } from 'class-validator';
@@ -50,4 +51,17 @@ export class ChatWithDocumentsDto {
   @IsEnum(RerankerType)
   @IsOptional()
   rerankerType?: RerankerType = RerankerType.NONE;
+
+  @IsOptional()
+  includeConversationHistory?: boolean;
+
+  @IsNumber()
+  @Min(1)
+  @Max(50)
+  @IsOptional()
+  conversationHistoryLimit?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  stream?: boolean = false;
 }

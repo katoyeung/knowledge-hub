@@ -53,7 +53,13 @@ export class SegmentRetrievalService {
       return this.retrieveFromSpecificDocuments(documentIds, query, maxChunks);
     }
 
-    // Search across all documents in the dataset
+    // If documentIds is an empty array, return no results (no documents selected)
+    if (documentIds && documentIds.length === 0) {
+      this.logger.log('📝 No documents selected, returning empty results');
+      return [];
+    }
+
+    // Search across all documents in the dataset (only when documentIds is undefined)
     return this.retrieveFromAllDocuments(datasetId, query, maxChunks);
   }
 

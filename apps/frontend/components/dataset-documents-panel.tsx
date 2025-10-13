@@ -36,6 +36,8 @@ export function DatasetDocumentsPanel({
     const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
     const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set())
     const previousDocumentStatuses = useRef<Map<string, string>>(new Map())
+    const hasUserInteracted = useRef<boolean>(false)
+    const lastNotifiedSelectedDocs = useRef<Set<string>>(new Set())
 
     const loadDocuments = useCallback(async () => {
         try {
@@ -61,6 +63,19 @@ export function DatasetDocumentsPanel({
         }
     }, [propDocuments, propLoading, loadDocuments])
 
+    // Auto-select completed documents when documents first load (only if user hasn't interacted)
+    useEffect(() => {
+        if (documents.length > 0 && selectedDocuments.size === 0 && !hasUserInteracted.current) {
+            const completedDocumentIds = documents
+                .filter(doc => doc.indexingStatus === 'completed')
+                .map(doc => doc.id)
+
+            if (completedDocumentIds.length > 0) {
+                setSelectedDocuments(new Set(completedDocumentIds))
+            }
+        }
+    }, [documents, selectedDocuments.size])
+
     // Close dropdown when clicking outside
     useEffect(() => {
         const handleClickOutside = () => {
@@ -82,7 +97,14 @@ export function DatasetDocumentsPanel({
     useEffect(() => {
         if (onSelectedDocumentsChange) {
             const selectedDocs = documents.filter(doc => selectedDocuments.has(doc.id))
-            onSelectedDocumentsChange(selectedDocs)
+            const selectedDocIds = new Set(selectedDocs.map(doc => doc.id))
+
+            // Only notify if the selection actually changed
+            if (selectedDocIds.size !== lastNotifiedSelectedDocs.current.size ||
+                ![...selectedDocIds].every(id => lastNotifiedSelectedDocs.current.has(id))) {
+                lastNotifiedSelectedDocs.current = selectedDocIds
+                onSelectedDocumentsChange(selectedDocs)
+            }
         }
     }, [selectedDocuments, documents, onSelectedDocumentsChange])
 
@@ -167,6 +189,7 @@ export function DatasetDocumentsPanel({
 
     // Handle document selection
     const toggleDocumentSelection = (documentId: string) => {
+        hasUserInteracted.current = true
         setSelectedDocuments(prev => {
             const newSet = new Set(prev)
             if (newSet.has(documentId)) {
@@ -180,11 +203,13 @@ export function DatasetDocumentsPanel({
 
     // Handle select all documents
     const selectAllDocuments = () => {
+        hasUserInteracted.current = true
         setSelectedDocuments(new Set(documents.map(doc => doc.id)))
     }
 
     // Handle deselect all documents
     const deselectAllDocuments = () => {
+        hasUserInteracted.current = true
         setSelectedDocuments(new Set())
     }
 

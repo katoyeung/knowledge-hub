@@ -25,4 +25,11 @@ export interface LLMClient {
     jsonSchema?: Record<string, any>,
     temperature?: number,
   ): Promise<ApiResponse<LLMResponse>>;
+
+  chatCompletionStream?(
+    messages: LLMMessage[],
+    model: string,
+    jsonSchema?: Record<string, any>,
+    temperature?: number,
+  ): AsyncGenerator<string, void, unknown>;
 }

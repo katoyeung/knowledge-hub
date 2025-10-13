@@ -9,8 +9,10 @@ import {
   LLMResponse,
 } from '../interfaces/llm-client.interface';
 import { ApiResponse } from '../interfaces/api-client.interface';
+import { LLMProviderConfig } from '../interfaces/llm-provider-config.interface';
 import { createHash } from 'crypto';
 import { CACHE_KEYS } from '@common/constants/cache-keys';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export abstract class BaseLLMClient extends BaseApiClient implements LLMClient {

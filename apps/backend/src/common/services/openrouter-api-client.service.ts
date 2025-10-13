@@ -41,8 +41,14 @@ export class OpenRouterApiClient extends BaseLLMClient {
     messages: LLMMessage[],
     model: string = this.defaultModel,
     jsonSchema?: Record<string, any>,
+    temperature?: number,
   ): Promise<ApiResponse<LLMResponse>> {
-    const cacheKey = this.getLLMCacheKey(messages, model, jsonSchema);
+    const cacheKey = this.getLLMCacheKey(
+      messages,
+      model,
+      jsonSchema,
+      temperature,
+    );
 
     const cachedResponse = await this.getCachedResponse<LLMResponse>(cacheKey);
     if (cachedResponse) {
@@ -92,6 +98,91 @@ export class OpenRouterApiClient extends BaseLLMClient {
         `OpenRouter API request failed: ${error.message}`,
         error.stack,
       );
+      throw error;
+    }
+  }
+
+  async *chatCompletionStream(
+    messages: LLMMessage[],
+    model: string = this.defaultModel,
+    jsonSchema?: Record<string, any>,
+    temperature?: number,
+  ): AsyncGenerator<string, void, unknown> {
+    const payload: any = {
+      model,
+      messages,
+      stream: true,
+    };
+
+    if (jsonSchema) {
+      payload.response_format = {
+        type: 'json_schema',
+        json_schema: jsonSchema,
+      };
+    }
+
+    if (temperature !== undefined) {
+      payload.temperature = temperature;
+    }
+
+    const headers = {
+      Authorization: `Bearer ${this.config.apiKey}`,
+      'Content-Type': 'application/json',
+    };
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `${this.config.baseUrl}/chat/completions`,
+          payload,
+          {
+            headers,
+            timeout: this.config.timeout,
+            responseType: 'stream',
+          },
+        ),
+      );
+
+      const stream = response.data;
+      let buffer = '';
+
+      for await (const chunk of stream) {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              return;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              const content = parsed.choices?.[0]?.delta?.content;
+              if (content) {
+                yield content;
+              }
+            } catch (parseError) {
+              // Skip invalid JSON lines
+              continue;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `OpenRouter streaming error: ${error.message}`,
+        error.stack,
+      );
+
+      // If it's an HTTP error, provide more context
+      if (error.response) {
+        const errorMessage = `API Error (${error.response.status}): ${error.response.data?.message || error.message}`;
+        throw new Error(errorMessage);
+      }
+
       throw error;
     }
   }

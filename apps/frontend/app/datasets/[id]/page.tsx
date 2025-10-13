@@ -99,17 +99,13 @@ function DatasetDetailContent() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [selectedDocument, setSelectedDocument] = useState<Document | null>(null)
+    const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([])
     const [leftCollapsed, setLeftCollapsed] = useState(false)
     const [rightCollapsed, setRightCollapsed] = useState(false)
     const [user, setUser] = useState<AuthUser | null>(null)
     const [isDropdownOpen, setIsDropdownOpen] = useState(false)
     const [activeTab, setActiveTab] = useState<'documents' | 'chat' | 'notes'>('chat')
-    const [isMobile, setIsMobile] = useState(() => {
-        if (typeof window !== 'undefined') {
-            return window.innerWidth < 1024
-        }
-        return false
-    })
+    const [isMobile, setIsMobile] = useState<boolean | null>(null)
 
     // Refs to prevent duplicate API calls in React StrictMode
     const dataFetchedRef = useRef(false)
@@ -129,6 +125,7 @@ function DatasetDetailContent() {
             setIsMobile(window.innerWidth < 1024) // lg breakpoint
         }
 
+        // Initialize immediately
         checkScreenSize()
         window.addEventListener('resize', checkScreenSize)
         return () => window.removeEventListener('resize', checkScreenSize)
@@ -270,7 +267,11 @@ function DatasetDetailContent() {
         setSelectedDocument(document)
     }
 
-    if (loading) {
+    const handleSelectedDocumentsChange = useCallback((documents: Document[]) => {
+        setSelectedDocuments(documents)
+    }, [])
+
+    if (loading || isMobile === null) {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center">
                 <div className="text-center">
@@ -393,29 +394,39 @@ function DatasetDetailContent() {
                     </div>
 
                     {/* Tab Content */}
-                    <div className="flex-1 min-h-0">
+                    <div className="flex-1 min-h-0 flex flex-col">
                         {activeTab === 'documents' && (
-                            <DatasetDocumentsPanel
-                                datasetId={datasetId}
-                                documents={documents}
-                                loading={documentsLoading}
-                                onDocumentClick={handleDocumentClick}
-                                showCollapseButton={false}
-                            />
+                            <div className="flex-1 min-h-0">
+                                <DatasetDocumentsPanel
+                                    datasetId={datasetId}
+                                    documents={documents}
+                                    loading={documentsLoading}
+                                    onDocumentClick={handleDocumentClick}
+                                    onSelectedDocumentsChange={handleSelectedDocumentsChange}
+                                    showCollapseButton={false}
+                                />
+                            </div>
                         )}
                         {activeTab === 'chat' && (
-                            <DatasetChatPanel
-                                datasetId={datasetId}
-                                selectedDocumentId={selectedDocument?.id}
-                                datasetName={dataset?.name}
-                                dataset={loading ? undefined : dataset}
-                            />
+                            <div className="flex-1 min-h-0">
+                                <DatasetChatPanel
+                                    key={`chat-${datasetId}-${activeTab}`}
+                                    datasetId={datasetId}
+                                    selectedDocumentId={selectedDocument?.id}
+                                    selectedDocumentIds={selectedDocuments.map(doc => doc.id)}
+                                    datasetName={dataset?.name}
+                                    dataset={loading ? undefined : dataset || undefined}
+                                    requireDocumentSelection={false}
+                                />
+                            </div>
                         )}
                         {activeTab === 'notes' && (
-                            <DatasetNotesPanel
-                                datasetId={datasetId}
-                                showCollapseButton={false}
-                            />
+                            <div className="flex-1 min-h-0">
+                                <DatasetNotesPanel
+                                    datasetId={datasetId}
+                                    showCollapseButton={false}
+                                />
+                            </div>
                         )}
                     </div>
                 </div>
@@ -437,6 +448,7 @@ function DatasetDetailContent() {
                                 documents={documents}
                                 loading={documentsLoading}
                                 onDocumentClick={handleDocumentClick}
+                                onSelectedDocumentsChange={handleSelectedDocumentsChange}
                                 onCollapse={() => setLeftCollapsed(true)}
                             />
                         )}
@@ -447,8 +459,9 @@ function DatasetDetailContent() {
                         <DatasetChatPanel
                             datasetId={datasetId}
                             selectedDocumentId={selectedDocument?.id}
+                            selectedDocumentIds={selectedDocuments.map(doc => doc.id)}
                             datasetName={dataset?.name}
-                            dataset={loading ? undefined : dataset}
+                            dataset={loading ? undefined : dataset || undefined}
                         />
                     </div>
 

@@ -26,10 +26,14 @@ export class OpenAIApiClient extends BaseLLMClient {
     messages: LLMMessage[],
     model: string = this.defaultModel,
     jsonSchema?: Record<string, any>,
+    temperature?: number,
   ): Promise<ApiResponse<LLMResponse>> {
     const payload = {
       model,
       messages,
+      temperature: temperature || 0.7,
+      max_tokens: 4096,
+      stream: false,
       ...(jsonSchema && {
         response_format: {
           type: 'json_schema',
@@ -63,6 +67,81 @@ export class OpenAIApiClient extends BaseLLMClient {
     } catch (error) {
       this.logger.error(
         `OpenAI API request failed: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  async *chatCompletionStream(
+    messages: LLMMessage[],
+    model: string = this.defaultModel,
+    jsonSchema?: Record<string, any>,
+    temperature?: number,
+  ): AsyncGenerator<string, void, unknown> {
+    const payload = {
+      model,
+      messages,
+      temperature: temperature || 0.7,
+      max_tokens: 4096,
+      stream: true,
+      ...(jsonSchema && {
+        response_format: {
+          type: 'json_schema',
+          json_schema: jsonSchema,
+        },
+      }),
+    };
+
+    const headers = {
+      Authorization: `Bearer ${this.config.apiKey}`,
+      'Content-Type': 'application/json',
+    };
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `${this.config.baseUrl}/chat/completions`,
+          payload,
+          {
+            headers,
+            timeout: this.config.timeout,
+            responseType: 'stream',
+          },
+        ),
+      );
+
+      const stream = response.data;
+      let buffer = '';
+
+      for await (const chunk of stream) {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              return;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              const content = parsed.choices?.[0]?.delta?.content;
+              if (content) {
+                yield content;
+              }
+            } catch (parseError) {
+              // Skip invalid JSON lines
+              continue;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `OpenAI streaming API request failed: ${error.message}`,
         error.stack,
       );
       throw error;

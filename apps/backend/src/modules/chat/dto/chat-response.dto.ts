@@ -33,3 +33,24 @@ export class ChatMessageDto {
   sourceDocuments?: string; // JSON string, not array
   metadata?: object;
 }
+
+export class PaginatedMessagesResponseDto {
+  messages: ChatMessageDto[];
+  total: number;
+  hasMore: boolean;
+  page: number;
+  limit: number;
+}
+
+export class ConversationDto {
+  id: string;
+  title: string;
+  description?: string;
+  selectedDocumentIds?: string[];
+  selectedSegmentIds?: string[];
+  metadata?: object;
+  userId: string;
+  datasetId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}

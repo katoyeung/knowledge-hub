@@ -58,6 +58,7 @@ export class LocalModelApiClient extends BaseLLMClient {
     messages: LLMMessage[],
     model: string = this.defaultModel,
     jsonSchema?: Record<string, any>,
+    temperature?: number,
   ): Promise<ApiResponse<LLMResponse>> {
     const cacheKey = this.getLLMCacheKey(messages, model, jsonSchema);
 
@@ -69,7 +70,7 @@ export class LocalModelApiClient extends BaseLLMClient {
     const payload: LocalModelRequest = {
       model,
       messages,
-      temperature: 0.7,
+      temperature: temperature || 0.7,
       max_tokens: 4096,
       stream: false,
     };
@@ -190,6 +191,106 @@ export class LocalModelApiClient extends BaseLLMClient {
       return true;
     } catch (error) {
       return false;
+    }
+  }
+
+  async *chatCompletionStream(
+    messages: LLMMessage[],
+    model: string = this.defaultModel,
+    jsonSchema?: Record<string, any>,
+    temperature?: number,
+  ): AsyncGenerator<string, void, unknown> {
+    const payload: LocalModelRequest = {
+      model,
+      messages,
+      temperature: temperature || 0.7,
+      max_tokens: 4096,
+      stream: true,
+    };
+
+    // Add JSON schema support if provided
+    if (jsonSchema) {
+      const systemMessage = messages.find((m) => m.role === 'system');
+      if (systemMessage) {
+        systemMessage.content += `\n\nIMPORTANT: You must respond with valid JSON that matches this schema: ${JSON.stringify(jsonSchema)}`;
+      } else {
+        messages.unshift({
+          role: 'system',
+          content: `You must respond with valid JSON that matches this schema: ${JSON.stringify(jsonSchema)}`,
+        });
+      }
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    // Add API key if available
+    if (this.config.apiKey) {
+      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
+    }
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `${this.config.baseUrl}/v1/chat/completions`,
+          payload,
+          {
+            headers,
+            timeout: this.config.timeout,
+            responseType: 'stream',
+          },
+        ),
+      );
+
+      const stream = response.data;
+      let buffer = '';
+
+      for await (const chunk of stream) {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              return;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              const content = parsed.choices?.[0]?.delta?.content;
+              if (content) {
+                yield content;
+              }
+            } catch (parseError) {
+              // Skip invalid JSON lines
+              continue;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Local Model streaming API request failed: ${error.message}`,
+        error.stack,
+      );
+
+      // Provide helpful error messages for common issues
+      if (error.code === 'ECONNREFUSED') {
+        throw new Error(
+          `Local model service is not available at ${this.config.baseUrl}. Please ensure your local model server is running.`,
+        );
+      }
+
+      if (error.response?.status === 404) {
+        throw new Error(
+          `Model '${model}' not found. Please ensure the model is available on your local server.`,
+        );
+      }
+
+      throw error;
     }
   }
 

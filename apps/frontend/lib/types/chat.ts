@@ -70,4 +70,53 @@ export interface ChatWithDocumentsRequest {
   temperature?: number;
   conversationId?: string;
   conversationTitle?: string;
+  includeConversationHistory?: boolean;
+  conversationHistoryLimit?: number;
+  stream?: boolean;
+}
+
+export interface StreamingChatEvent {
+  type: "token" | "complete" | "error";
+  content?: string;
+  message?: ChatMessage;
+  conversationId?: string;
+  sourceChunks?: SourceChunk[];
+  metadata?: {
+    tokensUsed?: number;
+    processingTime?: number;
+    model?: string;
+    provider?: string;
+  };
+  error?: string;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  description?: string;
+  selectedDocumentIds?: string[];
+  selectedSegmentIds?: string[];
+  metadata?: object;
+  userId: string;
+  datasetId: string;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}
+
+export interface PaginatedMessagesResponse {
+  messages: ChatMessage[];
+  total: number;
+  hasMore: boolean;
+  page: number;
+  limit: number;
+}
+
+export interface ChatSettings {
+  provider?: string;
+  model?: string;
+  temperature?: number;
+  maxChunks?: number;
+  promptId?: string;
+  includeConversationHistory?: boolean;
+  conversationHistoryLimit?: number;
 }

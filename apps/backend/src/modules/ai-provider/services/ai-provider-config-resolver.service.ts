@@ -11,7 +11,8 @@ export interface ResolvedAiConfig {
   temperature: number;
   maxChunks: number;
   promptId?: string;
-  enableConversationHistory: boolean;
+  includeConversationHistory: boolean;
+  conversationHistoryLimit: number;
 }
 
 @Injectable()
@@ -36,21 +37,36 @@ export class AiProviderConfigResolver {
   ): Promise<ResolvedAiConfig> {
     this.logger.log(`🔍 Resolving AI config for dataset ${datasetId}`);
 
-    // 1. Try dataset settings first
+    // 1. Try dataset settings first (dataset settings should override user settings)
     const dataset = await this.datasetService.findById(datasetId);
     if (!dataset) {
       throw new NotFoundException('Dataset not found');
     }
 
     const datasetConfig = this.extractDatasetChatSettings(dataset);
-    if (datasetConfig) {
+    if (datasetConfig && this.hasValidSettings(datasetConfig)) {
       this.logger.log(`📝 Using dataset chat settings`);
       return await this.buildConfigFromSettings(datasetConfig, userId);
     }
 
     // 2. Fall back to user settings
-    this.logger.log(`📝 No dataset settings, checking user settings`);
-    return await this.resolveForUser(userId);
+    try {
+      const userSettings = await this.userService.getUserSettings(userId);
+      const userChatSettings = (userSettings as any)?.chat_settings;
+
+      if (userChatSettings && this.hasValidSettings(userChatSettings)) {
+        this.logger.log(
+          `📝 Using user chat settings (dataset settings not available)`,
+        );
+        return await this.buildConfigFromSettings(userChatSettings, userId);
+      }
+    } catch (error) {
+      this.logger.warn(`⚠️ Failed to load user settings: ${error.message}`);
+    }
+
+    // 3. Fall back to system defaults
+    this.logger.log(`📝 No dataset or user settings, using system defaults`);
+    return await this.getSystemDefaults(userId);
   }
 
   /**
@@ -61,9 +77,21 @@ export class AiProviderConfigResolver {
       const userSettings = await this.userService.getUserSettings(userId);
       const userChatSettings = (userSettings as any)?.chat_settings;
 
+      this.logger.log(`🔍 User settings loaded:`, JSON.stringify(userSettings));
+      this.logger.log(
+        `🔍 User chat settings:`,
+        JSON.stringify(userChatSettings),
+      );
+      this.logger.log(
+        `🔍 Has valid settings:`,
+        this.hasValidSettings(userChatSettings),
+      );
+
       if (userChatSettings && this.hasValidSettings(userChatSettings)) {
         this.logger.log(`📝 Using user chat settings`);
         return await this.buildConfigFromSettings(userChatSettings, userId);
+      } else {
+        this.logger.log(`⚠️ User chat settings not valid or empty`);
       }
     } catch (error) {
       this.logger.warn(`⚠️ Failed to load user settings: ${error.message}`);
@@ -93,7 +121,8 @@ export class AiProviderConfigResolver {
       model: 'openai/gpt-oss-20b:free',
       temperature: 0.7,
       maxChunks: 5,
-      enableConversationHistory: true,
+      includeConversationHistory: true,
+      conversationHistoryLimit: 10,
     };
   }
 
@@ -125,7 +154,11 @@ export class AiProviderConfigResolver {
         settings.model !== undefined &&
         settings.model !== '') ||
       (settings.temperature !== null && settings.temperature !== undefined) ||
-      (settings.maxChunks !== null && settings.maxChunks !== undefined)
+      (settings.maxChunks !== null && settings.maxChunks !== undefined) ||
+      (settings.includeConversationHistory !== null &&
+        settings.includeConversationHistory !== undefined) ||
+      (settings.conversationHistoryLimit !== null &&
+        settings.conversationHistoryLimit !== undefined)
     );
   }
 
@@ -136,14 +169,25 @@ export class AiProviderConfigResolver {
     settings: any,
     userId: string,
   ): Promise<ResolvedAiConfig> {
+    this.logger.log(
+      `🔧 Building config from settings:`,
+      JSON.stringify(settings),
+    );
+
     let provider: AiProvider | null = null;
 
     // Resolve provider
     if (settings.provider) {
+      this.logger.log(`🔍 Resolving provider: ${settings.provider}`);
       provider = await this.resolveProvider(settings.provider, userId);
+      this.logger.log(
+        `🔍 Provider resolved:`,
+        provider ? `${provider.name} (${provider.type})` : 'null',
+      );
     }
 
     if (!provider) {
+      this.logger.error(`❌ Provider not found: ${settings.provider}`);
       throw new Error(
         `AI provider '${settings.provider}' not found. Please configure an AI provider.`,
       );
@@ -153,15 +197,32 @@ export class AiProviderConfigResolver {
     const providerConfig = getProviderConfig(provider.type);
     const defaultModel = providerConfig?.defaultModel || 'gpt-4';
 
-    return {
+    const config = {
       provider,
       model: settings.model || defaultModel,
       temperature:
         settings.temperature !== undefined ? settings.temperature : 0.7,
       maxChunks: settings.maxChunks !== undefined ? settings.maxChunks : 5,
       promptId: settings.promptId,
-      enableConversationHistory: settings.enableConversationHistory !== false,
+      includeConversationHistory: settings.includeConversationHistory !== false,
+      conversationHistoryLimit:
+        settings.conversationHistoryLimit !== undefined
+          ? settings.conversationHistoryLimit
+          : 10,
     };
+
+    this.logger.log(
+      `🔧 Final config:`,
+      JSON.stringify({
+        provider: provider.name,
+        model: config.model,
+        temperature: config.temperature,
+        maxChunks: config.maxChunks,
+        promptId: config.promptId,
+      }),
+    );
+
+    return config;
   }
 
   /**
