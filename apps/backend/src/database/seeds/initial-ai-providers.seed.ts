@@ -176,7 +176,7 @@ export class InitialAiProvidersSeed {
         name: 'DashScope (Alibaba Cloud)',
         type: 'dashscope' as const,
         apiKey: process.env.DASHSCOPE_API_KEY || '',
-        baseUrl: 'https://dashscope.aliyuncs.com/api/v1',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         isActive: true,
         models: [
           {

@@ -3,6 +3,7 @@ import {
   Inject,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
@@ -14,6 +15,8 @@ import { TypeOrmCrudService } from '@dataui/crud-typeorm';
 import { AiProvider } from '../entities/ai-provider.entity';
 import { CrudRequest } from '@dataui/crud';
 import { AddModelDto, UpdateModelDto } from '../dto/model.dto';
+import { LLMClientFactory } from './llm-client-factory.service';
+import { LLMProvider } from '../../../common/services/api-client-factory.service';
 
 const aiProviderCacheKeyGenerator = (id: string) => `ai-provider:${id}`;
 
@@ -28,10 +31,13 @@ const extractIdFromCrudRequest = (req: CrudRequest): string => {
 
 @Injectable()
 export class AiProviderService extends TypeOrmCrudService<AiProvider> {
+  private readonly logger = new Logger(AiProviderService.name);
+
   constructor(
     @InjectRepository(AiProvider)
     private readonly aiProviderRepository: Repository<AiProvider>,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly llmClientFactory: LLMClientFactory,
   ) {
     super(aiProviderRepository);
   }
@@ -311,5 +317,132 @@ export class AiProviderService extends TypeOrmCrudService<AiProvider> {
     }
 
     return model;
+  }
+
+  /**
+   * Get provider with model validation
+   */
+  async getProviderWithValidation(id: string): Promise<AiProvider | null> {
+    const provider = await this.findAiProviderById(id);
+    if (!provider) {
+      return null;
+    }
+
+    // Validate that provider has required fields
+    if (!provider.type) {
+      throw new Error(`Provider ${id} is missing type information`);
+    }
+
+    if (!provider.isActive) {
+      throw new Error(`Provider ${id} is not active`);
+    }
+
+    return provider;
+  }
+
+  /**
+   * Validate model availability for a provider
+   */
+  async validateModelAvailability(
+    providerId: string,
+    modelId: string,
+  ): Promise<boolean> {
+    const provider = await this.findAiProviderById(providerId);
+    if (!provider) {
+      return false;
+    }
+
+    // If provider has no models list, assume model is available
+    if (!provider.models || provider.models.length === 0) {
+      return true;
+    }
+
+    // Check if model exists in provider's model list
+    return provider.models.some((model) => model.id === modelId);
+  }
+
+  /**
+   * Get all available models from all AI providers
+   */
+  async getAvailableModels() {
+    try {
+      // Fetch AI providers from database using repository directly
+      const aiProviders = await this.aiProviderRepository.find({
+        where: {},
+        relations: [],
+      });
+
+      this.logger.log(
+        `Processing AI providers from database: ${aiProviders.length}`,
+      );
+      const result = [];
+
+      for (const aiProvider of aiProviders) {
+        this.logger.log(
+          `Processing AI provider: ${aiProvider.name} (${aiProvider.type})`,
+        );
+
+        let isAvailable = true;
+        let availabilityMessage = '';
+
+        // Check availability using the LLM client factory
+        try {
+          const llmClient = this.llmClientFactory.createClient(aiProvider);
+          if (typeof (llmClient as any).isServiceAvailable === 'function') {
+            isAvailable = await (llmClient as any).isServiceAvailable();
+            if (!isAvailable) {
+              availabilityMessage = `${aiProvider.type} service is not available. Please check your configuration.`;
+            }
+          }
+        } catch (error) {
+          isAvailable = false;
+          availabilityMessage = `Failed to initialize ${aiProvider.type} client: ${error.message}`;
+        }
+
+        // Convert AI provider models to the expected format
+        const models = (aiProvider.models || []).map((model: any) => ({
+          id: model.id,
+          name: model.name || model.id,
+          description: model.description || '',
+          maxTokens: model.maxTokens,
+          contextWindow: model.contextWindow,
+          pricing: model.pricing,
+        }));
+
+        result.push({
+          id: aiProvider.id,
+          name: aiProvider.name,
+          type: aiProvider.type,
+          provider: this.mapToLLMProvider(aiProvider.type),
+          models: models,
+          available: isAvailable,
+          availabilityMessage: availabilityMessage,
+        });
+      }
+
+      this.logger.log(
+        `Final result providers: ${result.map((p) => p.name).join(', ')}`,
+      );
+      return { providers: result };
+    } catch (error) {
+      this.logger.error(`Failed to fetch AI providers: ${error.message}`);
+      return { providers: [] };
+    }
+  }
+
+  /**
+   * Map AI provider type to LLMProvider enum for backward compatibility
+   */
+  private mapToLLMProvider(providerType: string): LLMProvider {
+    const providerTypeMap: Record<string, LLMProvider> = {
+      openai: LLMProvider.OPENROUTER,
+      anthropic: LLMProvider.OPENROUTER,
+      openrouter: LLMProvider.OPENROUTER,
+      dashscope: LLMProvider.DASHSCOPE,
+      perplexity: LLMProvider.PERPLEXITY,
+      custom: LLMProvider.OLLAMA,
+    };
+
+    return providerTypeMap[providerType] || LLMProvider.DASHSCOPE;
   }
 }
