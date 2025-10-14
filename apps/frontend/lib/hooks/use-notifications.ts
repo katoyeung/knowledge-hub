@@ -31,8 +31,10 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   const isConnectedRef = useRef(false);
 
   useEffect(() => {
-    // Connect to notification service
-    notificationService.connect(clientId);
+    // Connect to notification service only if we're in the browser
+    if (typeof window !== 'undefined') {
+      notificationService.connect(clientId);
+    }
 
     // Set up event listeners
     if (onDocumentProcessingUpdate) {

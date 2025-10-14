@@ -1,4 +1,4 @@
-import { Controller, Get, Res, Headers } from '@nestjs/common';
+import { Controller, Get, Res, Headers, Query } from '@nestjs/common';
 import { Response } from 'express';
 import { NotificationGateway } from './notification.gateway';
 import { v4 as uuidv4 } from 'uuid';
@@ -11,8 +11,9 @@ export class NotificationController {
   streamNotifications(
     @Res() res: Response,
     @Headers('x-client-id') clientId?: string,
+    @Query('clientId') queryClientId?: string,
   ) {
-    const id = clientId || uuidv4();
+    const id = clientId || queryClientId || uuidv4();
     this.notificationGateway.addClient(id, res);
   }
 }

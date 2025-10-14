@@ -21,7 +21,11 @@ export class NotificationGateway {
     res.setHeader('Access-Control-Allow-Origin', '*');
 
     // Send initial connection message
-    res.write(`data: ${JSON.stringify({ type: 'CONNECTED', clientId })}\n\n`);
+    res.write(`data: ${JSON.stringify({ 
+      type: 'CONNECTED', 
+      data: { clientId },
+      timestamp: Date.now()
+    })}\n\n`);
 
     // Store client connection
     this.clients.set(clientId, res);

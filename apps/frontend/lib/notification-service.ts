@@ -48,7 +48,14 @@ class NotificationService extends EventEmitter {
     const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
     const url = `${baseUrl}/notifications/stream${clientId ? `?clientId=${clientId}` : ""}`;
 
-    this.eventSource = new EventSource(url);
+    try {
+      this.eventSource = new EventSource(url);
+    } catch (error) {
+      console.warn("Failed to create EventSource connection:", error);
+      this.isConnected = false;
+      this.emit("error", error);
+      return;
+    }
 
     this.eventSource.onopen = () => {
       console.log("Connected to notification stream");
@@ -67,13 +74,19 @@ class NotificationService extends EventEmitter {
     };
 
     this.eventSource.onerror = (error) => {
-      console.error("Notification stream error:", error);
+      // Only log meaningful errors, not empty objects
+      if (error && Object.keys(error).length > 0) {
+        console.error("Notification stream error:", error);
+      } else {
+        console.warn("Notification stream connection failed - this is normal if the backend is not running");
+      }
       this.isConnected = false;
       this.emit("error", error);
 
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
         this.scheduleReconnect();
       } else {
+        console.warn("Max reconnection attempts reached for notification stream");
         this.emit("maxReconnectAttemptsReached");
       }
     };
