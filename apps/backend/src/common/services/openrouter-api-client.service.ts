@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BaseLLMClient } from './base-llm-client.service';
 import { HttpService } from '@nestjs/axios';
@@ -29,9 +29,10 @@ export class OpenRouterApiClient extends BaseLLMClient {
     configService: ConfigService,
     httpService: HttpService,
     cacheManager: Cache,
+    @Optional() customBaseUrl?: string,
   ) {
     super(configService, httpService, cacheManager, {
-      baseUrl: 'https://openrouter.ai/api/v1',
+      baseUrl: customBaseUrl || 'https://openrouter.ai/api/v1',
       apiKeyEnv: 'OPENROUTER_API_KEY',
       cacheTTL: configService.get<number>('OPENROUTER_CACHE_TTL', 0) * 1000,
     });
@@ -164,7 +165,7 @@ export class OpenRouterApiClient extends BaseLLMClient {
               if (content) {
                 yield content;
               }
-            } catch (parseError) {
+            } catch {
               // Skip invalid JSON lines
               continue;
             }

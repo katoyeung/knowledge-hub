@@ -11,6 +11,7 @@ import { Embedding } from '../entities/embedding.entity';
 import { EventTypes } from '../../event/constants/event-types';
 import { DocumentUploadedEvent } from '../../event/interfaces/document-events.interface';
 import { EmbeddingV2Service } from './embedding-v2.service';
+import { NotificationService } from '../../notification/notification.service';
 import {
   EmbeddingModel,
   TextSplitter,
@@ -65,6 +66,7 @@ export class DocumentProcessingService {
     private readonly chineseTextPreprocessorService: ChineseTextPreprocessorService,
     private readonly entityExtractionService: EntityExtractionService,
     private readonly modelMappingService: ModelMappingService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   @OnEvent('document.processing')
@@ -75,6 +77,16 @@ export class DocumentProcessingService {
     userId: string;
   }) {
     this.logger.log(`Starting document processing for ${event.documentId}`);
+
+    // Send notification that document processing has started
+    this.notificationService.sendDocumentProcessingUpdate(
+      event.documentId,
+      event.datasetId,
+      {
+        status: 'processing',
+        message: 'Document processing started',
+      },
+    );
 
     try {
       await this.processDocument(
@@ -93,6 +105,17 @@ export class DocumentProcessingService {
       await this.documentRepository.update(event.documentId, {
         indexingStatus: 'error',
       });
+
+      // Send notification that document processing failed
+      this.notificationService.sendDocumentProcessingUpdate(
+        event.documentId,
+        event.datasetId,
+        {
+          status: 'error',
+          message: error.message,
+          error: error.message,
+        },
+      );
     }
   }
 
@@ -473,6 +496,19 @@ export class DocumentProcessingService {
       tokens: Math.ceil(content.length / 4),
       embeddingDimensions: embeddingDimensions,
     });
+
+    // Send notification that document processing is complete
+    this.notificationService.sendDocumentProcessingUpdate(
+      documentId,
+      datasetId,
+      {
+        status: 'completed',
+        wordCount: content.split(' ').length,
+        tokens: Math.ceil(content.length / 4),
+        segmentsCount: segments.length,
+        embeddingDimensions: embeddingDimensions,
+      },
+    );
 
     this.logger.log(
       `Document processing completed: ${documentId}, ${segments.length} segments created with ${embeddingDimensions} dimensions`,

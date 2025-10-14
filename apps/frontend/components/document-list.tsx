@@ -15,6 +15,7 @@ import { documentApi, datasetApi, type Document, type Dataset } from '@/lib/api'
 import { DocumentUploadWizard } from './document-upload-wizard'
 import { DocumentPreviewModal } from './document-preview-modal'
 import { useToast } from './ui/simple-toast'
+import { useDocumentProcessingNotifications } from '@/lib/hooks/use-notifications'
 
 interface DocumentListProps {
     datasetId: string
@@ -37,6 +38,35 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
     // Ref to track if fetch is in progress to prevent duplicate calls
     const fetchInProgressRef = useRef(false)
     const currentDatasetIdRef = useRef<string | null>(null)
+
+    // Handle document processing notifications
+    const handleDocumentProcessingUpdate = useCallback((notification: any) => {
+        console.log('Document processing update:', notification)
+
+        // Update the specific document in the list
+        setDocuments(prev => prev.map(doc => {
+            if (doc.id === notification.documentId) {
+                return {
+                    ...doc,
+                    indexingStatus: notification.status,
+                    wordCount: notification.wordCount || doc.wordCount,
+                }
+            }
+            return doc
+        }))
+
+        // Show toast notification
+        if (notification.status === 'completed') {
+            toast.success(`Document processing completed: ${notification.segmentsCount} segments created`)
+        } else if (notification.status === 'error') {
+            toast.error(`Document processing failed: ${notification.error || 'Unknown error'}`)
+        } else if (notification.status === 'processing') {
+            toast.info('Document processing started')
+        }
+    }, [toast])
+
+    // Set up notifications for this dataset
+    useDocumentProcessingNotifications(datasetId, handleDocumentProcessingUpdate)
 
     // Reset upload view when datasetId changes (when clicking different dataset in sidebar)
     useEffect(() => {

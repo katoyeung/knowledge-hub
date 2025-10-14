@@ -33,7 +33,30 @@ export class UpdateChatSettingsDto {
   @IsUUID(4, { message: 'Prompt ID must be a valid UUID' })
   promptId?: string;
 
+  // 🆕 Search Weight Configuration
+  @IsOptional()
+  @IsNumber({}, { message: 'BM25 weight must be a number' })
+  @Min(0, { message: 'BM25 weight must be at least 0' })
+  @Max(1, { message: 'BM25 weight must not exceed 1' })
+  bm25Weight?: number;
+
+  @IsOptional()
+  @IsNumber({}, { message: 'Embedding weight must be a number' })
+  @Min(0, { message: 'Embedding weight must be at least 0' })
+  @Max(1, { message: 'Embedding weight must not exceed 1' })
+  embeddingWeight?: number;
+
   @IsOptional()
   @IsBoolean({ message: 'Enable conversation history must be a boolean' })
   enableConversationHistory?: boolean;
+
+  @IsOptional()
+  @IsBoolean({ message: 'Include conversation history must be a boolean' })
+  includeConversationHistory?: boolean;
+
+  @IsOptional()
+  @IsNumber({}, { message: 'Conversation history limit must be a number' })
+  @Min(1, { message: 'Conversation history limit must be at least 1' })
+  @Max(50, { message: 'Conversation history limit must not exceed 50' })
+  conversationHistoryLimit?: number;
 }

@@ -6,6 +6,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { AiProvider } from '../entities/ai-provider.entity';
 import { LLMClient } from '../../../common/interfaces/llm-client.interface';
 import { getProviderConfig } from '../provider-type.registry';
+import { OpenAIApiClient } from '../../../common/services/openai-api-client.service';
 import { OpenRouterApiClient } from '../../../common/services/openrouter-api-client.service';
 import { DashScopeApiClient } from '../../../common/services/dashscope-api-client.service';
 import { PerplexityApiClient } from '../../../common/services/perplexity-api-client.service';
@@ -62,6 +63,8 @@ export class LLMClientFactory {
   private getClientForType(type: string, config: ClientConfig): LLMClient {
     switch (type) {
       case 'openai':
+        return this.createOpenAIClient(config);
+
       case 'anthropic':
       case 'openrouter':
         return this.createOpenRouterClient(config);
@@ -81,7 +84,33 @@ export class LLMClientFactory {
   }
 
   /**
-   * Create OpenRouter client (used for OpenAI, Anthropic, OpenRouter)
+   * Create OpenAI client
+   */
+  private createOpenAIClient(config: ClientConfig): LLMClient {
+    // Create a custom config service for this client
+    const customConfigService = {
+      get: (key: string, defaultValue?: any) => {
+        switch (key) {
+          case 'OPENAI_API_KEY':
+            return config.apiKey || this.configService.get('OPENAI_API_KEY');
+          case 'OPENAI_CACHE_TTL':
+            return this.configService.get('OPENAI_CACHE_TTL', 0);
+          default:
+            return this.configService.get(key, defaultValue);
+        }
+      },
+    } as ConfigService;
+
+    return new OpenAIApiClient(
+      customConfigService,
+      this.httpService,
+      this.cacheManager,
+      config.baseUrl, // Pass the custom base URL
+    );
+  }
+
+  /**
+   * Create OpenRouter client (used for Anthropic, OpenRouter)
    */
   private createOpenRouterClient(config: ClientConfig): LLMClient {
     // Create a custom config service for this client
@@ -104,6 +133,7 @@ export class LLMClientFactory {
       customConfigService,
       this.httpService,
       this.cacheManager,
+      config.baseUrl, // Pass the custom base URL
     );
   }
 

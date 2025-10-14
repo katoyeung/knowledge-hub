@@ -296,9 +296,6 @@ export const datasetApi = {
     separators?: string[];
     // 🆕 Parent-Child Chunking option
     enableParentChildChunking?: boolean;
-    // 🆕 Search Weight Configuration
-    bm25Weight?: number;
-    embeddingWeight?: number;
   }): Promise<{
     success: boolean;
     message: string;
@@ -321,9 +318,6 @@ export const datasetApi = {
       chunkSize: number;
       chunkOverlap: number;
       separators?: string[];
-      // 🆕 Search Weight Configuration
-      bm25Weight?: number;
-      embeddingWeight?: number;
     }
   ): Promise<{
     success: boolean;
@@ -708,21 +702,13 @@ export const aiProviderApi = {
   ): Promise<AiProvider> => {
     // URL encode the modelId to handle special characters like / and :
     const encodedModelId = encodeURIComponent(modelId);
-    console.log("API: Removing model", { providerId, modelId, encodedModelId });
-    console.log(
-      "API: Request URL",
-      `/ai-providers/${providerId}/models/${encodedModelId}`
-    );
 
     try {
       const response = await apiClient.delete(
         `/ai-providers/${providerId}/models/${encodedModelId}`
       );
-      console.log("API: Delete response", response.data);
       return response.data;
     } catch (error: any) {
-      console.error("API: Delete error", error);
-      console.error("API: Error response", error.response?.data);
       throw error;
     }
   },
@@ -1015,7 +1001,6 @@ export const chatApi = {
                 onError(eventData.error || "Unknown error occurred");
               }
             } catch (parseError) {
-              console.error("Failed to parse SSE event:", parseError);
               // If JSON parsing fails, treat it as an error
               onError(`Failed to parse server response: ${line.slice(6)}`);
             }
@@ -1023,7 +1008,6 @@ export const chatApi = {
         }
       }
     } catch (error) {
-      console.error("Streaming chat failed:", error);
       onError(
         error instanceof Error ? error.message : "Unknown error occurred"
       );

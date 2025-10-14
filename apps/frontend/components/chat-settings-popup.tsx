@@ -25,6 +25,9 @@ interface ChatSettings {
     promptId?: string
     temperature?: number
     maxChunks?: number
+    // 🆕 Search Weight Configuration
+    bm25Weight?: number
+    embeddingWeight?: number
     includeConversationHistory?: boolean
     conversationHistoryLimit?: number
 }
@@ -53,6 +56,9 @@ export function ChatSettingsPopup({
         maxChunks: 5,
         includeConversationHistory: true,
         conversationHistoryLimit: 10,
+        // 🆕 Search Weight Configuration
+        bm25Weight: 0.4,
+        embeddingWeight: 0.6,
         ...currentSettings,
     })
 
@@ -459,6 +465,53 @@ export function ChatSettingsPopup({
                             <p className="text-xs text-muted-foreground">
                                 Maximum document segments to retrieve
                             </p>
+                        </div>
+                    </div>
+
+                    {/* Search Weight Settings */}
+                    <div className="space-y-4 border-t pt-4">
+                        <h4 className="text-sm font-medium">Search Configuration</h4>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="bm25Weight">BM25 Weight</Label>
+                                <Input
+                                    id="bm25Weight"
+                                    type="number"
+                                    min="0"
+                                    max="1"
+                                    step="0.1"
+                                    value={settings.bm25Weight || 0.4}
+                                    onChange={(e) => {
+                                        const value = parseFloat(e.target.value)
+                                        if (!isNaN(value) && value >= 0 && value <= 1) {
+                                            setSettings(prev => ({ ...prev, bm25Weight: value }))
+                                        }
+                                    }}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Keyword search weight
+                                </p>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="embeddingWeight">Embedding Weight</Label>
+                                <Input
+                                    id="embeddingWeight"
+                                    type="number"
+                                    min="0"
+                                    max="1"
+                                    step="0.1"
+                                    value={settings.embeddingWeight || 0.6}
+                                    onChange={(e) => {
+                                        const value = parseFloat(e.target.value)
+                                        if (!isNaN(value) && value >= 0 && value <= 1) {
+                                            setSettings(prev => ({ ...prev, embeddingWeight: value }))
+                                        }
+                                    }}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Semantic search weight
+                                </p>
+                            </div>
                         </div>
                     </div>
 

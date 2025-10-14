@@ -451,11 +451,24 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     }
 
     // Update dataset with embedding configuration
+    // Get existing settings or create new ones
+    const existingDataset = await this.datasetRepository.findOne({
+      where: { id: processDto.datasetId },
+    });
+    const existingSettings = (existingDataset?.settings as any) || {};
+
     await this.datasetRepository.update(processDto.datasetId, {
       embeddingModel: processDto.embeddingModel,
       embeddingModelProvider: processDto.embeddingProvider || 'local',
-      bm25Weight: processDto.bm25Weight ?? 0.4,
-      embeddingWeight: processDto.embeddingWeight ?? 0.6,
+      settings: {
+        ...existingSettings,
+        chat_settings: {
+          ...(existingSettings.chat_settings || {}),
+          // Set default search weights for new datasets
+          bm25Weight: 0.4,
+          embeddingWeight: 0.6,
+        },
+      },
       indexStruct: JSON.stringify({
         textSplitter: processDto.textSplitter,
         chunkSize: processDto.chunkSize,
@@ -538,11 +551,24 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     );
 
     // Update dataset with processed configuration
+    // Get existing settings or create new ones
+    const existingDataset = await this.datasetRepository.findOne({
+      where: { id: datasetId },
+    });
+    const existingSettings = (existingDataset?.settings as any) || {};
+
     await this.datasetRepository.update(datasetId, {
       embeddingModel: processedConfig.embeddingModel,
       embeddingModelProvider: processedConfig.embeddingModelProvider || 'local',
-      bm25Weight: processedConfig.bm25Weight ?? 0.4,
-      embeddingWeight: processedConfig.embeddingWeight ?? 0.6,
+      settings: {
+        ...existingSettings,
+        chat_settings: {
+          ...(existingSettings.chat_settings || {}),
+          // Set default search weights for new datasets
+          bm25Weight: 0.4,
+          embeddingWeight: 0.6,
+        },
+      },
       indexStruct: JSON.stringify({
         mode: processedConfig.mode,
         textSplitter: processedConfig.textSplitter,

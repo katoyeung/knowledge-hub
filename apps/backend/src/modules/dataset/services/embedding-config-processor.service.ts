@@ -11,8 +11,6 @@ export interface ProcessedEmbeddingConfig {
   enableParentChildChunking: boolean;
   useModelDefaults: boolean;
   separators?: string[];
-  bm25Weight?: number;
-  embeddingWeight?: number;
   embeddingModelProvider?: string;
 }
 
@@ -42,8 +40,6 @@ export class EmbeddingConfigProcessorService {
         (dto as any).enableParentChildChunking || false,
       useModelDefaults: dto.useModelDefaults !== false,
       separators: dto.separators,
-      bm25Weight: dto.bm25Weight,
-      embeddingWeight: dto.embeddingWeight,
       embeddingModelProvider: dto.embeddingModelProvider,
     };
 
@@ -185,18 +181,6 @@ export class EmbeddingConfigProcessorService {
       );
     }
 
-    // Validate search weights
-    if (config.bm25Weight !== undefined) {
-      if (config.bm25Weight < 0 || config.bm25Weight > 1) {
-        errors.push('BM25 weight must be between 0 and 1');
-      }
-    }
-
-    if (config.embeddingWeight !== undefined) {
-      if (config.embeddingWeight < 0 || config.embeddingWeight > 1) {
-        errors.push('Embedding weight must be between 0 and 1');
-      }
-    }
 
     return {
       isValid: errors.length === 0,
@@ -240,8 +224,6 @@ export class EmbeddingConfigProcessorService {
       enableParentChildChunking: config.enableParentChildChunking,
       useModelDefaults: config.useModelDefaults,
       separators: config.separators,
-      bm25Weight: config.bm25Weight,
-      embeddingWeight: config.embeddingWeight,
       embeddingModelProvider: config.embeddingModelProvider,
       configMode: config.mode,
     };

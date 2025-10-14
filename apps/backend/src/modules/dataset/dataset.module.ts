@@ -4,6 +4,7 @@ import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
 import { EventModule } from '../event/event.module';
+import { NotificationModule } from '../notification/notification.module';
 import { Dataset } from './entities/dataset.entity';
 import { Document } from './entities/document.entity';
 import { DocumentSegment } from './entities/document-segment.entity';
@@ -53,6 +54,7 @@ import { DocumentParserModule } from '../document-parser/document-parser.module'
     ConfigModule,
     CacheModule.register(),
     EventModule,
+    NotificationModule,
     // 🆕 Import DocumentParserModule for Parent-Child Chunking
     DocumentParserModule,
   ],

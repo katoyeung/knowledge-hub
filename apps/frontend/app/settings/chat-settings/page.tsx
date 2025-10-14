@@ -23,6 +23,9 @@ export default function ChatSettingsPage() {
         maxChunks: 5,
         includeConversationHistory: true,
         conversationHistoryLimit: 10,
+        // 🆕 Search Weight Configuration
+        bm25Weight: 0.4,
+        embeddingWeight: 0.6,
     })
 
     // Data state
@@ -422,6 +425,57 @@ export default function ChatSettingsPage() {
                         <p className="text-xs text-muted-foreground">
                             Maximum document segments to retrieve
                         </p>
+                    </div>
+                </div>
+
+                {/* Search Weight Settings */}
+                <div className="space-y-4 border-t pt-4">
+                    <h4 className="text-sm font-medium">Search Configuration</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="bm25Weight">BM25 Weight</Label>
+                            <Input
+                                id="bm25Weight"
+                                type="number"
+                                min="0"
+                                max="1"
+                                step="0.1"
+                                value={settings.bm25Weight || 0.4}
+                                onChange={(e) => {
+                                    const value = parseFloat(e.target.value)
+                                    if (!isNaN(value) && value >= 0 && value <= 1) {
+                                        setSettings(prev => ({ ...prev, bm25Weight: value }))
+                                    }
+                                }}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Keyword search weight (0 = disabled, 1 = full weight)
+                            </p>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="embeddingWeight">Embedding Weight</Label>
+                            <Input
+                                id="embeddingWeight"
+                                type="number"
+                                min="0"
+                                max="1"
+                                step="0.1"
+                                value={settings.embeddingWeight || 0.6}
+                                onChange={(e) => {
+                                    const value = parseFloat(e.target.value)
+                                    if (!isNaN(value) && value >= 0 && value <= 1) {
+                                        setSettings(prev => ({ ...prev, embeddingWeight: value }))
+                                    }
+                                }}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Semantic search weight (0 = disabled, 1 = full weight)
+                            </p>
+                        </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                        <p>💡 <strong>Tip:</strong> BM25 excels at exact keyword matches, while embeddings find semantically similar content.
+                            Adjust these weights based on your content type and search needs.</p>
                     </div>
                 </div>
 

@@ -44,6 +44,12 @@ export const ChatSettingsSchema = z.object({
   promptId: z.string().optional(),
   temperature: z.number().min(0).max(1).optional(),
   maxChunks: z.number().min(1).max(20).optional(),
+  // 🆕 Search Weight Configuration
+  bm25Weight: z.number().min(0).max(1).optional(),
+  embeddingWeight: z.number().min(0).max(1).optional(),
+  // Conversation History Settings
+  includeConversationHistory: z.boolean().optional(),
+  conversationHistoryLimit: z.number().min(1).max(50).optional(),
 });
 
 // User Settings schema

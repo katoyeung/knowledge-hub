@@ -21,10 +21,7 @@ export interface UnifiedEmbeddingConfig {
     // Advanced settings
     textSplitter: 'recursive_character' | 'character' | 'token' | 'sentence_splitter' | 'smart_chunking' | 'markdown' | 'python_code'
     enableParentChildChunking: boolean
-    bm25Weight: number
-    embeddingWeight: number
     separators?: string[]
-    numChunks: number
 }
 
 interface UnifiedConfigProps {
@@ -40,9 +37,6 @@ const DEFAULT_CONFIG: UnifiedEmbeddingConfig = {
     chunkOverlap: 200,
     textSplitter: 'smart_chunking',
     enableParentChildChunking: false,
-    bm25Weight: 0.3,
-    embeddingWeight: 0.7,
-    numChunks: 5,
 }
 
 const EMBEDDING_PROVIDERS = {
@@ -75,7 +69,7 @@ const EMBEDDING_MODELS = {
 }
 
 const TEXT_SPLITTERS = {
-    'smart_chunking': 'Smart Chunking (Recommended) ⭐',
+    'smart_chunking': 'Smart Text Segmentation (Recommended) ⭐',
     'sentence_splitter': 'Sentence-Aware Text Splitter',
     'recursive_character': 'Recursive Character Text Splitter',
     'character': 'Character Text Splitter',
@@ -199,7 +193,7 @@ export function UnifiedEmbeddingConfigComponent({
                 <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
                         <Zap className="h-5 w-5 text-blue-600" />
-                        <CardTitle className="text-lg">Unified Embedding Configuration</CardTitle>
+                        <CardTitle className="text-lg">Embedding Configuration</CardTitle>
                         <Badge variant="secondary" className="bg-green-100 text-green-800">
                             Recommended
                         </Badge>
@@ -214,7 +208,7 @@ export function UnifiedEmbeddingConfigComponent({
                     </Button>
                 </div>
                 <p className="text-sm text-gray-600">
-                    Configure embedding processing with intelligent defaults and advanced customization options.
+                    Configure how your documents will be processed for search.
                 </p>
             </CardHeader>
 
@@ -229,7 +223,7 @@ export function UnifiedEmbeddingConfigComponent({
                             Embedding Provider
                         </Label>
                         <p className="text-sm text-gray-600 mb-2">
-                            Choose the provider for generating embeddings.
+                            Select where to generate embeddings from.
                         </p>
                         <select
                             value={localEmbeddingProvider}
@@ -251,7 +245,7 @@ export function UnifiedEmbeddingConfigComponent({
                             Embedding Model
                         </Label>
                         <p className="text-sm text-gray-600 mb-2">
-                            Choose the model for generating embeddings. Optimizations are applied automatically.
+                            Select the AI model for processing your documents.
                         </p>
                         <select
                             value={localEmbeddingModel}
@@ -299,11 +293,11 @@ export function UnifiedEmbeddingConfigComponent({
                         )}
                     </div>
 
-                    {/* Chunk Size & Overlap */}
+                    {/* Text Segment Size & Overlap */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <Label htmlFor="chunkSize" className="text-sm font-medium">
-                                Chunk Size
+                                Text Segment Size
                             </Label>
                             <Input
                                 id="chunkSize"
@@ -316,13 +310,13 @@ export function UnifiedEmbeddingConfigComponent({
                                 className="mt-1"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                                Characters per chunk (100-12000, optimized for selected model)
+                                Characters per text segment (100-12000)
                             </p>
                         </div>
 
                         <div>
                             <Label htmlFor="chunkOverlap" className="text-sm font-medium">
-                                Chunk Overlap
+                                Segment Overlap
                             </Label>
                             <Input
                                 id="chunkOverlap"
@@ -335,7 +329,7 @@ export function UnifiedEmbeddingConfigComponent({
                                 className="mt-1"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                                Overlap between chunks (0-{Math.floor(safeConfig.chunkSize * EmbeddingConfigService.getMaxOverlapRatioForModel(safeConfig.embeddingModel))}, optimized for selected model)
+                                Overlap between segments (0-{Math.floor(safeConfig.chunkSize * EmbeddingConfigService.getMaxOverlapRatioForModel(safeConfig.embeddingModel))})
                             </p>
                         </div>
                     </div>
@@ -381,11 +375,11 @@ export function UnifiedEmbeddingConfigComponent({
                                 </SelectContent>
                             </Select>
                             <p className="text-xs text-gray-500 mt-1">
-                                Choose how text should be split into chunks
+                                How to split text into segments
                             </p>
                         </div>
 
-                        {/* Parent-Child Chunking */}
+                        {/* Parent-Child Text Segmentation */}
                         <div className="space-y-2">
                             <div className="flex items-center space-x-2">
                                 <input
@@ -397,57 +391,14 @@ export function UnifiedEmbeddingConfigComponent({
                                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                                 />
                                 <Label htmlFor="enableParentChildChunking" className="text-sm font-medium">
-                                    Enable Parent-Child Chunking
+                                    Enable Hierarchical Text Segmentation
                                 </Label>
                             </div>
                             <p className="text-xs text-gray-500 ml-6">
-                                Creates hierarchical chunks for improved recall and context. Only works with PDF documents.
-                                <span className="text-blue-600 font-medium"> +60-90% recall improvement</span> expected.
+                                Creates hierarchical text segments for better search results. Works with PDF documents.
                             </p>
                         </div>
 
-                        {/* Search Weights */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <Label htmlFor="bm25Weight" className="text-sm font-medium">
-                                    BM25 Weight
-                                </Label>
-                                <Input
-                                    id="bm25Weight"
-                                    type="number"
-                                    step="0.1"
-                                    min="0"
-                                    max="1"
-                                    value={safeConfig.bm25Weight}
-                                    onChange={(e) => handleConfigChange({ bm25Weight: parseFloat(e.target.value) || 0.3 })}
-                                    disabled={disabled}
-                                    className="mt-1"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    Weight for BM25 keyword search (0-1)
-                                </p>
-                            </div>
-
-                            <div>
-                                <Label htmlFor="embeddingWeight" className="text-sm font-medium">
-                                    Embedding Weight
-                                </Label>
-                                <Input
-                                    id="embeddingWeight"
-                                    type="number"
-                                    step="0.1"
-                                    min="0"
-                                    max="1"
-                                    value={safeConfig.embeddingWeight}
-                                    onChange={(e) => handleConfigChange({ embeddingWeight: parseFloat(e.target.value) || 0.7 })}
-                                    disabled={disabled}
-                                    className="mt-1"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    Weight for semantic search (0-1)
-                                </p>
-                            </div>
-                        </div>
 
                         {/* Custom Separators */}
                         <div>
@@ -465,37 +416,17 @@ export function UnifiedEmbeddingConfigComponent({
                                 className="mt-1"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                                Comma-separated list of custom text separators
+                                Custom text separators (comma-separated)
                             </p>
                         </div>
 
-                        {/* Number of Chunks to Retrieve */}
-                        <div>
-                            <Label htmlFor="numChunks" className="text-sm font-medium">
-                                Number of Chunks to Retrieve
-                            </Label>
-                            <Input
-                                id="numChunks"
-                                type="number"
-                                value={safeConfig.numChunks}
-                                onChange={(e) => handleConfigChange({ numChunks: parseInt(e.target.value) || 5 })}
-                                min={1}
-                                max={20}
-                                disabled={disabled}
-                                className="mt-1"
-                            />
-                            <p className="text-xs text-gray-500 mt-1">
-                                How many relevant chunks to retrieve for each query (1-20)
-                            </p>
-                        </div>
 
                         {/* Expert Settings Warning */}
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                             <div className="flex items-start space-x-2">
                                 <Info className="h-4 w-4 text-yellow-600 mt-0.5" />
                                 <div className="text-sm text-yellow-800">
-                                    <strong>Advanced Settings:</strong> These settings can significantly impact performance and results.
-                                    Only modify if you understand the implications. Incorrect settings may lead to poor search quality.
+                                    <strong>Advanced Settings:</strong> These settings affect search quality. Only modify if you understand the impact.
                                 </div>
                             </div>
                         </div>

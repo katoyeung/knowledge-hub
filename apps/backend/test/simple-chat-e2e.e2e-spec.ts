@@ -79,6 +79,61 @@ interface TestResult {
     content: string;
     documentName: string;
   }>;
+  // Enhanced for BM25 comparison
+  bm25Scores?: Array<{
+    position: number;
+    bm25Score: number;
+    semanticScore: number;
+    finalScore: number;
+    content: string;
+    documentName: string;
+  }>;
+  configuration?: {
+    bm25Weight: number;
+    embeddingWeight: number;
+    searchType: 'semantic-only' | 'hybrid';
+  };
+}
+
+interface TestConfiguration {
+  bm25Weight: number;
+  embeddingWeight: number;
+  searchType: 'semantic-only' | 'hybrid';
+  name: string;
+}
+
+interface ComparisonResult {
+  semanticOnly: TestResult[];
+  hybrid: TestResult[];
+  accuracy: {
+    semanticOnly: number;
+    hybrid: number;
+    improvement: number;
+    questionsImproved: number;
+  };
+  performance: {
+    semanticOnly: {
+      avgResponseTime: number;
+      avgChunks: number;
+    };
+    hybrid: {
+      avgResponseTime: number;
+      avgChunks: number;
+    };
+    timeDifference: number;
+  };
+  chunkQuality: {
+    semanticOnly: {
+      avgSimilarity: number;
+      highQualityChunks: number;
+    };
+    hybrid: {
+      avgBm25Score: number;
+      avgSemanticScore: number;
+      avgFinalScore: number;
+      highQualityChunks: number;
+    };
+  };
 }
 
 // Helper function to validate if the model answer is correct
@@ -181,7 +236,7 @@ function printResults(results: TestResult[]): void {
   );
   console.log('='.repeat(80));
   console.log(
-    'Configuration: 10 chunks, 60% similarity threshold, recursive_character splitter, Gemma-3-27B-IT LLM via OpenRouter, BGE-M3 Embedding',
+    'Configuration: 10 chunks, 60% similarity threshold, recursive_character splitter, Llama4-Scout LLM via Crumplete AI, BGE-M3 Embedding',
   );
   console.log('='.repeat(80));
   console.log(
@@ -358,12 +413,406 @@ async function getAiProviderByType(
   }
 }
 
+// Helper function to run test with specific configuration
+async function runTestWithConfiguration(
+  baseUrl: string,
+  jwtToken: string,
+  datasetId: string,
+  configuration: TestConfiguration,
+): Promise<TestResult[]> {
+  console.log(`\n🔧 Running test with configuration: ${configuration.name}`);
+  console.log(
+    `   BM25 Weight: ${configuration.bm25Weight}, Embedding Weight: ${configuration.embeddingWeight}`,
+  );
+
+  const testResults: TestResult[] = [];
+
+  for (let i = 0; i < TRIVIA_QUESTIONS.length; i++) {
+    const question = TRIVIA_QUESTIONS[i];
+    console.log(
+      `\n❓ Question ${i + 1}/${TRIVIA_QUESTIONS.length}: ${question.question}`,
+    );
+
+    const startTime = Date.now();
+
+    try {
+      // Update dataset chat settings with the test configuration
+      await request
+        .agent(baseUrl)
+        .put(`/datasets/${datasetId}/chat-settings`)
+        .set('Authorization', `Bearer ${jwtToken}`)
+        .send({
+          bm25Weight: configuration.bm25Weight,
+          embeddingWeight: configuration.embeddingWeight,
+        });
+
+      const chatResponse = await request
+        .agent(baseUrl)
+        .post('/chat/with-documents')
+        .set('Authorization', `Bearer ${jwtToken}`)
+        .send({
+          message: question.question,
+          datasetId: datasetId,
+        });
+
+      const responseTime = Date.now() - startTime;
+
+      if (chatResponse.status === 200) {
+        let modelAnswer = chatResponse.body.message.content || '';
+        let usedChunks = chatResponse.body.sourceChunks || [];
+
+        // Validate response quality
+        if (!modelAnswer || modelAnswer.trim().length === 0) {
+          console.log(`⚠️ Empty response for question ${i + 1}, retrying...`);
+          // Retry once
+          const retryResponse = await request
+            .agent(baseUrl)
+            .post('/chat/with-documents')
+            .set('Authorization', `Bearer ${jwtToken}`)
+            .send({
+              message: question.question,
+              datasetId: datasetId,
+            });
+
+          if (
+            retryResponse.status === 200 &&
+            retryResponse.body.message.content
+          ) {
+            modelAnswer = retryResponse.body.message.content;
+            usedChunks = retryResponse.body.sourceChunks || [];
+          }
+        }
+
+        const isCorrect = validateAnswer(question, modelAnswer);
+
+        // Extract BM25 scores if available (for hybrid search)
+        const bm25Scores = usedChunks.map((chunk: any, index: number) => ({
+          position: index + 1,
+          bm25Score: chunk.scores?.bm25 || 0,
+          semanticScore: chunk.similarity || chunk.scores?.semantic || 0,
+          finalScore: chunk.scores?.final || chunk.similarity || 0,
+          content: chunk.content || '',
+          documentName: chunk.documentName || 'Unknown',
+        }));
+
+        const result: TestResult = {
+          question: question.question,
+          correctAnswer: question.correctAnswer,
+          modelAnswer: modelAnswer || 'ERROR: No response received',
+          isCorrect: isCorrect,
+          usedChunks: usedChunks.length,
+          responseTime: responseTime,
+          chunks: formatChunks(usedChunks),
+          chunkScores: extractChunkScores(usedChunks),
+          bm25Scores: bm25Scores,
+          configuration: {
+            bm25Weight: configuration.bm25Weight,
+            embeddingWeight: configuration.embeddingWeight,
+            searchType: configuration.searchType,
+          },
+        };
+
+        testResults.push(result);
+
+        console.log(`✅ Answer: ${modelAnswer || 'No response'}`);
+        console.log(
+          `📊 Status: ${isCorrect ? 'CORRECT' : 'INCORRECT'} | Time: ${responseTime}ms | Chunks: ${usedChunks.length}`,
+        );
+      } else {
+        console.log(`❌ Chat failed for question ${i + 1}:`, chatResponse.body);
+
+        const result: TestResult = {
+          question: question.question,
+          correctAnswer: question.correctAnswer,
+          modelAnswer: 'ERROR: Chat request failed',
+          isCorrect: false,
+          usedChunks: 0,
+          responseTime: responseTime,
+          chunks: [],
+          chunkScores: [],
+          bm25Scores: [],
+          configuration: {
+            bm25Weight: configuration.bm25Weight,
+            embeddingWeight: configuration.embeddingWeight,
+            searchType: configuration.searchType,
+          },
+        };
+
+        testResults.push(result);
+      }
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      console.log(`❌ Error for question ${i + 1}:`, error.message);
+
+      const result: TestResult = {
+        question: question.question,
+        correctAnswer: question.correctAnswer,
+        modelAnswer: `ERROR: ${error.message}`,
+        isCorrect: false,
+        usedChunks: 0,
+        responseTime: responseTime,
+        chunks: [],
+        chunkScores: [],
+        bm25Scores: [],
+        configuration: {
+          bm25Weight: configuration.bm25Weight,
+          embeddingWeight: configuration.embeddingWeight,
+          searchType: configuration.searchType,
+        },
+      };
+
+      testResults.push(result);
+    }
+
+    // Small delay between questions to avoid rate limiting
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  return testResults;
+}
+
+// Helper function to compare two test result sets
+function compareResults(
+  semanticOnlyResults: TestResult[],
+  hybridResults: TestResult[],
+): ComparisonResult {
+  // Calculate accuracy
+  const semanticOnlyCorrect = semanticOnlyResults.filter(
+    (r) => r.isCorrect,
+  ).length;
+  const hybridCorrect = hybridResults.filter((r) => r.isCorrect).length;
+  const semanticOnlyAccuracy =
+    (semanticOnlyCorrect / semanticOnlyResults.length) * 100;
+  const hybridAccuracy = (hybridCorrect / hybridResults.length) * 100;
+  const accuracyImprovement = hybridAccuracy - semanticOnlyAccuracy;
+
+  // Count questions where hybrid performed better
+  let questionsImproved = 0;
+  for (let i = 0; i < semanticOnlyResults.length; i++) {
+    const semanticResult = semanticOnlyResults[i];
+    const hybridResult = hybridResults[i];
+    if (!semanticResult.isCorrect && hybridResult.isCorrect) {
+      questionsImproved++;
+    }
+  }
+
+  // Calculate performance metrics
+  const semanticOnlyAvgTime =
+    semanticOnlyResults.reduce((sum, r) => sum + r.responseTime, 0) /
+    semanticOnlyResults.length;
+  const hybridAvgTime =
+    hybridResults.reduce((sum, r) => sum + r.responseTime, 0) /
+    hybridResults.length;
+  const semanticOnlyAvgChunks =
+    semanticOnlyResults.reduce((sum, r) => sum + r.usedChunks, 0) /
+    semanticOnlyResults.length;
+  const hybridAvgChunks =
+    hybridResults.reduce((sum, r) => sum + r.usedChunks, 0) /
+    hybridResults.length;
+
+  // Calculate chunk quality metrics
+  const semanticOnlySimilarities = semanticOnlyResults.flatMap((r) =>
+    r.chunkScores.map((c) => c.similarity),
+  );
+  const semanticOnlyAvgSimilarity =
+    semanticOnlySimilarities.length > 0
+      ? semanticOnlySimilarities.reduce((sum, s) => sum + s, 0) /
+        semanticOnlySimilarities.length
+      : 0;
+  const semanticOnlyHighQuality = semanticOnlySimilarities.filter(
+    (s) => s > 0.7,
+  ).length;
+
+  const hybridBm25Scores = hybridResults.flatMap(
+    (r) => r.bm25Scores?.map((c) => c.bm25Score) || [],
+  );
+  const hybridSemanticScores = hybridResults.flatMap(
+    (r) => r.bm25Scores?.map((c) => c.semanticScore) || [],
+  );
+  const hybridFinalScores = hybridResults.flatMap(
+    (r) => r.bm25Scores?.map((c) => c.finalScore) || [],
+  );
+
+  const hybridAvgBm25Score =
+    hybridBm25Scores.length > 0
+      ? hybridBm25Scores.reduce((sum, s) => sum + s, 0) /
+        hybridBm25Scores.length
+      : 0;
+  const hybridAvgSemanticScore =
+    hybridSemanticScores.length > 0
+      ? hybridSemanticScores.reduce((sum, s) => sum + s, 0) /
+        hybridSemanticScores.length
+      : 0;
+  const hybridAvgFinalScore =
+    hybridFinalScores.length > 0
+      ? hybridFinalScores.reduce((sum, s) => sum + s, 0) /
+        hybridFinalScores.length
+      : 0;
+  const hybridHighQuality = hybridFinalScores.filter((s) => s > 0.7).length;
+
+  return {
+    semanticOnly: semanticOnlyResults,
+    hybrid: hybridResults,
+    accuracy: {
+      semanticOnly: semanticOnlyAccuracy,
+      hybrid: hybridAccuracy,
+      improvement: accuracyImprovement,
+      questionsImproved,
+    },
+    performance: {
+      semanticOnly: {
+        avgResponseTime: semanticOnlyAvgTime,
+        avgChunks: semanticOnlyAvgChunks,
+      },
+      hybrid: {
+        avgResponseTime: hybridAvgTime,
+        avgChunks: hybridAvgChunks,
+      },
+      timeDifference: hybridAvgTime - semanticOnlyAvgTime,
+    },
+    chunkQuality: {
+      semanticOnly: {
+        avgSimilarity: semanticOnlyAvgSimilarity,
+        highQualityChunks: semanticOnlyHighQuality,
+      },
+      hybrid: {
+        avgBm25Score: hybridAvgBm25Score,
+        avgSemanticScore: hybridAvgSemanticScore,
+        avgFinalScore: hybridAvgFinalScore,
+        highQualityChunks: hybridHighQuality,
+      },
+    },
+  };
+}
+
+// Helper function to print comprehensive comparison report
+function printComparisonReport(comparison: ComparisonResult): void {
+  console.log('\n📊 BM25 IMPACT ANALYSIS REPORT');
+  console.log('='.repeat(80));
+  console.log('Configuration Comparison:');
+  console.log('1️⃣ Pure Semantic (BM25 Weight: 0.0, Embedding Weight: 1.0)');
+  console.log('2️⃣ Hybrid Search (BM25 Weight: 0.4, Embedding Weight: 0.6)');
+  console.log('='.repeat(80));
+
+  // Accuracy comparison
+  console.log('\n🎯 ACCURACY COMPARISON');
+  console.log('-'.repeat(40));
+  console.log(
+    `Pure Semantic: ${comparison.accuracy.semanticOnly.toFixed(1)}% (${comparison.semanticOnly.filter((r) => r.isCorrect).length}/${comparison.semanticOnly.length})`,
+  );
+  console.log(
+    `Hybrid Search: ${comparison.accuracy.hybrid.toFixed(1)}% (${comparison.hybrid.filter((r) => r.isCorrect).length}/${comparison.hybrid.length})`,
+  );
+  console.log(
+    `Improvement: ${comparison.accuracy.improvement > 0 ? '+' : ''}${comparison.accuracy.improvement.toFixed(1)}% (${comparison.accuracy.questionsImproved} questions improved)`,
+  );
+
+  // Performance comparison
+  console.log('\n⚡ PERFORMANCE COMPARISON');
+  console.log('-'.repeat(40));
+  console.log(
+    `Pure Semantic: Avg ${comparison.performance.semanticOnly.avgResponseTime.toFixed(0)}ms, ${comparison.performance.semanticOnly.avgChunks.toFixed(1)} chunks`,
+  );
+  console.log(
+    `Hybrid Search: Avg ${comparison.performance.hybrid.avgResponseTime.toFixed(0)}ms, ${comparison.performance.hybrid.avgChunks.toFixed(1)} chunks`,
+  );
+  console.log(
+    `Time Difference: ${comparison.performance.timeDifference > 0 ? '+' : ''}${comparison.performance.timeDifference.toFixed(0)}ms`,
+  );
+
+  // Chunk quality comparison
+  console.log('\n🔍 CHUNK QUALITY ANALYSIS');
+  console.log('-'.repeat(40));
+  console.log('Pure Semantic:');
+  console.log(
+    `  Avg Similarity: ${(comparison.chunkQuality.semanticOnly.avgSimilarity * 100).toFixed(1)}%`,
+  );
+  console.log(
+    `  High Quality Chunks (>70%): ${comparison.chunkQuality.semanticOnly.highQualityChunks}`,
+  );
+  console.log('Hybrid Search:');
+  console.log(
+    `  Avg BM25 Score: ${comparison.chunkQuality.hybrid.avgBm25Score.toFixed(3)}`,
+  );
+  console.log(
+    `  Avg Semantic Score: ${(comparison.chunkQuality.hybrid.avgSemanticScore * 100).toFixed(1)}%`,
+  );
+  console.log(
+    `  Avg Final Score: ${(comparison.chunkQuality.hybrid.avgFinalScore * 100).toFixed(1)}%`,
+  );
+  console.log(
+    `  High Quality Chunks (>70%): ${comparison.chunkQuality.hybrid.highQualityChunks}`,
+  );
+
+  // Per-question analysis
+  console.log('\n📝 PER-QUESTION ANALYSIS');
+  console.log('-'.repeat(80));
+  console.log('Question\t\t\t\t\tSemantic\tHybrid\t\tImprovement');
+  console.log('-'.repeat(80));
+
+  for (let i = 0; i < comparison.semanticOnly.length; i++) {
+    const semanticResult = comparison.semanticOnly[i];
+    const hybridResult = comparison.hybrid[i];
+    const question =
+      semanticResult.question.length > 40
+        ? semanticResult.question.substring(0, 37) + '...'
+        : semanticResult.question.padEnd(40);
+
+    const semanticStatus = semanticResult.isCorrect ? '✅' : '❌';
+    const hybridStatus = hybridResult.isCorrect ? '✅' : '❌';
+    const improvement =
+      !semanticResult.isCorrect && hybridResult.isCorrect
+        ? '📈'
+        : semanticResult.isCorrect && !hybridResult.isCorrect
+          ? '📉'
+          : '➖';
+
+    console.log(
+      `${question}\t${semanticStatus}\t\t${hybridStatus}\t\t${improvement}`,
+    );
+  }
+
+  // Recommendations
+  console.log('\n💡 RECOMMENDATIONS');
+  console.log('-'.repeat(40));
+  if (comparison.accuracy.improvement > 5) {
+    console.log(
+      '✅ BM25 significantly improves accuracy - recommend using hybrid search',
+    );
+  } else if (comparison.accuracy.improvement > 0) {
+    console.log(
+      '✅ BM25 slightly improves accuracy - consider using hybrid search',
+    );
+  } else if (comparison.accuracy.improvement < -5) {
+    console.log(
+      '❌ BM25 reduces accuracy - recommend using pure semantic search',
+    );
+  } else {
+    console.log('➖ BM25 has minimal impact - either approach works');
+  }
+
+  if (Math.abs(comparison.performance.timeDifference) > 1000) {
+    const faster =
+      comparison.performance.timeDifference < 0 ? 'Hybrid' : 'Pure Semantic';
+    console.log(`⚡ ${faster} search is significantly faster`);
+  }
+
+  if (
+    comparison.chunkQuality.hybrid.highQualityChunks >
+    comparison.chunkQuality.semanticOnly.highQualityChunks
+  ) {
+    console.log('🔍 Hybrid search produces higher quality chunks');
+  }
+
+  console.log('\n' + '='.repeat(80));
+}
+
 // Simple E2E test that tests chat functionality with BGE-M3 embeddings and OpenRouter LLM
 describe('Simple Chat E2E Tests', () => {
   let baseUrl: string;
   let jwtToken: string;
   let datasetId: string;
-  let dashscopeProviderId: string;
+  let dashscopeProviderId: string | null;
 
   beforeAll(async () => {
     // Use the production backend API instead of creating our own instance
@@ -404,9 +853,9 @@ describe('Simple Chat E2E Tests', () => {
     // No need to close app since we're using production API
   });
 
-  it('should test chat performance with Lord of the Rings trivia questions using BGE-M3 and OpenRouter', async () => {
+  it('should test chat performance with Lord of the Rings trivia questions using BGE-M3 and Crumplete AI', async () => {
     console.log(
-      '🚀 Starting Lord of the Rings trivia performance test with BGE-M3 embeddings and OpenRouter Gemma-3-27B-IT...',
+      '🚀 Starting Lord of the Rings trivia performance test with BGE-M3 and Crumplete AI Llama4-Scout...',
     );
 
     // Step 1: Create a new dataset with BGE-M3 embedding model
@@ -416,7 +865,7 @@ describe('Simple Chat E2E Tests', () => {
       description:
         'Test dataset using Xenova/bge-m3 for embeddings with all three LOTR books and dataset chat settings',
       embeddingModel: 'Xenova/bge-m3',
-      embeddingModelProvider: 'ollama',
+      embeddingModelProvider: 'local',
     };
 
     const datasetResponse = await request
@@ -428,7 +877,7 @@ describe('Simple Chat E2E Tests', () => {
 
     expect(datasetResponse.body.id).toBeDefined();
     expect(datasetResponse.body.embeddingModel).toBe('Xenova/bge-m3');
-    expect(datasetResponse.body.embeddingModelProvider).toBe('ollama');
+    expect(datasetResponse.body.embeddingModelProvider).toBe('local');
 
     datasetId = datasetResponse.body.id;
     console.log(`✅ Dataset created with ID: ${datasetId}`);
@@ -436,8 +885,8 @@ describe('Simple Chat E2E Tests', () => {
     // Configure dataset chat settings
     console.log('⚙️ Configuring dataset chat settings...');
     const chatSettings = {
-      provider: 'openrouter', // Use OpenRouter provider
-      model: 'google/gemma-3-27b-it:free',
+      provider: '29779ca1-cd3a-4ab5-9959-09f59cf918d5', // Use Crumplete AI provider
+      model: 'llama4:scout',
       temperature: 0.1,
       maxChunks: 10,
     };
@@ -498,7 +947,7 @@ describe('Simple Chat E2E Tests', () => {
       datasetId: datasetId,
       documentIds: documentIds,
       embeddingModel: 'Xenova/bge-m3',
-      embeddingProvider: 'ollama',
+      embeddingProvider: 'local',
       textSplitter: 'recursive_character',
       chunkSize: 1000,
       chunkOverlap: 200,
@@ -649,4 +1098,191 @@ describe('Simple Chat E2E Tests', () => {
 
     console.log('🎉 Lord of the Rings trivia performance test completed!');
   }, 900000); // 15 minute timeout for comprehensive testing with all 10 questions
+
+  it('should compare chat performance with and without BM25 using Crumplete AI', async () => {
+    console.log(
+      '🚀 Starting BM25 impact analysis test with Lord of the Rings trivia questions using Crumplete AI...',
+    );
+
+    // Step 1: Create a new dataset with BGE-M3 embedding model
+    console.log('📁 Creating dataset with BGE-M3 embedding model...');
+    const datasetData = {
+      name: 'Lord of the Rings BM25 Comparison Test Dataset',
+      description:
+        'Test dataset for comparing pure semantic vs hybrid search with BM25',
+      embeddingModel: 'Xenova/bge-m3',
+      embeddingModelProvider: 'local',
+    };
+
+    const datasetResponse = await request
+      .agent(baseUrl)
+      .post('/datasets')
+      .set('Authorization', `Bearer ${jwtToken}`)
+      .send(datasetData)
+      .expect(201);
+
+    expect(datasetResponse.body.id).toBeDefined();
+    expect(datasetResponse.body.embeddingModel).toBe('Xenova/bge-m3');
+    expect(datasetResponse.body.embeddingModelProvider).toBe('local');
+
+    const datasetId = datasetResponse.body.id;
+    console.log(`✅ Dataset created with ID: ${datasetId}`);
+
+    // Configure dataset chat settings
+    console.log('⚙️ Configuring dataset chat settings...');
+    const chatSettings = {
+      provider: '29779ca1-cd3a-4ab5-9959-09f59cf918d5', // Use Crumplete AI provider
+      model: 'llama4:scout',
+      temperature: 0.1,
+      maxChunks: 10,
+    };
+
+    await request
+      .agent(baseUrl)
+      .put(`/datasets/${datasetId}/chat-settings`)
+      .set('Authorization', `Bearer ${jwtToken}`)
+      .send(chatSettings)
+      .expect(200);
+
+    console.log(
+      `✅ Dataset chat settings configured: ${JSON.stringify(chatSettings)}`,
+    );
+
+    // Step 2: Upload all three Lord of the Rings documents
+    console.log('📄 Uploading all three Lord of the Rings documents...');
+    const documentPaths = [
+      'Volume I - The Fellowship of the Ring.txt',
+      'Volume II - The Two Towers.txt',
+      'Volume III - The Return of the King.txt',
+    ];
+
+    const documentIds: string[] = [];
+
+    for (const docName of documentPaths) {
+      const testDocumentPath = path.join(
+        __dirname,
+        '../../../test-documents',
+        docName,
+      );
+
+      if (!fs.existsSync(testDocumentPath)) {
+        console.log(`⚠️ Test document ${docName} not found, skipping`);
+        continue;
+      }
+
+      const uploadResponse = await request
+        .agent(baseUrl)
+        .post(`/datasets/${datasetId}/upload-documents`)
+        .set('Authorization', `Bearer ${jwtToken}`)
+        .attach('files', testDocumentPath)
+        .expect(201);
+
+      const documentId = uploadResponse.body.data.documents[0].id;
+      documentIds.push(documentId);
+      console.log(`✅ Document ${docName} uploaded with ID: ${documentId}`);
+    }
+
+    if (documentIds.length === 0) {
+      console.log('⚠️ No documents uploaded, skipping test');
+      return;
+    }
+
+    // Step 3: Process all documents with BGE-M3 embeddings
+    console.log('🔄 Processing all documents with BGE-M3 embeddings...');
+    const processData = {
+      datasetId: datasetId,
+      documentIds: documentIds,
+      embeddingModel: 'Xenova/bge-m3',
+      embeddingProvider: 'local',
+      textSplitter: 'recursive_character',
+      chunkSize: 1000,
+      chunkOverlap: 200,
+    };
+
+    const processResponse = await request
+      .agent(baseUrl)
+      .post('/datasets/process-documents')
+      .set('Authorization', `Bearer ${jwtToken}`)
+      .send(processData);
+
+    if (processResponse.status !== 201) {
+      console.log('❌ Document processing failed:', processResponse.body);
+      throw new Error(
+        `Document processing failed with status ${processResponse.status}: ${JSON.stringify(processResponse.body)}`,
+      );
+    }
+
+    console.log('✅ Document processing completed');
+    console.log(
+      `📊 Processed ${processResponse.body.processedCount} documents`,
+    );
+
+    // Step 4: Test Configuration 1 - Pure Semantic Search (BM25 Weight: 0.0)
+    console.log('\n🧠 Testing Configuration 1: Pure Semantic Search');
+    const semanticOnlyConfig: TestConfiguration = {
+      bm25Weight: 0.0,
+      embeddingWeight: 1.0,
+      searchType: 'semantic-only',
+      name: 'Pure Semantic Search',
+    };
+
+    console.log('✅ Using pure semantic search configuration');
+    const semanticOnlyResults = await runTestWithConfiguration(
+      baseUrl,
+      jwtToken,
+      datasetId,
+      semanticOnlyConfig,
+    );
+
+    // Step 5: Test Configuration 2 - Hybrid Search (BM25 Weight: 0.4)
+    console.log('\n🔀 Testing Configuration 2: Hybrid Search with BM25');
+    const hybridConfig: TestConfiguration = {
+      bm25Weight: 0.4,
+      embeddingWeight: 0.6,
+      searchType: 'hybrid',
+      name: 'Hybrid Search with BM25',
+    };
+
+    console.log('✅ Using hybrid search configuration with BM25');
+    const hybridResults = await runTestWithConfiguration(
+      baseUrl,
+      jwtToken,
+      datasetId,
+      hybridConfig,
+    );
+
+    // Step 6: Compare results and generate report
+    console.log('\n📊 Analyzing results and generating comparison report...');
+    const comparison = compareResults(semanticOnlyResults, hybridResults);
+    printComparisonReport(comparison);
+
+    // Step 7: Basic assertions
+    expect(semanticOnlyResults.length).toBe(TRIVIA_QUESTIONS.length);
+    expect(hybridResults.length).toBe(TRIVIA_QUESTIONS.length);
+    expect(semanticOnlyResults.every((r) => r.responseTime > 0)).toBe(true);
+    expect(hybridResults.every((r) => r.responseTime > 0)).toBe(true);
+
+    // Log final summary
+    console.log('\n🎯 BM25 IMPACT SUMMARY');
+    console.log('='.repeat(50));
+    console.log(
+      `Accuracy Improvement: ${comparison.accuracy.improvement > 0 ? '+' : ''}${comparison.accuracy.improvement.toFixed(1)}%`,
+    );
+    console.log(
+      `Questions Improved: ${comparison.accuracy.questionsImproved}/${TRIVIA_QUESTIONS.length}`,
+    );
+    console.log(
+      `Performance Impact: ${comparison.performance.timeDifference > 0 ? '+' : ''}${comparison.performance.timeDifference.toFixed(0)}ms average`,
+    );
+
+    if (comparison.accuracy.improvement > 0) {
+      console.log('✅ BM25 provides measurable benefits for this dataset');
+    } else if (comparison.accuracy.improvement < 0) {
+      console.log('❌ BM25 reduces performance for this dataset');
+    } else {
+      console.log('➖ BM25 has minimal impact on this dataset');
+    }
+
+    console.log('🎉 BM25 impact analysis test completed!');
+  }, 1200000); // 20 minute timeout for comprehensive comparison testing
 });

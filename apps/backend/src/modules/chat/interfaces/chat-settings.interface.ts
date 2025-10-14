@@ -6,6 +6,10 @@ export interface ChatSettings {
   maxChunks?: number;
   promptId?: string;
 
+  // 🆕 Search Weight Configuration
+  bm25Weight?: number;
+  embeddingWeight?: number;
+
   // Conversation History Settings
   includeConversationHistory?: boolean;
   conversationHistoryLimit?: number;

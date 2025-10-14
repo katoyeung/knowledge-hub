@@ -5,6 +5,8 @@ export enum NotificationType {
   SCREENER_UPDATE = 'SCREENER_UPDATE',
   INSTRUMENT_UPDATE = 'INSTRUMENT_UPDATE',
   INDICATOR_UPDATE = 'INDICATOR_UPDATE',
+  DOCUMENT_PROCESSING_UPDATE = 'DOCUMENT_PROCESSING_UPDATE',
+  DATASET_UPDATE = 'DATASET_UPDATE',
 }
 
 export interface NotificationMessage {
@@ -49,6 +51,25 @@ export class NotificationService {
   sendIndicatorUpdate(indicatorId: string, data: any) {
     this.sendNotification(NotificationType.INDICATOR_UPDATE, {
       indicatorId,
+      ...data,
+    });
+  }
+
+  sendDocumentProcessingUpdate(
+    documentId: string,
+    datasetId: string,
+    data: any,
+  ) {
+    this.sendNotification(NotificationType.DOCUMENT_PROCESSING_UPDATE, {
+      documentId,
+      datasetId,
+      ...data,
+    });
+  }
+
+  sendDatasetUpdate(datasetId: string, data: any) {
+    this.sendNotification(NotificationType.DATASET_UPDATE, {
+      datasetId,
       ...data,
     });
   }

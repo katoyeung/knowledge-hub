@@ -21,8 +21,6 @@ export interface AdvancedConfig {
 
     // Advanced settings
     separators?: string[]
-    bm25Weight?: number
-    embeddingWeight?: number
     embeddingModelProvider?: string
 }
 
@@ -110,7 +108,7 @@ export function AdvancedConfigComponent({
                     </Badge>
                 </div>
                 <p className="text-sm text-gray-600">
-                    Fine-tune advanced embedding and processing settings for specialized use cases.
+                    Advanced settings for specialized document processing.
                 </p>
             </CardHeader>
 
@@ -139,16 +137,16 @@ export function AdvancedConfigComponent({
                             </select>
                         </div>
 
-                        {/* Model Optimization Indicator */}
+                        {/* Model Settings Indicator */}
                         {localEmbeddingModel !== 'custom' && (
                             <div className="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-md">
                                 <div className="flex items-center space-x-2 mb-2">
                                     <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
-                                    <span className="text-sm font-medium text-orange-900">Model Optimizations Applied</span>
+                                    <span className="text-sm font-medium text-orange-900">Settings Adjusted for Model</span>
                                 </div>
                                 <div className="text-xs text-orange-700">
-                                    <div>Chunk Size: <span className="font-medium">{config.chunkSize}</span> chars (optimized for {localEmbeddingModel})</div>
-                                    <div>Chunk Overlap: <span className="font-medium">{config.chunkOverlap}</span> chars (optimized for {localEmbeddingModel})</div>
+                                    <div>Segment Size: <span className="font-medium">{config.chunkSize}</span> chars</div>
+                                    <div>Segment Overlap: <span className="font-medium">{config.chunkOverlap}</span> chars</div>
                                 </div>
                             </div>
                         )}
@@ -212,15 +210,15 @@ export function AdvancedConfigComponent({
                     </div>
                 </div>
 
-                {/* Chunking Settings */}
+                {/* Text Segmentation Settings */}
                 <div className="space-y-4">
-                    <h3 className="text-sm font-medium text-gray-900">Chunking Settings</h3>
+                    <h3 className="text-sm font-medium text-gray-900">Text Segmentation Settings</h3>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* Chunk Size */}
+                        {/* Text Segment Size */}
                         <div>
                             <Label htmlFor="chunkSize" className="text-sm font-medium">
-                                Chunk Size
+                                Text Segment Size
                             </Label>
                             <Input
                                 id="chunkSize"
@@ -233,14 +231,14 @@ export function AdvancedConfigComponent({
                                 className="mt-1"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                                Characters per chunk (100-8000)
+                                Characters per text segment (100-8000)
                             </p>
                         </div>
 
-                        {/* Chunk Overlap */}
+                        {/* Segment Overlap */}
                         <div>
                             <Label htmlFor="chunkOverlap" className="text-sm font-medium">
-                                Chunk Overlap
+                                Segment Overlap
                             </Label>
                             <Input
                                 id="chunkOverlap"
@@ -253,12 +251,12 @@ export function AdvancedConfigComponent({
                                 className="mt-1"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                                Overlap between chunks (0-{Math.floor(config.chunkSize / 2)})
+                                Overlap between segments (0-{Math.floor(config.chunkSize / 2)})
                             </p>
                         </div>
                     </div>
 
-                    {/* Model-specific optimizations toggle */}
+                    {/* Model-specific settings toggle */}
                     <div className="flex items-center space-x-2">
                         <input
                             type="checkbox"
@@ -269,14 +267,14 @@ export function AdvancedConfigComponent({
                             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                         />
                         <Label htmlFor="useModelDefaults" className="text-sm font-medium">
-                            Enable model-specific optimizations
+                            Use recommended settings for this model
                         </Label>
                     </div>
                     <p className="text-xs text-gray-500 ml-6">
-                        Automatically optimize chunk size and overlap for the selected embedding model
+                        Automatically adjust settings for the selected model
                     </p>
 
-                    {/* Parent-Child Chunking */}
+                    {/* Hierarchical Text Segmentation */}
                     <div className="space-y-2">
                         <div className="flex items-center space-x-2">
                             <input
@@ -288,24 +286,18 @@ export function AdvancedConfigComponent({
                                 className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                             />
                             <Label htmlFor="enableParentChildChunking" className="text-sm font-medium">
-                                Enable Parent-Child Chunking (Advanced)
+                                Enable Hierarchical Text Segmentation (Advanced)
                             </Label>
                         </div>
                         <p className="text-xs text-gray-500 ml-6">
-                            Creates hierarchical chunks (parent paragraphs + child sentences) for improved recall and context.
-                            Only works with PDF documents. <span className="text-blue-600 font-medium">+60-90% recall improvement</span> expected.
+                            Creates hierarchical text segments for better search results. Works with PDF documents.
                         </p>
                         {config.enableParentChildChunking && (
                             <div className="ml-6 p-3 bg-blue-50 border border-blue-200 rounded-md">
                                 <div className="flex items-start space-x-2">
                                     <Info className="h-4 w-4 text-blue-600 mt-0.5" />
                                     <div className="text-xs text-blue-700">
-                                        <strong>How it works:</strong>
-                                        <ul className="mt-1 space-y-1">
-                                            <li>• <strong>Parent chunks:</strong> Larger sections (~{Math.floor(config.chunkSize * 1.5)} chars) for context</li>
-                                            <li>• <strong>Child chunks:</strong> Smaller segments (~{Math.floor(config.chunkSize * 0.6)} chars) for precision</li>
-                                            <li>• <strong>Smart retrieval:</strong> Find precise matches, include parent context</li>
-                                        </ul>
+                                        <strong>How it works:</strong> Creates larger context segments and smaller precise segments for better search results.
                                     </div>
                                 </div>
                             </div>
@@ -334,48 +326,6 @@ export function AdvancedConfigComponent({
                     <div className="space-y-4 pt-4 border-t">
                         <h3 className="text-sm font-medium text-gray-900">Expert Configuration</h3>
 
-                        {/* Search Weights */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <Label htmlFor="bm25Weight" className="text-sm font-medium">
-                                    BM25 Weight
-                                </Label>
-                                <Input
-                                    id="bm25Weight"
-                                    type="number"
-                                    step="0.1"
-                                    min="0"
-                                    max="1"
-                                    value={config.bm25Weight || 0.3}
-                                    onChange={(e) => handleConfigChange({ bm25Weight: parseFloat(e.target.value) || 0.3 })}
-                                    disabled={disabled}
-                                    className="mt-1"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    Weight for BM25 keyword search (0-1)
-                                </p>
-                            </div>
-
-                            <div>
-                                <Label htmlFor="embeddingWeight" className="text-sm font-medium">
-                                    Embedding Weight
-                                </Label>
-                                <Input
-                                    id="embeddingWeight"
-                                    type="number"
-                                    step="0.1"
-                                    min="0"
-                                    max="1"
-                                    value={config.embeddingWeight || 0.7}
-                                    onChange={(e) => handleConfigChange({ embeddingWeight: parseFloat(e.target.value) || 0.7 })}
-                                    disabled={disabled}
-                                    className="mt-1"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    Weight for semantic search (0-1)
-                                </p>
-                            </div>
-                        </div>
 
                         {/* Custom Separators */}
                         <div>
@@ -393,7 +343,7 @@ export function AdvancedConfigComponent({
                                 className="mt-1"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                                Comma-separated list of custom text separators
+                                Custom text separators (comma-separated)
                             </p>
                         </div>
 
@@ -402,8 +352,7 @@ export function AdvancedConfigComponent({
                             <div className="flex items-start space-x-2">
                                 <Info className="h-4 w-4 text-yellow-600 mt-0.5" />
                                 <div className="text-sm text-yellow-800">
-                                    <strong>Expert Settings Warning:</strong> These settings can significantly impact performance and results.
-                                    Only modify if you understand the implications. Incorrect settings may lead to poor search quality.
+                                    <strong>Expert Settings:</strong> These settings affect search quality. Only modify if you understand the impact.
                                 </div>
                             </div>
                         </div>

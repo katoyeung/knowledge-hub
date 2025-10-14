@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { documentApi, type Document } from '@/lib/api'
 import { DocumentPreviewModal } from './document-preview-modal'
+import { useDocumentProcessingNotifications } from '@/lib/hooks/use-notifications'
 
 interface DatasetDocumentsPanelProps {
     datasetId: string
@@ -38,6 +39,26 @@ export function DatasetDocumentsPanel({
     const previousDocumentStatuses = useRef<Map<string, string>>(new Map())
     const hasUserInteracted = useRef<boolean>(false)
     const lastNotifiedSelectedDocs = useRef<Set<string>>(new Set())
+
+    // Handle document processing notifications
+    const handleDocumentProcessingUpdate = useCallback((notification: any) => {
+        console.log('Document processing update:', notification)
+
+        // Update the specific document in the list
+        setDocuments(prev => prev.map(doc => {
+            if (doc.id === notification.documentId) {
+                return {
+                    ...doc,
+                    indexingStatus: notification.status,
+                    wordCount: notification.wordCount || doc.wordCount,
+                }
+            }
+            return doc
+        }))
+    }, [])
+
+    // Set up notifications for this dataset
+    useDocumentProcessingNotifications(datasetId, handleDocumentProcessingUpdate)
 
     const loadDocuments = useCallback(async () => {
         try {

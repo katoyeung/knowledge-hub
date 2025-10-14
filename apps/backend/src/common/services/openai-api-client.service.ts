@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { BaseLLMClient } from './base-llm-client.service';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
@@ -15,9 +15,10 @@ export class OpenAIApiClient extends BaseLLMClient {
     configService: ConfigService,
     httpService: HttpService,
     cacheManager: Cache,
+    @Optional() customBaseUrl?: string,
   ) {
     super(configService, httpService, cacheManager, {
-      baseUrl: 'https://api.openai.com/v1',
+      baseUrl: customBaseUrl || 'https://api.openai.com/v1',
       apiKeyEnv: 'OPENAI_API_KEY',
     });
   }

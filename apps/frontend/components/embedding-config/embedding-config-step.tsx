@@ -3,7 +3,7 @@
 import React from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Info, Database } from 'lucide-react'
+import { Info } from 'lucide-react'
 import { UnifiedEmbeddingConfigComponent, UnifiedEmbeddingConfig } from './unified-config'
 
 // Re-export the interfaces for external use
@@ -27,9 +27,6 @@ const DEFAULT_UNIFIED_CONFIG: UnifiedEmbeddingConfig = {
     chunkOverlap: 200,
     textSplitter: 'recursive_character',
     enableParentChildChunking: false,
-    bm25Weight: 0.3,
-    embeddingWeight: 0.7,
-    numChunks: 5,
 }
 
 export function EmbeddingConfigStep({
@@ -49,17 +46,13 @@ export function EmbeddingConfigStep({
     const getConfigSummary = () => {
         const current = config.config || DEFAULT_UNIFIED_CONFIG
         return {
-            method: 'Unified Configuration',
+            method: 'Standard Configuration',
             chunkSize: current.chunkSize,
             chunkOverlap: current.chunkOverlap,
             embeddingModel: current.embeddingModel,
             embeddingProvider: current.embeddingProvider,
             features: [
-                current.enableParentChildChunking && 'Parent-Child Chunking',
-                'Auto-optimized',
-                current.numChunks && `${current.numChunks} chunks retrieval`,
-                current.bm25Weight && `BM25: ${current.bm25Weight}`,
-                current.embeddingWeight && `Embedding: ${current.embeddingWeight}`
+                current.enableParentChildChunking && 'Hierarchical Text Segmentation'
             ].filter(Boolean)
         }
     }
@@ -68,13 +61,7 @@ export function EmbeddingConfigStep({
 
     return (
         <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center space-x-3 mb-6">
-                <Database className="h-6 w-6 text-blue-600" />
-                <h2 className="text-xl font-semibold text-gray-900">Embedding Configuration</h2>
-            </div>
-
-            {/* Unified Configuration Component */}
+            {/* Embedding Configuration Component */}
             <div className="space-y-4">
                 <UnifiedEmbeddingConfigComponent
                     config={config.config || DEFAULT_UNIFIED_CONFIG}
@@ -100,8 +87,8 @@ export function EmbeddingConfigStep({
                             <div className="space-y-1 text-gray-600">
                                 <div>Provider: <span className="font-medium">{summary.embeddingProvider}</span></div>
                                 <div>Model: <span className="font-medium">{summary.embeddingModel}</span></div>
-                                <div>Chunk Size: <span className="font-medium">{summary.chunkSize}</span> chars</div>
-                                <div>Chunk Overlap: <span className="font-medium">{summary.chunkOverlap}</span> chars</div>
+                                <div>Text Segment Size: <span className="font-medium">{summary.chunkSize}</span> chars</div>
+                                <div>Segment Overlap: <span className="font-medium">{summary.chunkOverlap}</span> chars</div>
                             </div>
                         </div>
                         <div>
@@ -131,9 +118,6 @@ export function EmbeddingConfigStep({
                             <Info className="h-4 w-4 text-blue-600 mt-0.5" />
                             <div className="text-sm text-blue-800">
                                 <strong>Ready to Process:</strong> {uploadedDocumentsCount} document{uploadedDocumentsCount !== 1 ? 's' : ''} will be processed with the selected configuration.
-                                <div className="mt-1 text-xs">
-                                    Using unified embedding configuration with optimized settings for better performance.
-                                </div>
                             </div>
                         </div>
                     </CardContent>

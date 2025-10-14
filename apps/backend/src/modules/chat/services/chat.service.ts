@@ -117,6 +117,8 @@ export class ChatService {
           dto.documentIds,
           dto.segmentIds,
           effectiveConfig.maxChunks,
+          effectiveConfig.bm25Weight,
+          effectiveConfig.embeddingWeight,
         );
 
       this.debugLogger.logChatProcess('segments-retrieved', {
@@ -399,6 +401,8 @@ export class ChatService {
           dto.documentIds,
           dto.segmentIds,
           effectiveConfig.maxChunks,
+          effectiveConfig.bm25Weight,
+          effectiveConfig.embeddingWeight,
         );
 
       // 6. Generate streaming response

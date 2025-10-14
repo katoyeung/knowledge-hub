@@ -48,13 +48,6 @@ export class Dataset extends BaseEntity {
   @Column('jsonb', { nullable: true })
   retrievalModel: object;
 
-  // 🆕 Search Weight Configuration
-  @Column('decimal', { precision: 3, scale: 2, default: 0.4, nullable: true })
-  bm25Weight: number;
-
-  @Column('decimal', { precision: 3, scale: 2, default: 0.6, nullable: true })
-  embeddingWeight: number;
-
   // 🆕 Settings Configuration
   @Column('jsonb', { nullable: true })
   settings: object;

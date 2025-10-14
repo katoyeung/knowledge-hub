@@ -13,10 +13,10 @@ export interface ProviderTypeConfig {
  */
 export const PROVIDER_TYPE_REGISTRY: Record<string, ProviderTypeConfig> = {
   openai: {
-    clientClass: 'OpenRouterApiClient',
-    defaultModel: 'openai/gpt-4',
+    clientClass: 'OpenAIApiClient',
+    defaultModel: 'gpt-4',
     requiresApiKey: true,
-    supportsCustomBaseUrl: false,
+    supportsCustomBaseUrl: true,
   },
   anthropic: {
     clientClass: 'OpenRouterApiClient',

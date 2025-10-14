@@ -324,10 +324,13 @@ export class DatasetController implements CrudController<Dataset> {
       // Get dataset to retrieve stored search weights if not provided in request
       const dataset = await this.service.findById(document.datasetId);
 
-      // Use request weights if provided, otherwise use dataset defaults, finally fallback to hardcoded defaults
-      const finalBm25Weight = bm25Weight ?? dataset?.bm25Weight ?? 0.4;
+      // Use request weights if provided, otherwise use dataset chat settings, finally fallback to hardcoded defaults
+      const datasetChatSettings =
+        (dataset?.settings as any)?.chat_settings || {};
+      const finalBm25Weight =
+        bm25Weight ?? datasetChatSettings.bm25Weight ?? 0.4;
       const finalEmbeddingWeight =
-        embeddingWeight ?? dataset?.embeddingWeight ?? 0.6;
+        embeddingWeight ?? datasetChatSettings.embeddingWeight ?? 0.6;
 
       this.logger.log(
         `⚖️ Using search weights - BM25: ${finalBm25Weight}, Embedding: ${finalEmbeddingWeight}`,

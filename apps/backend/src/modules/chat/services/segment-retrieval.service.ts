@@ -32,6 +32,8 @@ export class SegmentRetrievalService {
     documentIds?: string[],
     segmentIds?: string[],
     maxChunks: number = 10,
+    bm25Weight?: number,
+    embeddingWeight?: number,
   ): Promise<
     Array<{
       id: string;
@@ -60,7 +62,13 @@ export class SegmentRetrievalService {
     }
 
     // Search across all documents in the dataset (only when documentIds is undefined)
-    return this.retrieveFromAllDocuments(datasetId, query, maxChunks);
+    return this.retrieveFromAllDocuments(
+      datasetId,
+      query,
+      maxChunks,
+      bm25Weight,
+      embeddingWeight,
+    );
   }
 
   private async retrieveSpecificSegments(
@@ -175,6 +183,8 @@ export class SegmentRetrievalService {
     datasetId: string,
     query: string,
     maxChunks: number,
+    bm25Weight?: number,
+    embeddingWeight?: number,
   ): Promise<
     Array<{
       id: string;
@@ -303,12 +313,16 @@ export class SegmentRetrievalService {
             );
 
             try {
-              // Use dataset's weight settings if available, otherwise use defaults
-              const semanticWeight = dataset?.embeddingWeight || 0.7;
-              const keywordWeight = dataset?.bm25Weight || 0.3;
+              // Use provided weights if available, otherwise use dataset's chat settings, finally use defaults
+              const datasetChatSettings =
+                (dataset?.settings as any)?.chat_settings || {};
+              const semanticWeight =
+                embeddingWeight ?? datasetChatSettings.embeddingWeight ?? 0.7;
+              const keywordWeight =
+                bm25Weight ?? datasetChatSettings.bm25Weight ?? 0.3;
 
               this.logger.log(
-                `🔍 Using dataset weights: semantic=${semanticWeight}, keyword=${keywordWeight}`,
+                `🔍 Using search weights: semantic=${semanticWeight}, keyword=${keywordWeight} (provided: bm25=${bm25Weight}, embedding=${embeddingWeight})`,
               );
 
               const hybridResults = await this.hybridSearchService.hybridSearch(

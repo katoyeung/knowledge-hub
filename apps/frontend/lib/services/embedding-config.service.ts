@@ -67,30 +67,6 @@ export class EmbeddingConfigService {
       );
     }
 
-    // Validate search weights
-    if (currentConfig.bm25Weight < 0 || currentConfig.bm25Weight > 1) {
-      errors.push("BM25 weight must be between 0 and 1");
-    }
-
-    if (
-      currentConfig.embeddingWeight < 0 ||
-      currentConfig.embeddingWeight > 1
-    ) {
-      errors.push("Embedding weight must be between 0 and 1");
-    }
-
-    // Check if weights sum to 1 (warning, not error)
-    const totalWeight =
-      currentConfig.bm25Weight + currentConfig.embeddingWeight;
-    if (Math.abs(totalWeight - 1) > 0.01) {
-      warnings.push("Search weights should sum to 1.0 for optimal performance");
-    }
-
-    // Validate number of chunks
-    if (currentConfig.numChunks < 1 || currentConfig.numChunks > 20) {
-      errors.push("Number of chunks must be between 1 and 20");
-    }
-
     return {
       isValid: errors.length === 0,
       errors,
@@ -251,9 +227,6 @@ export class EmbeddingConfigService {
       chunkOverlap: currentConfig.chunkOverlap,
       enableParentChildChunking: currentConfig.enableParentChildChunking,
       separators: currentConfig.separators,
-      bm25Weight: currentConfig.bm25Weight,
-      embeddingWeight: currentConfig.embeddingWeight,
-      numChunks: currentConfig.numChunks,
     };
   }
 
@@ -274,9 +247,6 @@ export class EmbeddingConfigService {
       enableParentChildChunking:
         (dto.enableParentChildChunking as boolean) || false,
       separators: dto.separators as string[],
-      bm25Weight: (dto.bm25Weight as number) || 0.3,
-      embeddingWeight: (dto.embeddingWeight as number) || 0.7,
-      numChunks: (dto.numChunks as number) || 5,
     };
 
     return {
@@ -297,9 +267,6 @@ export class EmbeddingConfigService {
       chunkOverlap: 200,
       textSplitter: "smart_chunking",
       enableParentChildChunking: false,
-      bm25Weight: 0.3,
-      embeddingWeight: 0.7,
-      numChunks: 5,
     };
 
     switch (useCase) {
@@ -338,7 +305,6 @@ export class EmbeddingConfigService {
             ...baseConfig,
             embeddingModel: "WhereIsAI/UAE-Large-V1",
             textSplitter: "smart_chunking",
-            numChunks: 8,
             enableParentChildChunking: true,
           },
         };

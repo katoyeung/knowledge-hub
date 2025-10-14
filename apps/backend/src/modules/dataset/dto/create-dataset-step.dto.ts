@@ -260,19 +260,6 @@ export class CreateDatasetStepTwoDto {
   @IsString({ each: true })
   separators?: string[];
 
-  // 🆕 Search Weight Configuration
-  @IsOptional()
-  @IsNumber({}, { message: 'BM25 weight must be a number' })
-  @Min(0, { message: 'BM25 weight must be at least 0' })
-  @Max(1, { message: 'BM25 weight must not exceed 1' })
-  bm25Weight?: number;
-
-  @IsOptional()
-  @IsNumber({}, { message: 'Embedding weight must be a number' })
-  @Min(0, { message: 'Embedding weight must be at least 0' })
-  @Max(1, { message: 'Embedding weight must not exceed 1' })
-  embeddingWeight?: number;
-
   // 🆕 Model-specific optimization settings
   @IsOptional()
   @IsBoolean()
@@ -321,30 +308,10 @@ export class ProcessDocumentsDto {
   @IsBoolean()
   enableParentChildChunking?: boolean;
 
-  // 🆕 Search Weight Configuration
-  @IsOptional()
-  @IsNumber({}, { message: 'BM25 weight must be a number' })
-  @Min(0, { message: 'BM25 weight must be at least 0' })
-  @Max(1, { message: 'BM25 weight must not exceed 1' })
-  bm25Weight?: number;
-
-  @IsOptional()
-  @IsNumber({}, { message: 'Embedding weight must be a number' })
-  @Min(0, { message: 'Embedding weight must be at least 0' })
-  @Max(1, { message: 'Embedding weight must not exceed 1' })
-  embeddingWeight?: number;
-
   // 🆕 Model-specific optimization settings
   @IsOptional()
   @IsBoolean()
   useModelDefaults?: boolean;
-
-  // 🆕 Number of chunks to retrieve
-  @IsOptional()
-  @IsNumber({}, { message: 'Number of chunks must be a number' })
-  @Min(1, { message: 'Number of chunks must be at least 1' })
-  @Max(20, { message: 'Number of chunks must not exceed 20' })
-  numChunks?: number;
 }
 
 export class UploadDocumentDto {

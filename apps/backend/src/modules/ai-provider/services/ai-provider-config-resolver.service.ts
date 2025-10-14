@@ -13,6 +13,9 @@ export interface ResolvedAiConfig {
   promptId?: string;
   includeConversationHistory: boolean;
   conversationHistoryLimit: number;
+  // 🆕 Search Weight Configuration
+  bm25Weight?: number;
+  embeddingWeight?: number;
 }
 
 @Injectable()
@@ -35,8 +38,6 @@ export class AiProviderConfigResolver {
     datasetId: string,
     userId: string,
   ): Promise<ResolvedAiConfig> {
-    this.logger.log(`🔍 Resolving AI config for dataset ${datasetId}`);
-
     // 1. Try dataset settings first (dataset settings should override user settings)
     const dataset = await this.datasetService.findById(datasetId);
     if (!dataset) {
@@ -45,7 +46,6 @@ export class AiProviderConfigResolver {
 
     const datasetConfig = this.extractDatasetChatSettings(dataset);
     if (datasetConfig && this.hasValidSettings(datasetConfig)) {
-      this.logger.log(`📝 Using dataset chat settings`);
       return await this.buildConfigFromSettings(datasetConfig, userId);
     }
 
@@ -55,17 +55,13 @@ export class AiProviderConfigResolver {
       const userChatSettings = (userSettings as any)?.chat_settings;
 
       if (userChatSettings && this.hasValidSettings(userChatSettings)) {
-        this.logger.log(
-          `📝 Using user chat settings (dataset settings not available)`,
-        );
         return await this.buildConfigFromSettings(userChatSettings, userId);
       }
     } catch (error) {
-      this.logger.warn(`⚠️ Failed to load user settings: ${error.message}`);
+      this.logger.warn(`Failed to load user settings: ${error.message}`);
     }
 
     // 3. Fall back to system defaults
-    this.logger.log(`📝 No dataset or user settings, using system defaults`);
     return await this.getSystemDefaults(userId);
   }
 
@@ -77,28 +73,14 @@ export class AiProviderConfigResolver {
       const userSettings = await this.userService.getUserSettings(userId);
       const userChatSettings = (userSettings as any)?.chat_settings;
 
-      this.logger.log(`🔍 User settings loaded:`, JSON.stringify(userSettings));
-      this.logger.log(
-        `🔍 User chat settings:`,
-        JSON.stringify(userChatSettings),
-      );
-      this.logger.log(
-        `🔍 Has valid settings:`,
-        this.hasValidSettings(userChatSettings),
-      );
-
       if (userChatSettings && this.hasValidSettings(userChatSettings)) {
-        this.logger.log(`📝 Using user chat settings`);
         return await this.buildConfigFromSettings(userChatSettings, userId);
-      } else {
-        this.logger.log(`⚠️ User chat settings not valid or empty`);
       }
     } catch (error) {
-      this.logger.warn(`⚠️ Failed to load user settings: ${error.message}`);
+      this.logger.warn(`Failed to load user settings: ${error.message}`);
     }
 
     // 3. Fall back to system defaults
-    this.logger.log(`📝 Using system defaults`);
     return await this.getSystemDefaults(userId);
   }
 
@@ -169,25 +151,15 @@ export class AiProviderConfigResolver {
     settings: any,
     userId: string,
   ): Promise<ResolvedAiConfig> {
-    this.logger.log(
-      `🔧 Building config from settings:`,
-      JSON.stringify(settings),
-    );
-
     let provider: AiProvider | null = null;
 
     // Resolve provider
     if (settings.provider) {
-      this.logger.log(`🔍 Resolving provider: ${settings.provider}`);
       provider = await this.resolveProvider(settings.provider, userId);
-      this.logger.log(
-        `🔍 Provider resolved:`,
-        provider ? `${provider.name} (${provider.type})` : 'null',
-      );
     }
 
     if (!provider) {
-      this.logger.error(`❌ Provider not found: ${settings.provider}`);
+      this.logger.error(`Provider not found: ${settings.provider}`);
       throw new Error(
         `AI provider '${settings.provider}' not found. Please configure an AI provider.`,
       );
@@ -209,18 +181,10 @@ export class AiProviderConfigResolver {
         settings.conversationHistoryLimit !== undefined
           ? settings.conversationHistoryLimit
           : 10,
+      // 🆕 Search Weight Configuration
+      bm25Weight: settings.bm25Weight,
+      embeddingWeight: settings.embeddingWeight,
     };
-
-    this.logger.log(
-      `🔧 Final config:`,
-      JSON.stringify({
-        provider: provider.name,
-        model: config.model,
-        temperature: config.temperature,
-        maxChunks: config.maxChunks,
-        promptId: config.promptId,
-      }),
-    );
 
     return config;
   }
@@ -233,8 +197,6 @@ export class AiProviderConfigResolver {
     userId: string,
   ): Promise<AiProvider | null> {
     try {
-      this.logger.log(`🔍 Looking up AI provider: ${providerId}`);
-
       // Check if it's a UUID (AI provider ID) or a provider type
       const isUUID =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -253,7 +215,7 @@ export class AiProviderConfigResolver {
       }
     } catch (error) {
       this.logger.error(
-        `❌ Failed to lookup AI provider ${providerId}: ${error.message}`,
+        `Failed to lookup AI provider ${providerId}: ${error.message}`,
       );
       return null;
     }
