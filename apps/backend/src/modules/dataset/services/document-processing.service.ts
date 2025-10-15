@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { promises as fs } from 'fs';
@@ -14,7 +14,6 @@ import { EmbeddingV2Service } from './embedding-v2.service';
 import { NotificationService } from '../../notification/notification.service';
 import {
   EmbeddingModel,
-  TextSplitter,
   getEffectiveChunkSize,
   getEffectiveChunkOverlap,
   getModelDefaults,
@@ -24,7 +23,6 @@ import * as crypto from 'crypto';
 import * as natural from 'natural';
 import {
   RagflowPdfParserService,
-  EmbeddingOptimizedConfig,
   RagflowParseOptions,
 } from '../../document-parser/services/ragflow-pdf-parser.service';
 import { SimplePdfParserService } from '../../document-parser/services/simple-pdf-parser.service';
@@ -34,6 +32,11 @@ import {
   EntityExtractionConfig,
 } from './entity-extraction.service';
 import { ModelMappingService } from '../../../common/services/model-mapping.service';
+import { DetectorService } from '../../../common/services/detector.service';
+import {
+  QueueManagerService,
+  JobDetails,
+} from '../../queue/services/queue-manager.service';
 
 interface EmbeddingConfig {
   model: string;
@@ -66,7 +69,10 @@ export class DocumentProcessingService {
     private readonly chineseTextPreprocessorService: ChineseTextPreprocessorService,
     private readonly entityExtractionService: EntityExtractionService,
     private readonly modelMappingService: ModelMappingService,
+    private readonly detectorService: DetectorService,
     private readonly notificationService: NotificationService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly queueManager: QueueManagerService,
   ) {}
 
   @OnEvent('document.processing')
@@ -215,6 +221,152 @@ export class DocumentProcessingService {
     }
   }
 
+  /**
+   * Resume processing for a specific document that was interrupted
+   */
+  async resumeDocumentProcessing(
+    documentId: string,
+    userId: string,
+  ): Promise<{ success: boolean; message: string; documentId: string }> {
+    this.logger.log(`🔄 Resuming document processing for ${documentId}`);
+
+    try {
+      // Find the document
+      const document = await this.documentRepository.findOne({
+        where: { id: documentId },
+        relations: ['dataset'],
+      });
+
+      if (!document) {
+        throw new Error(`Document ${documentId} not found`);
+      }
+
+      // Check if document is in a resumable state (not completed and not waiting)
+      if (document.indexingStatus === 'completed') {
+        throw new Error(
+          `Document ${documentId} is already completed and cannot be resumed`,
+        );
+      }
+
+      if (document.indexingStatus === 'waiting') {
+        throw new Error(
+          `Document ${documentId} is waiting to start and cannot be resumed yet`,
+        );
+      }
+
+      this.logger.log(
+        `📋 Document ${documentId} current status: ${document.indexingStatus}`,
+      );
+
+      // Step 1: Stop all running jobs first
+      this.logger.log(`🛑 Step 1: Stopping all running processing jobs...`);
+      await this.stopAllProcessingJobs(
+        'Resuming document processing - stopping all jobs',
+      );
+
+      // Step 2: Wait a moment to ensure all jobs are killed
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Step 3: Check if file still exists
+      const filePath = join(
+        process.cwd(),
+        'uploads',
+        'documents',
+        document.fileId,
+      );
+
+      try {
+        await fs.access(filePath);
+        this.logger.log(`✅ File exists: ${filePath}`);
+      } catch {
+        throw new Error(`File not found: ${filePath}`);
+      }
+
+      // Step 4: Get the dataset's embedding configuration
+      const dataset = document.dataset;
+      if (!dataset) {
+        throw new Error(`Dataset not found for document ${documentId}`);
+      }
+
+      // Step 5: Find incomplete segments
+      const incompleteSegments = await this.segmentRepository.find({
+        where: {
+          documentId: documentId,
+          status: In(['waiting', 'processing']),
+        },
+        order: { position: 'ASC' },
+      });
+
+      this.logger.log(
+        `📊 Found ${incompleteSegments.length} incomplete segments for document ${documentId}`,
+      );
+
+      // Step 6: Create embedding configuration from dataset settings
+      const embeddingConfig: EmbeddingConfig = {
+        model: dataset.embeddingModel || 'Xenova/bge-m3',
+        customModelName: undefined,
+        provider: dataset.embeddingModelProvider || 'local',
+        textSplitter: 'recursive_character',
+        chunkSize: 800,
+        chunkOverlap: 100,
+        separators: undefined,
+        enableParentChildChunking: false,
+        useModelDefaults: false,
+      };
+
+      // Step 7: Reset document status to processing
+      await this.documentRepository.update(documentId, {
+        indexingStatus: 'processing',
+        error: undefined,
+        stoppedAt: undefined,
+      });
+
+      // Step 8: Reset incomplete segments to waiting status
+      if (incompleteSegments.length > 0) {
+        await this.segmentRepository.update(
+          { id: In(incompleteSegments.map((s) => s.id)) },
+          { status: 'waiting' },
+        );
+        this.logger.log(
+          `🔄 Reset ${incompleteSegments.length} segments to waiting status`,
+        );
+      }
+
+      // Step 9: Send notification that document processing is resuming
+      this.notificationService.sendDocumentProcessingUpdate(
+        documentId,
+        dataset.id,
+        {
+          status: 'processing',
+          message: `Document processing resumed - ${incompleteSegments.length} segments to process`,
+        },
+      );
+
+      // Step 10: Trigger the processing event
+      this.eventEmitter.emit('document.processing', {
+        documentId,
+        datasetId: dataset.id,
+        embeddingConfig,
+        userId,
+      });
+
+      this.logger.log(
+        `✅ Successfully resumed processing for document ${documentId} with ${incompleteSegments.length} segments to process`,
+      );
+
+      return {
+        success: true,
+        message: `Document processing resumed successfully - ${incompleteSegments.length} segments to process`,
+        documentId,
+      };
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to resume document processing: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
   private async processDocument(
     documentId: string,
     datasetId: string,
@@ -251,7 +403,7 @@ export class DocumentProcessingService {
     try {
       await fs.access(filePath);
       this.logger.log(`✅ File exists: ${filePath}`);
-    } catch (error) {
+    } catch {
       this.logger.warn(`❌ File not found: ${filePath}`);
       this.logger.log(
         `🛑 Stopping document processing - file has been deleted`,
@@ -273,9 +425,23 @@ export class DocumentProcessingService {
       return; // Exit early if file doesn't exist
     }
 
-    // Clear any existing segments for this document (in case of reprocessing)
-    await this.segmentRepository.delete({ documentId: documentId });
-    this.logger.log(`Cleared existing segments for document ${documentId}`);
+    // Check if this is a resume operation (segments already exist)
+    const existingSegments = await this.segmentRepository.find({
+      where: { documentId: documentId },
+      order: { position: 'ASC' },
+    });
+
+    const isResume = existingSegments.length > 0;
+
+    if (isResume) {
+      this.logger.log(
+        `🔄 Resume mode: Found ${existingSegments.length} existing segments for document ${documentId}`,
+      );
+    } else {
+      // Clear any existing segments for this document (in case of reprocessing)
+      await this.segmentRepository.delete({ documentId: documentId });
+      this.logger.log(`Cleared existing segments for document ${documentId}`);
+    }
 
     // Update status to processing
     await this.documentRepository.update(documentId, {
@@ -304,30 +470,39 @@ export class DocumentProcessingService {
     // 🆕 Choose chunking strategy based on configuration
     let segments: DocumentSegment[] = [];
 
-    if (embeddingConfig.enableParentChildChunking) {
-      // Use Parent-Child Chunking for all document types
+    if (isResume) {
+      // Resume mode: use existing segments
       this.logger.log(
-        `🔗 Using Parent-Child Chunking for document ${documentId}`,
+        `🔄 Resume mode: Using existing ${existingSegments.length} segments`,
       );
-      segments = await this.processWithParentChildChunking(
-        document,
-        datasetId,
-        embeddingConfig,
-        userId,
-        content, // Pass content for non-PDF documents
-      );
+      segments = existingSegments;
     } else {
-      // Use traditional chunking
-      this.logger.log(
-        `📄 Using traditional chunking for document ${documentId}`,
-      );
-      segments = await this.processWithTraditionalChunking(
-        document,
-        datasetId,
-        content,
-        embeddingConfig,
-        userId,
-      );
+      // New processing: create segments based on configuration
+      if (embeddingConfig.enableParentChildChunking) {
+        // Use Parent-Child Chunking for all document types
+        this.logger.log(
+          `🔗 Using Parent-Child Chunking for document ${documentId}`,
+        );
+        segments = await this.processWithParentChildChunking(
+          document,
+          datasetId,
+          embeddingConfig,
+          userId,
+          content, // Pass content for non-PDF documents
+        );
+      } else {
+        // Use traditional chunking
+        this.logger.log(
+          `📄 Using traditional chunking for document ${documentId}`,
+        );
+        segments = await this.processWithTraditionalChunking(
+          document,
+          datasetId,
+          content,
+          embeddingConfig,
+          userId,
+        );
+      }
     }
 
     // Update document with embedding configuration
@@ -341,16 +516,56 @@ export class DocumentProcessingService {
     let embeddingDimensions: number | undefined;
     const totalSegments = segments.length;
 
-    this.logger.log(
-      `🔄 Starting embedding generation for ${totalSegments} segments`,
+    // Filter segments to only process incomplete ones
+    const incompleteSegments = segments.filter(
+      (segment) =>
+        segment.status === 'waiting' || segment.status === 'processing',
     );
+
+    this.logger.log(
+      `🔄 Starting embedding generation for ${incompleteSegments.length} incomplete segments (${totalSegments} total)`,
+    );
+
+    if (incompleteSegments.length === 0) {
+      this.logger.log(
+        `✅ All segments already processed for document ${documentId}`,
+      );
+
+      // Update document status to completed
+      await this.documentRepository.update(documentId, {
+        indexingStatus: 'completed',
+        wordCount: content.split(' ').length,
+        tokens: Math.ceil(content.length / 4),
+        embeddingDimensions:
+          segments[0]?.embedding?.embedding?.length || undefined,
+      });
+
+      // Send notification that document processing is complete
+      this.notificationService.sendDocumentProcessingUpdate(
+        documentId,
+        datasetId,
+        {
+          status: 'completed',
+          wordCount: content.split(' ').length,
+          tokens: Math.ceil(content.length / 4),
+          segmentsCount: segments.length,
+          embeddingDimensions:
+            segments[0]?.embedding?.embedding?.length || undefined,
+        },
+      );
+
+      this.logger.log(
+        `Document processing completed: ${documentId}, all ${segments.length} segments already processed`,
+      );
+      return;
+    }
 
     // Process segments in parallel batches to improve performance
     const batchSize = 5; // Process 5 segments at a time
     const batches = [];
 
-    for (let i = 0; i < segments.length; i += batchSize) {
-      batches.push(segments.slice(i, i + batchSize));
+    for (let i = 0; i < incompleteSegments.length; i += batchSize) {
+      batches.push(incompleteSegments.slice(i, i + batchSize));
     }
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
@@ -370,7 +585,7 @@ export class DocumentProcessingService {
       // Check if file still exists before processing each batch
       try {
         await fs.access(filePath);
-      } catch (error) {
+      } catch {
         this.logger.warn(
           `❌ File not found during batch processing: ${filePath}`,
         );
@@ -405,11 +620,12 @@ export class DocumentProcessingService {
       // Process segments in parallel within each batch
       const batchPromises = batch.map(async (segment, segmentIndex) => {
         const globalSegmentIndex = batchIndex * batchSize + segmentIndex + 1;
+        const totalIncomplete = incompleteSegments.length;
 
         // Check if file still exists before processing each segment
         try {
           await fs.access(filePath);
-        } catch (error) {
+        } catch {
           this.logger.warn(
             `❌ File not found during segment processing: ${filePath}`,
           );
@@ -434,8 +650,20 @@ export class DocumentProcessingService {
         }
 
         this.logger.log(
-          `📊 [${globalSegmentIndex}/${totalSegments}] Processing segment ${segment.id} (${segment.content.length} chars)`,
+          `📊 [${globalSegmentIndex}/${totalIncomplete}] Processing segment ${segment.id} (${segment.content.length} chars)`,
         );
+
+        // Validate text length before embedding generation based on model
+        const modelDefaults = getModelDefaults(
+          embeddingConfig.model as EmbeddingModel,
+        );
+        const maxTextLength = Math.min(modelDefaults.maxTokens * 4, 2000); // Conservative limit: 4 chars per token, max 2000 chars
+        if (segment.content.length > maxTextLength) {
+          this.logger.warn(
+            `⚠️ Segment ${segment.id} is too long (${segment.content.length} chars), truncating to ${maxTextLength} chars for model ${embeddingConfig.model}`,
+          );
+          segment.content = segment.content.substring(0, maxTextLength);
+        }
 
         const embeddingResult = await this.generateEmbedding(
           segment.content,
@@ -477,7 +705,7 @@ export class DocumentProcessingService {
         });
 
         this.logger.log(
-          `✅ [${globalSegmentIndex}/${totalSegments}] Completed segment ${segment.id}`,
+          `✅ [${globalSegmentIndex}/${totalIncomplete}] Completed segment ${segment.id}`,
         );
 
         return { segment, embedding: savedEmbedding };
@@ -537,8 +765,16 @@ export class DocumentProcessingService {
           content = simpleResult.content;
         }
       } else {
-        // Handle other file types
-        content = await fs.readFile(filePath, 'utf-8');
+        // Handle other file types with comprehensive detection
+        const detection = await this.detectorService.detectFile(filePath);
+        content = detection.encoding.convertedText || '';
+
+        if (!detection.isValid) {
+          this.logger.warn(
+            `File detection issues for ${filePath}:`,
+            detection.errors,
+          );
+        }
       }
 
       // Apply text preprocessing to ALL documents (not just Chinese)
@@ -1249,7 +1485,7 @@ export class DocumentProcessingService {
   private postProcessChunks(
     chunks: string[],
     targetChunkSize: number,
-    overlapSize: number,
+    _overlapSize: number, // eslint-disable-line @typescript-eslint/no-unused-vars
   ): string[] {
     if (chunks.length <= 1) {
       return chunks;
@@ -1537,10 +1773,10 @@ export class DocumentProcessingService {
 
       // Sort by frequency and return top keywords
       const sortedKeywords = Object.entries(keywords)
-        .filter(([word, freq]) => freq >= 1) // Minimum frequency
+        .filter(([, freq]) => freq >= 1) // Minimum frequency
         .sort(([, a], [, b]) => b - a)
         .slice(0, 10)
-        .map(([word]) => word);
+        .map(([keyword]) => keyword);
 
       return sortedKeywords;
     } catch (error) {
@@ -1886,7 +2122,7 @@ export class DocumentProcessingService {
       };
 
       // Map the ragflow parent ID to the actual database parent ID
-      const actualParentId = parentIdMapping.get(ragflowSegment.parentId!);
+      const actualParentId = parentIdMapping.get(ragflowSegment.parentId);
 
       if (!actualParentId) {
         this.logger.warn(
@@ -2113,5 +2349,298 @@ export class DocumentProcessingService {
     }
 
     return fixed;
+  }
+
+  /**
+   * Pause document processing
+   */
+  async pauseDocumentProcessing(
+    documentId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    this.logger.log(`⏸️ Pausing document processing for ${documentId}`);
+
+    try {
+      // Get document
+      const document = await this.documentRepository.findOne({
+        where: { id: documentId },
+        relations: ['dataset'],
+      });
+
+      if (!document) {
+        throw new Error(`Document ${documentId} not found`);
+      }
+
+      // Check if document is in a pausable state
+      if (document.indexingStatus === 'completed') {
+        throw new Error(
+          `Document ${documentId} is already completed and cannot be paused`,
+        );
+      }
+
+      if (document.indexingStatus === 'waiting') {
+        throw new Error(
+          `Document ${documentId} is waiting to start and cannot be paused yet`,
+        );
+      }
+
+      // Pause all active jobs for this document
+      const jobs = await this.queueManager.getJobsByDocument(documentId);
+      const activeJobs = jobs.filter(
+        (job) => job.status === 'active' || job.status === 'waiting',
+      );
+
+      for (const job of activeJobs) {
+        try {
+          await this.queueManager.pauseJob(job.id);
+        } catch (error) {
+          this.logger.warn(`Failed to pause job ${job.id}: ${error.message}`);
+        }
+      }
+
+      // Update document status
+      await this.documentRepository.update(documentId, {
+        indexingStatus: 'paused',
+        pausedAt: new Date(),
+      });
+
+      // Send notification
+      this.notificationService.sendDocumentProcessingUpdate(
+        documentId,
+        document.dataset.id,
+        {
+          status: 'paused',
+          message: 'Document processing paused',
+        },
+      );
+
+      this.logger.log(
+        `✅ Successfully paused document processing for ${documentId}`,
+      );
+      return {
+        success: true,
+        message: `Document processing paused successfully`,
+      };
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to pause document processing: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Retry document processing from failed stage
+   */
+  async retryDocumentProcessing(
+    documentId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    this.logger.log(`🔄 Retrying document processing for ${documentId}`);
+
+    try {
+      // Get document
+      const document = await this.documentRepository.findOne({
+        where: { id: documentId },
+        relations: ['dataset'],
+      });
+
+      if (!document) {
+        throw new Error(`Document ${documentId} not found`);
+      }
+
+      // Check if document is in a retryable state
+      if (!document.indexingStatus.includes('failed')) {
+        throw new Error(
+          `Document ${documentId} is not in a failed state and cannot be retried`,
+        );
+      }
+
+      // Retry failed jobs
+      const jobs = await this.queueManager.getJobsByDocument(documentId);
+      const failedJobs = jobs.filter((job) => job.status === 'failed');
+
+      for (const job of failedJobs) {
+        try {
+          await this.queueManager.retryJob(job.id);
+        } catch (error) {
+          this.logger.warn(`Failed to retry job ${job.id}: ${error.message}`);
+        }
+      }
+
+      // Update document status
+      await this.documentRepository.update(documentId, {
+        indexingStatus: 'processing',
+        error: undefined,
+        stoppedAt: undefined,
+        pausedAt: undefined,
+      });
+
+      // Send notification
+      this.notificationService.sendDocumentProcessingUpdate(
+        documentId,
+        document.dataset.id,
+        {
+          status: 'processing',
+          message: 'Document processing retried',
+        },
+      );
+
+      this.logger.log(
+        `✅ Successfully retried document processing for ${documentId}`,
+      );
+      return {
+        success: true,
+        message: `Document processing retried successfully`,
+      };
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to retry document processing: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Cancel all processing jobs for a document
+   */
+  async cancelAllProcessingJobs(
+    documentId: string,
+  ): Promise<{ success: boolean; message: string; cancelledCount: number }> {
+    this.logger.log(
+      `❌ Cancelling all processing jobs for document ${documentId}`,
+    );
+
+    try {
+      // Get document
+      const document = await this.documentRepository.findOne({
+        where: { id: documentId },
+        relations: ['dataset'],
+      });
+
+      if (!document) {
+        throw new Error(`Document ${documentId} not found`);
+      }
+
+      // Cancel all jobs for this document
+      const cancelledCount =
+        await this.queueManager.cancelJobsByDocument(documentId);
+
+      // Update document status
+      await this.documentRepository.update(documentId, {
+        indexingStatus: 'cancelled',
+        stoppedAt: new Date(),
+        error: 'Processing cancelled by user',
+      });
+
+      // Send notification
+      this.notificationService.sendDocumentProcessingUpdate(
+        documentId,
+        document.dataset.id,
+        {
+          status: 'cancelled',
+          message: 'Document processing cancelled',
+        },
+      );
+
+      this.logger.log(
+        `✅ Successfully cancelled ${cancelledCount} jobs for document ${documentId}`,
+      );
+      return {
+        success: true,
+        message: `Successfully cancelled ${cancelledCount} processing jobs`,
+        cancelledCount,
+      };
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to cancel document processing: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get detailed job status for a document
+   */
+  async getDocumentJobStatus(documentId: string): Promise<{
+    documentId: string;
+    currentStage: string;
+    overallStatus: string;
+    stageProgress: {
+      [stage: string]: { current: number; total: number; percentage: number };
+    };
+    activeJobIds: string[];
+    jobs: JobDetails[];
+    lastError: { stage: string; message: string; timestamp: Date } | null;
+    processingMetadata: any;
+  }> {
+    this.logger.log(`📊 Getting job status for document ${documentId}`);
+
+    try {
+      // Get document
+      const document = await this.documentRepository.findOne({
+        where: { id: documentId },
+        relations: ['dataset'],
+      });
+
+      if (!document) {
+        throw new Error(`Document ${documentId} not found`);
+      }
+
+      // Get all jobs for this document
+      const jobs = await this.queueManager.getJobsByDocument(documentId);
+
+      // Calculate stage progress
+      const stageProgress: {
+        [stage: string]: { current: number; total: number; percentage: number };
+      } = {};
+
+      if (document.processingMetadata) {
+        const metadata = document.processingMetadata;
+
+        // Chunking progress
+        if (metadata.chunking) {
+          stageProgress.chunking = {
+            current: metadata.chunking.segmentCount || 0,
+            total: metadata.chunking.segmentCount || 0,
+            percentage: 100,
+          };
+        }
+
+        // Embedding progress
+        if (metadata.embedding) {
+          const total = metadata.embedding.totalCount || 0;
+          const current = metadata.embedding.processedCount || 0;
+          stageProgress.embedding = {
+            current,
+            total,
+            percentage: total > 0 ? Math.round((current / total) * 100) : 0,
+          };
+        }
+
+        // NER progress
+        if (metadata.ner) {
+          const total = metadata.ner.totalCount || 0;
+          const current = metadata.ner.processedCount || 0;
+          stageProgress.ner = {
+            current,
+            total,
+            percentage: total > 0 ? Math.round((current / total) * 100) : 0,
+          };
+        }
+      }
+
+      return {
+        documentId,
+        currentStage: document.processingMetadata?.currentStage || 'unknown',
+        overallStatus: document.indexingStatus,
+        stageProgress,
+        activeJobIds: document.activeJobIds || [],
+        jobs,
+        lastError: document.lastError,
+        processingMetadata: document.processingMetadata,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Failed to get job status: ${error.message}`);
+      throw error;
+    }
   }
 }

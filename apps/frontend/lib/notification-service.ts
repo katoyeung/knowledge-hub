@@ -5,7 +5,18 @@ import { EventEmitter } from "events";
 export interface DocumentProcessingNotification {
   documentId: string;
   datasetId: string;
-  status: "processing" | "completed" | "error";
+  status:
+    | "chunking"
+    | "embedding"
+    | "ner"
+    | "completed"
+    | "error"
+    | "paused"
+    | "cancelled"
+    | "chunked"
+    | "embedded";
+  stage?: "chunking" | "embedding" | "ner";
+  progress?: { current: number; total: number; percentage: number };
   message?: string;
   wordCount?: number;
   tokens?: number;
@@ -78,7 +89,9 @@ class NotificationService extends EventEmitter {
       if (error && Object.keys(error).length > 0) {
         console.error("Notification stream error:", error);
       } else {
-        console.warn("Notification stream connection failed - this is normal if the backend is not running");
+        console.warn(
+          "Notification stream connection failed - this is normal if the backend is not running"
+        );
       }
       this.isConnected = false;
       this.emit("error", error);
@@ -86,7 +99,9 @@ class NotificationService extends EventEmitter {
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
         this.scheduleReconnect();
       } else {
-        console.warn("Max reconnection attempts reached for notification stream");
+        console.warn(
+          "Max reconnection attempts reached for notification stream"
+        );
         this.emit("maxReconnectAttemptsReached");
       }
     };

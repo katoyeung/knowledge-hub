@@ -2,6 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { JobDispatcherService } from '../queue/services/job-dispatcher.service';
 import { Dataset } from './entities/dataset.entity';
 import { Document } from './entities/document.entity';
 import { DocumentSegment } from './entities/document-segment.entity';
@@ -44,6 +45,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     private readonly cacheManager: Cache,
     private readonly eventEmitter: EventEmitter2,
     private readonly embeddingConfigProcessor: EmbeddingConfigProcessorService,
+    private readonly jobDispatcher: JobDispatcherService,
   ) {
     super(datasetRepository);
   }
@@ -486,15 +488,17 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
       },
     });
 
+    // Dispatch chunking jobs for all documents
     for (const document of documents) {
       await this.documentRepository.update(document.id, {
-        indexingStatus: 'processing',
+        indexingStatus: 'waiting',
       });
 
-      // Emit document processing event
-      this.eventEmitter.emit('document.processing', {
+      // Dispatch chunking job
+      await this.jobDispatcher.dispatch('chunking', {
         documentId: document.id,
         datasetId: processDto.datasetId,
+        userId: _userId,
         embeddingConfig: {
           model: processDto.embeddingModel,
           customModelName: processDto.customModelName,
@@ -503,11 +507,15 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
           chunkSize: processDto.chunkSize,
           chunkOverlap: processDto.chunkOverlap,
           separators: processDto.separators,
-          // 🆕 Pass parent-child chunking option
           enableParentChildChunking: processDto.enableParentChildChunking,
+          useModelDefaults: processDto.useModelDefaults,
         },
-        userId: _userId,
+        nerEnabled: processDto.nerEnabled || false,
       });
+
+      this.logger.log(
+        `[DATASET] Dispatched chunking job for document ${document.id}`,
+      );
     }
 
     const updatedDataset = await this.findById(processDto.datasetId);

@@ -11,6 +11,8 @@ import {
   Patch,
   Param,
   Logger,
+  BadRequestException,
+  Get,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { DocumentService } from './document.service';
@@ -193,5 +195,157 @@ export class DocumentController implements CrudController<Document> {
         })),
       },
     };
+  }
+
+  @Post(':id/resume')
+  async resumeDocumentProcessing(
+    @Param('id') documentId: string,
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+
+    try {
+      const result =
+        await this.documentProcessingService.resumeDocumentProcessing(
+          documentId,
+          userId,
+        );
+
+      return {
+        success: true,
+        message: result.message,
+        data: {
+          documentId: result.documentId,
+        },
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to resume document processing: ${error.message}`,
+      );
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  @Post(':id/pause')
+  async pauseDocumentProcessing(
+    @Param('id') documentId: string,
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+
+    try {
+      const result =
+        await this.documentProcessingService.pauseDocumentProcessing(
+          documentId,
+        );
+
+      return {
+        success: true,
+        message: result.message,
+        data: {
+          documentId: documentId,
+        },
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to pause document processing: ${error.message}`,
+      );
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  @Post(':id/retry')
+  async retryDocumentProcessing(
+    @Param('id') documentId: string,
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+
+    try {
+      const result =
+        await this.documentProcessingService.retryDocumentProcessing(
+          documentId,
+        );
+
+      return {
+        success: true,
+        message: result.message,
+        data: {
+          documentId: documentId,
+        },
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to retry document processing: ${error.message}`,
+      );
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  @Post(':id/cancel')
+  async cancelDocumentProcessing(
+    @Param('id') documentId: string,
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+
+    try {
+      const result =
+        await this.documentProcessingService.cancelAllProcessingJobs(
+          documentId,
+        );
+
+      return {
+        success: true,
+        message: result.message,
+        data: {
+          documentId: documentId,
+          cancelledCount: result.cancelledCount,
+        },
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to cancel document processing: ${error.message}`,
+      );
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  @Get(':id/job-status')
+  async getJobStatus(@Param('id') documentId: string, @Request() req: any) {
+    const userId = req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+
+    try {
+      const result =
+        await this.documentProcessingService.getDocumentJobStatus(documentId);
+
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get job status: ${error.message}`);
+      throw new BadRequestException(error.message);
+    }
   }
 }

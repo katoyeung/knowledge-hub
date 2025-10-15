@@ -44,6 +44,15 @@ export class LocalEmbeddingClient implements EmbeddingClient {
 
       this.logger.log(`📊 Processing text with local model...`);
 
+      // Validate text length to prevent stack overflow - BGE-M3 can handle ~400 tokens = ~1600 chars
+      const maxTextLength = 1600; // Conservative limit for BGE-M3 model
+      if (text.length > maxTextLength) {
+        this.logger.warn(
+          `⚠️ Text too long (${text.length} chars), truncating to ${maxTextLength} chars to prevent stack overflow for BGE-M3 model`,
+        );
+        text = text.substring(0, maxTextLength);
+      }
+
       // Generate embedding
       const output = await extractor(text, {
         pooling: 'mean',

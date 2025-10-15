@@ -174,6 +174,7 @@ function DatasetDetailContent() {
     // Helper function to check if any documents are processing
     const hasProcessingDocuments = useCallback(() => {
         return documents.some(doc =>
+            doc.indexingStatus === 'waiting' ||
             doc.indexingStatus === 'processing' ||
             doc.indexingStatus === 'parsing' ||
             doc.indexingStatus === 'splitting' ||
@@ -404,6 +405,7 @@ function DatasetDetailContent() {
                                     onDocumentClick={handleDocumentClick}
                                     onSelectedDocumentsChange={handleSelectedDocumentsChange}
                                     showCollapseButton={false}
+                                    dataset={dataset || undefined}
                                 />
                             </div>
                         )}
@@ -450,6 +452,7 @@ function DatasetDetailContent() {
                                 onDocumentClick={handleDocumentClick}
                                 onSelectedDocumentsChange={handleSelectedDocumentsChange}
                                 onCollapse={() => setLeftCollapsed(true)}
+                                dataset={dataset || undefined}
                             />
                         )}
                     </div>

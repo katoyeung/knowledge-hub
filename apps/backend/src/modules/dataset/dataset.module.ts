@@ -36,8 +36,19 @@ import { LocalLLMClient } from '../../common/services/local-llm-client.service';
 import { LocalLLMService } from '../../common/services/local-llm.service';
 import { DashScopeApiClient } from '../../common/services/dashscope-api-client.service';
 import { ModelMappingService } from '../../common/services/model-mapping.service';
+import { DetectorService } from '../../common/services/detector.service';
 // 🆕 Import for Parent-Child Chunking support
 import { DocumentParserModule } from '../document-parser/document-parser.module';
+import { QueueModule } from '../queue/queue.module';
+import { BullModule } from '@nestjs/bull';
+// 🆕 Import new processing services
+import { ChunkingService } from './services/chunking.service';
+import { EmbeddingProcessingService } from './services/embedding-processing.service';
+import { NerProcessingService } from './services/ner-processing.service';
+import { JobDispatcherService } from '../queue/services/job-dispatcher.service';
+import { QueueManagerService } from '../queue/services/queue-manager.service';
+import { EventBusService } from '../event/services/event-bus.service';
+import { WorkerPoolService } from '../queue/jobs/document/worker-pool.service';
 
 @Module({
   imports: [
@@ -57,6 +68,10 @@ import { DocumentParserModule } from '../document-parser/document-parser.module'
     NotificationModule,
     // 🆕 Import DocumentParserModule for Parent-Child Chunking
     DocumentParserModule,
+    QueueModule,
+    BullModule.registerQueue({
+      name: 'default',
+    }),
   ],
   providers: [
     DatasetService,
@@ -68,6 +83,7 @@ import { DocumentParserModule } from '../document-parser/document-parser.module'
     EntityExtractionService,
     EmbeddingConfigProcessorService,
     ModelMappingService,
+    DetectorService,
     ApiClientFactory,
     EmbeddingClientFactory,
     LocalEmbeddingClient,
@@ -80,6 +96,14 @@ import { DocumentParserModule } from '../document-parser/document-parser.module'
     LocalLLMService,
     LocalLLMClient,
     DashScopeApiClient,
+    // 🆕 Add new processing services
+    ChunkingService,
+    EmbeddingProcessingService,
+    NerProcessingService,
+    JobDispatcherService,
+    QueueManagerService,
+    EventBusService,
+    WorkerPoolService,
   ],
   exports: [
     TypeOrmModule,

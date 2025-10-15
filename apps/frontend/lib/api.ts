@@ -9,42 +9,50 @@ import {
 // Create axios instance with base configuration
 const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
-  timeout: 30000, // Increased timeout to 30 seconds for delete operations
+  timeout: 10000, // Reduced timeout to 10 seconds for better UX
   headers: {
     "Content-Type": "application/json",
   },
 });
 
 // Add request interceptor for authentication
-apiClient.interceptors.request.use(
-  (config) => {
-    // Add auth token if available
-    const token = localStorage.getItem("authToken");
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+const addAuthInterceptor = (client: typeof apiClient) => {
+  client.interceptors.request.use(
+    (config) => {
+      // Add auth token if available
+      const token = localStorage.getItem("authToken");
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    },
+    (error) => {
+      return Promise.reject(error);
     }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
+  );
+};
+
+addAuthInterceptor(apiClient);
 
 // Add response interceptor for error handling
-apiClient.interceptors.response.use(
-  (response) => {
-    return response;
-  },
-  (error) => {
-    // Handle common errors
-    if (error.response?.status === 401) {
-      // Redirect to login or refresh token
-      localStorage.removeItem("authToken");
-      window.location.href = "/login";
+const addResponseInterceptor = (client: typeof apiClient) => {
+  client.interceptors.response.use(
+    (response) => {
+      return response;
+    },
+    (error) => {
+      // Handle common errors
+      if (error.response?.status === 401) {
+        // Redirect to login or refresh token
+        localStorage.removeItem("authToken");
+        window.location.href = "/login";
+      }
+      return Promise.reject(error);
     }
-    return Promise.reject(error);
-  }
-);
+  );
+};
+
+addResponseInterceptor(apiClient);
 
 // Dataset API interface
 export interface Dataset {
@@ -62,13 +70,36 @@ export interface Dataset {
       temperature?: number;
       maxChunks?: number;
     };
-    workflow_settings?: any;
+    workflow_settings?: Record<string, unknown>;
   };
   createdAt: string;
   updatedAt: string;
   user?: {
     id: string;
     email: string;
+  };
+}
+
+// Document processing metadata interface
+export interface DocumentProcessingMetadata {
+  currentStage: "chunking" | "embedding" | "ner" | "completed";
+  chunking: {
+    startedAt: Date;
+    completedAt: Date;
+    segmentCount: number;
+  };
+  embedding: {
+    startedAt: Date;
+    completedAt: Date;
+    processedCount: number;
+    totalCount: number;
+  };
+  ner: {
+    startedAt: Date;
+    completedAt: Date;
+    processedCount: number;
+    totalCount: number;
+    enabled: boolean;
   };
 }
 
@@ -90,6 +121,8 @@ export interface Document {
   docForm?: string;
   docLanguage?: string;
   docMetadata?: Record<string, unknown>;
+  // Processing metadata
+  processingMetadata?: DocumentProcessingMetadata;
   // Embedding configuration
   embeddingModel?: string;
   embeddingDimensions?: number;
@@ -113,6 +146,13 @@ export interface Embedding {
   providerName: string;
 }
 
+// NER Keywords interface
+export interface NerKeywords {
+  extracted: string[];
+  count: number;
+  extractedAt: string;
+}
+
 // Document Segment API interface
 export interface DocumentSegment {
   id: string;
@@ -123,7 +163,7 @@ export interface DocumentSegment {
   answer?: string;
   wordCount: number;
   tokens: number;
-  keywords?: Record<string, unknown>;
+  keywords?: NerKeywords;
   indexNodeId?: string;
   indexNodeHash?: string;
   hitCount: number;
@@ -296,6 +336,8 @@ export const datasetApi = {
     separators?: string[];
     // 🆕 Parent-Child Chunking option
     enableParentChildChunking?: boolean;
+    // 🆕 NER processing option
+    nerEnabled?: boolean;
   }): Promise<{
     success: boolean;
     message: string;
@@ -455,6 +497,97 @@ export const documentApi = {
   delete: async (id: string): Promise<boolean> => {
     await apiClient.delete(`/documents/${id}`);
     return true;
+  },
+
+  // Resume document processing
+  resume: async (
+    id: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      documentId: string;
+    };
+  }> => {
+    const response = await apiClient.post(`/documents/${id}/resume`);
+    return response.data;
+  },
+
+  // Pause document processing
+  pause: async (
+    id: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      documentId: string;
+    };
+  }> => {
+    const response = await apiClient.post(`/documents/${id}/pause`);
+    return response.data;
+  },
+
+  // Retry document processing
+  retry: async (
+    id: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      documentId: string;
+    };
+  }> => {
+    const response = await apiClient.post(`/documents/${id}/retry`);
+    return response.data;
+  },
+
+  // Cancel document processing
+  cancel: async (
+    id: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      documentId: string;
+      cancelledCount: number;
+    };
+  }> => {
+    const response = await apiClient.post(`/documents/${id}/cancel`);
+    return response.data;
+  },
+
+  // Get job status
+  getJobStatus: async (
+    id: string
+  ): Promise<{
+    success: boolean;
+    data: {
+      documentId: string;
+      currentStage: string;
+      overallStatus: string;
+      stageProgress: {
+        [stage: string]: { current: number; total: number; percentage: number };
+      };
+      activeJobIds: string[];
+      jobs: Array<{
+        id: string;
+        type: string;
+        data: Record<string, unknown>;
+        status: string;
+        progress: number;
+        createdAt: Date;
+        startedAt?: Date;
+        completedAt?: Date;
+        failedReason?: string;
+        attemptsMade: number;
+        attemptsLimit: number;
+      }>;
+      lastError: { stage: string; message: string; timestamp: Date } | null;
+      processingMetadata: DocumentProcessingMetadata;
+    };
+  }> => {
+    const response = await apiClient.get(`/documents/${id}/job-status`);
+    return response.data;
   },
 };
 
@@ -708,9 +841,23 @@ export const aiProviderApi = {
         `/ai-providers/${providerId}/models/${encodedModelId}`
       );
       return response.data;
-    } catch (error: any) {
+    } catch (error: unknown) {
       throw error;
     }
+  },
+
+  // Resume document processing
+  resumeProcessing: async (
+    documentId: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      documentId: string;
+    };
+  }> => {
+    const response = await apiClient.post(`/documents/${documentId}/resume`);
+    return response.data;
   },
 };
 
@@ -868,12 +1015,22 @@ export const chatApi = {
       description?: string;
       selectedDocumentIds?: string[];
       selectedSegmentIds?: string[];
-      metadata?: any;
+      metadata?: Record<string, unknown>;
       userId: string;
       datasetId: string;
       createdAt: string;
       updatedAt: string;
-      messages?: any[];
+      messages?: Array<{
+        id: string;
+        content: string;
+        role: string;
+        status: string;
+        createdAt: string;
+        updatedAt: string;
+        sourceChunkIds?: string;
+        sourceDocuments?: string;
+        metadata?: Record<string, unknown>;
+      }>;
     }>
   > => {
     const params = datasetId ? { datasetId } : {};
@@ -883,10 +1040,31 @@ export const chatApi = {
   },
 
   // Get latest conversation for dataset
-  getLatestConversation: (datasetId: string): Promise<Conversation | null> =>
-    apiClient
-      .get(`/chat/conversations/latest?datasetId=${datasetId}`)
-      .then((res) => res.data),
+  getLatestConversation: async (
+    datasetId: string
+  ): Promise<Conversation | null> => {
+    try {
+      const response = await apiClient.get(
+        `/chat/conversations/latest?datasetId=${datasetId}`
+      );
+      return response.data;
+    } catch (error: unknown) {
+      // If no conversation exists, return null instead of throwing
+      if (
+        error &&
+        typeof error === "object" &&
+        "response" in error &&
+        error.response &&
+        typeof error.response === "object" &&
+        "status" in error.response &&
+        error.response.status === 404
+      ) {
+        return null;
+      }
+      console.warn("Failed to load latest conversation:", error);
+      return null;
+    }
+  },
 
   // Get conversation messages
   getConversationMessages: (
@@ -901,7 +1079,7 @@ export const chatApi = {
       updatedAt: string;
       sourceChunkIds?: string;
       sourceDocuments?: string;
-      metadata?: any;
+      metadata?: Record<string, unknown>;
     }>
   > =>
     apiClient
@@ -909,16 +1087,31 @@ export const chatApi = {
       .then((res) => res.data),
 
   // Get conversation messages (paginated)
-  getConversationMessagesPaginated: (
+  getConversationMessagesPaginated: async (
     conversationId: string,
     page: number = 1,
     limit: number = 10
-  ): Promise<PaginatedMessagesResponse> =>
-    apiClient
-      .get(`/chat/conversations/${conversationId}/messages/paginated`, {
-        params: { page, limit },
-      })
-      .then((res) => res.data),
+  ): Promise<PaginatedMessagesResponse> => {
+    try {
+      const response = await apiClient.get(
+        `/chat/conversations/${conversationId}/messages/paginated`,
+        {
+          params: { page, limit },
+        }
+      );
+      return response.data;
+    } catch (error: unknown) {
+      console.warn("Failed to load conversation messages:", error);
+      // Return empty response instead of throwing
+      return {
+        messages: [],
+        total: 0,
+        hasMore: false,
+        page: 1,
+        limit: 10,
+      };
+    }
+  },
 
   // Chat with documents (streaming)
   chatWithDocumentsStream: async (
@@ -939,7 +1132,7 @@ export const chatApi = {
       message: ChatMessage;
       conversationId: string;
       sourceChunks: SourceChunk[];
-      metadata: any;
+      metadata: Record<string, unknown>;
     }) => void,
     onError: (error: string) => void
   ): Promise<void> => {
@@ -1000,7 +1193,7 @@ export const chatApi = {
               } else if (eventData.type === "error") {
                 onError(eventData.error || "Unknown error occurred");
               }
-            } catch (parseError) {
+            } catch {
               // If JSON parsing fails, treat it as an error
               onError(`Failed to parse server response: ${line.slice(6)}`);
             }

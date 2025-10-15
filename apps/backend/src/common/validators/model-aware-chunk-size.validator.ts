@@ -28,9 +28,21 @@ export class IsModelAwareChunkSizeConstraint
       'mixedbread-ai/mxbai-embed-large-v1',
     ];
 
-    const maxChunkSize = largeChunkModels.includes(embeddingModel)
-      ? 12000
-      : 8000;
+    // Local models (BGE-M3) have stricter limits
+    const localModels = [
+      'Xenova/bge-m3',
+      'mixedbread-ai/mxbai-embed-large-v1',
+      'WhereIsAI/UAE-Large-V1',
+    ];
+
+    let maxChunkSize;
+    if (localModels.includes(embeddingModel)) {
+      maxChunkSize = 2000; // Conservative limit for local models
+    } else if (largeChunkModels.includes(embeddingModel)) {
+      maxChunkSize = 12000;
+    } else {
+      maxChunkSize = 8000;
+    }
 
     return value >= 100 && value <= maxChunkSize;
   }
@@ -48,9 +60,21 @@ export class IsModelAwareChunkSizeConstraint
       'mixedbread-ai/mxbai-embed-large-v1',
     ];
 
-    const maxChunkSize = largeChunkModels.includes(embeddingModel)
-      ? 12000
-      : 8000;
+    // Local models (BGE-M3) have stricter limits
+    const localModels = [
+      'Xenova/bge-m3',
+      'mixedbread-ai/mxbai-embed-large-v1',
+      'WhereIsAI/UAE-Large-V1',
+    ];
+
+    let maxChunkSize;
+    if (localModels.includes(embeddingModel)) {
+      maxChunkSize = 2000; // Conservative limit for local models
+    } else if (largeChunkModels.includes(embeddingModel)) {
+      maxChunkSize = 12000;
+    } else {
+      maxChunkSize = 8000;
+    }
 
     return `Chunk size must be between 100 and ${maxChunkSize} characters for this model`;
   }

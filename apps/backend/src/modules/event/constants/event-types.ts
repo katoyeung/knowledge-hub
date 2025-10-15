@@ -43,6 +43,17 @@ export enum EventTypes {
   DOCUMENT_PROCESSING_COMPLETED = 'document.processing.completed',
   DOCUMENT_PROCESSING_FAILED = 'document.processing.failed',
   DOCUMENT_SEGMENTS_CREATED = 'document.segments.created',
+
+  // Document Processing Stage Events
+  DOCUMENT_CHUNKING_STARTED = 'document.chunking.started',
+  DOCUMENT_CHUNKING_COMPLETED = 'document.chunking.completed',
+  DOCUMENT_CHUNKING_FAILED = 'document.chunking.failed',
+  DOCUMENT_EMBEDDING_STARTED = 'document.embedding.started',
+  DOCUMENT_EMBEDDING_COMPLETED = 'document.embedding.completed',
+  DOCUMENT_EMBEDDING_FAILED = 'document.embedding.failed',
+  DOCUMENT_NER_STARTED = 'document.ner.started',
+  DOCUMENT_NER_COMPLETED = 'document.ner.completed',
+  DOCUMENT_NER_FAILED = 'document.ner.failed',
 }
 
 export type EventType = (typeof EventTypes)[keyof typeof EventTypes];

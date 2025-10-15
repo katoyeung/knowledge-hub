@@ -6,6 +6,7 @@ import { ChineseTextPreprocessorService } from './services/chinese-text-preproce
 import { DocumentParserController } from './controllers/document-parser.controller';
 import { Document } from '../dataset/entities/document.entity';
 import { DocumentSegment } from '../dataset/entities/document-segment.entity';
+import { DetectorService } from '../../common/services/detector.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Document, DocumentSegment])],
@@ -14,6 +15,7 @@ import { DocumentSegment } from '../dataset/entities/document-segment.entity';
     RagflowPdfParserService,
     SimplePdfParserService,
     ChineseTextPreprocessorService,
+    DetectorService,
   ],
   exports: [
     RagflowPdfParserService,

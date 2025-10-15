@@ -309,17 +309,20 @@ export function DatasetChatPanel({
                             isLoadingConversationRef.current = true
 
                             const conversation = await chatApi.getLatestConversation(datasetId)
-                            if (conversation) {
+                            if (conversation && isMounted) {
                                 setCurrentConversation(conversation)
                                 setConversationId(conversation.id)
                                 await loadConversationMessages(conversation.id, 1, 10)
                             }
                             hasLoadedConversationRef.current = true
                         } catch (err) {
-                            console.error('Failed to load latest conversation:', err)
+                            console.warn('Failed to load latest conversation:', err)
+                            // Don't show error to user for conversation loading - it's not critical
                         } finally {
-                            setIsInitialLoad(false)
-                            isLoadingConversationRef.current = false
+                            if (isMounted) {
+                                setIsInitialLoad(false)
+                                isLoadingConversationRef.current = false
+                            }
                         }
                     }
                 }, 100)
@@ -336,6 +339,9 @@ export function DatasetChatPanel({
             if (scrollTimeoutRef.current) {
                 clearTimeout(scrollTimeoutRef.current)
             }
+            // Clean up global tracker
+            const callKey = `conversation-${datasetId}-${componentId.current}`
+            globalApiCallTracker.conversations.delete(callKey)
         }
     }, [datasetId, loadConversationMessages]) // Add loadConversationMessages back since we use it directly
 

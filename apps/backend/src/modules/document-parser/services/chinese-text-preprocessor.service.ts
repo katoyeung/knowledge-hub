@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { DetectorService } from '../../../common/services/detector.service';
 
 /**
  * Chinese Text Preprocessor Service
@@ -7,6 +8,19 @@ import { Injectable, Logger } from '@nestjs/common';
 @Injectable()
 export class ChineseTextPreprocessorService {
   private readonly logger = new Logger(ChineseTextPreprocessorService.name);
+
+  constructor(private readonly detectorService: DetectorService) {}
+
+  /**
+   * Detect and convert encoding for Chinese text
+   * This method is now simplified since encoding detection is handled by DetectorService
+   */
+  detectAndConvertEncoding(text: string): string {
+    // The encoding detection is now handled by the DetectorService
+    // This method is kept for backward compatibility but just returns the text
+    // as it should already be properly encoded when it reaches this point
+    return text;
+  }
 
   /**
    * Main preprocessing method for Chinese text
@@ -20,7 +34,8 @@ export class ChineseTextPreprocessorService {
       `Preprocessing Chinese text of length: ${rawText.length}`,
     );
 
-    let processedText = rawText;
+    // Step 0: Detect and convert encoding if needed
+    let processedText = this.detectAndConvertEncoding(rawText);
 
     // Step 1: Fix excessive whitespace and scattered spacing
     processedText = this.normalizeWhitespace(processedText);

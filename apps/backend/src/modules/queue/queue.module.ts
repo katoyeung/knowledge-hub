@@ -13,6 +13,15 @@ import { QueueCoreModule } from './queue-core.module';
           host: configService.get('REDIS_HOST'),
           port: configService.get('REDIS_PORT'),
         },
+        defaultJobOptions: {
+          removeOnComplete: configService.get('QUEUE_REMOVE_ON_COMPLETE', 10), // Keep only N completed jobs
+          removeOnFail: configService.get('QUEUE_REMOVE_ON_FAIL', 5), // Keep only N failed jobs
+          attempts: configService.get('QUEUE_MAX_ATTEMPTS', 3), // Retry failed jobs up to N times
+          backoff: {
+            type: 'exponential',
+            delay: configService.get('QUEUE_BACKOFF_DELAY', 2000),
+          },
+        },
       }),
     }),
     QueueCoreModule,

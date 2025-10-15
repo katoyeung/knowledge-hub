@@ -79,6 +79,50 @@ export class Document extends BaseEntity {
   @Column({ length: 255, default: 'waiting' })
   indexingStatus: string;
 
+  // Processing metadata for stage tracking
+  @Column('jsonb', { nullable: true })
+  processingMetadata: {
+    currentStage: 'chunking' | 'embedding' | 'ner' | 'completed';
+    chunking: {
+      startedAt: Date;
+      completedAt: Date;
+      segmentCount: number;
+    };
+    embedding: {
+      startedAt: Date;
+      completedAt: Date;
+      processedCount: number;
+      totalCount: number;
+    };
+    ner: {
+      startedAt: Date;
+      completedAt: Date;
+      processedCount: number;
+      totalCount: number;
+      enabled: boolean;
+    };
+  };
+
+  // Job tracking fields
+  @Column('jsonb', { nullable: true })
+  stageProgress: {
+    [stage: string]: {
+      current: number;
+      total: number;
+      percentage: number;
+    };
+  };
+
+  @Column('simple-array', { nullable: true })
+  activeJobIds: string[];
+
+  @Column('jsonb', { nullable: true })
+  lastError: {
+    stage: string;
+    message: string;
+    timestamp: Date;
+  } | null;
+
   @Column({ default: true })
   enabled: boolean;
 

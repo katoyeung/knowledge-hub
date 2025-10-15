@@ -7,8 +7,9 @@ export class JobRegistryService {
   private readonly jobs: Map<string, any> = new Map();
 
   register(job: any): void {
-    this.jobs.set(job.name, job);
-    this.logger.debug(`Registered job: ${job.name}`);
+    const jobName = job.jobType || job.name;
+    this.jobs.set(jobName, job);
+    this.logger.debug(`Registered job: ${jobName}`);
   }
 
   getJob(name: string): any {

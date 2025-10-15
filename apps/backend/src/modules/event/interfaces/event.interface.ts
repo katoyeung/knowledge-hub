@@ -61,8 +61,33 @@ export interface SystemEvent extends BaseEvent {
   };
 }
 
+export interface DocumentEvent extends BaseEvent {
+  type:
+    | EventTypes.DOCUMENT_UPLOADED
+    | EventTypes.DOCUMENT_PROCESSING_STARTED
+    | EventTypes.DOCUMENT_PROCESSING_COMPLETED
+    | EventTypes.DOCUMENT_PROCESSING_FAILED
+    | EventTypes.DOCUMENT_SEGMENTS_CREATED
+    | EventTypes.DOCUMENT_CHUNKING_STARTED
+    | EventTypes.DOCUMENT_CHUNKING_COMPLETED
+    | EventTypes.DOCUMENT_CHUNKING_FAILED
+    | EventTypes.DOCUMENT_EMBEDDING_STARTED
+    | EventTypes.DOCUMENT_EMBEDDING_COMPLETED
+    | EventTypes.DOCUMENT_EMBEDDING_FAILED
+    | EventTypes.DOCUMENT_NER_STARTED
+    | EventTypes.DOCUMENT_NER_COMPLETED
+    | EventTypes.DOCUMENT_NER_FAILED;
+  payload: {
+    documentId: string;
+    datasetId?: string;
+    segmentCount?: number;
+    error?: string;
+  };
+}
+
 export type Event =
   | InstrumentEvent
   | MarketDataEvent
   | QueueEvent
-  | SystemEvent;
+  | SystemEvent
+  | DocumentEvent;

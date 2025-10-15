@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2 } from 'lucide-react'
+import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2, RotateCcw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { documentApi, type Document } from '@/lib/api'
+import { documentApi, type Document, type Dataset } from '@/lib/api'
 import { DocumentPreviewModal } from './document-preview-modal'
+import { DatasetDocumentUploadModal } from './dataset-document-upload-modal'
 import { useDocumentProcessingNotifications } from '@/lib/hooks/use-notifications'
 
 interface DatasetDocumentsPanelProps {
@@ -16,6 +17,7 @@ interface DatasetDocumentsPanelProps {
     onSelectedDocumentsChange?: (selectedDocuments: Document[]) => void
     onCollapse?: () => void
     showCollapseButton?: boolean
+    dataset?: Dataset
 }
 
 export function DatasetDocumentsPanel({
@@ -24,7 +26,8 @@ export function DatasetDocumentsPanel({
     loading: propLoading,
     onSelectedDocumentsChange,
     onCollapse,
-    showCollapseButton = true
+    showCollapseButton = true,
+    dataset
 }: DatasetDocumentsPanelProps) {
     const [documents, setDocuments] = useState<Document[]>([])
     const [loading, setLoading] = useState(true)
@@ -32,6 +35,7 @@ export function DatasetDocumentsPanel({
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editName, setEditName] = useState('')
     const [showAddDocument, setShowAddDocument] = useState(false)
+    const [showUploadModal, setShowUploadModal] = useState(false)
     const [previewDocument, setPreviewDocument] = useState<Document | null>(null)
     const [showPreview, setShowPreview] = useState(false)
     const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
@@ -40,8 +44,38 @@ export function DatasetDocumentsPanel({
     const hasUserInteracted = useRef<boolean>(false)
     const lastNotifiedSelectedDocs = useRef<Set<string>>(new Set())
 
+    // Helper function to get status display information
+    const getStatusInfo = (status: string) => {
+        switch (status) {
+            case 'waiting':
+                return { text: 'Waiting', color: 'text-gray-500', bgColor: 'bg-gray-100' }
+            case 'chunking':
+                return { text: 'Chunking', color: 'text-blue-600', bgColor: 'bg-blue-100' }
+            case 'chunked':
+                return { text: 'Chunked', color: 'text-blue-600', bgColor: 'bg-blue-100' }
+            case 'embedding':
+                return { text: 'Embedding', color: 'text-purple-600', bgColor: 'bg-purple-100' }
+            case 'embedded':
+                return { text: 'Embedded', color: 'text-purple-600', bgColor: 'bg-purple-100' }
+            case 'ner_processing':
+                return { text: 'NER Processing', color: 'text-orange-600', bgColor: 'bg-orange-100' }
+            case 'completed':
+                return { text: 'Completed', color: 'text-green-600', bgColor: 'bg-green-100' }
+            case 'chunking_failed':
+                return { text: 'Chunking Failed', color: 'text-red-600', bgColor: 'bg-red-100' }
+            case 'embedding_failed':
+                return { text: 'Embedding Failed', color: 'text-red-600', bgColor: 'bg-red-100' }
+            case 'ner_failed':
+                return { text: 'NER Failed', color: 'text-red-600', bgColor: 'bg-red-100' }
+            case 'error':
+                return { text: 'Error', color: 'text-red-600', bgColor: 'bg-red-100' }
+            default:
+                return { text: status, color: 'text-gray-500', bgColor: 'bg-gray-100' }
+        }
+    }
+
     // Handle document processing notifications
-    const handleDocumentProcessingUpdate = useCallback((notification: any) => {
+    const handleDocumentProcessingUpdate = useCallback((notification: { documentId: string; status: string; wordCount?: number; embeddingDimensions?: number }) => {
         console.log('Document processing update:', notification)
 
         // Update the specific document in the list
@@ -51,10 +85,33 @@ export function DatasetDocumentsPanel({
                     ...doc,
                     indexingStatus: notification.status,
                     wordCount: notification.wordCount || doc.wordCount,
+                    embeddingDimensions: notification.embeddingDimensions || doc.embeddingDimensions,
                 }
             }
             return doc
         }))
+
+        // Auto-select newly completed documents
+        if (notification.status === 'completed' && !lastNotifiedSelectedDocs.current.has(notification.documentId)) {
+            setSelectedDocuments(prev => {
+                const newSet = new Set(prev)
+                newSet.add(notification.documentId)
+                return newSet
+            })
+            lastNotifiedSelectedDocs.current.add(notification.documentId)
+        }
+    }, [])
+
+    // Handle upload success
+    const handleUploadSuccess = useCallback((newDocuments: Document[]) => {
+        // Add new documents to the list
+        setDocuments(prev => [...prev, ...newDocuments])
+
+        // Don't auto-select immediately - wait for processing to complete
+        // Auto-selection will happen via notification handler when status becomes 'completed'
+
+        // Close the upload modal
+        setShowUploadModal(false)
     }, [])
 
     // Set up notifications for this dataset
@@ -142,7 +199,10 @@ export function DatasetDocumentsPanel({
                 status === 'processing' ||
                 status === 'parsing' ||
                 status === 'splitting' ||
-                status === 'indexing'
+                status === 'indexing' ||
+                status === 'chunking' ||
+                status === 'embedding' ||
+                status === 'ner_processing'
 
             if (previousStatus &&
                 isProcessingStatus(previousStatus) &&
@@ -222,10 +282,11 @@ export function DatasetDocumentsPanel({
         })
     }
 
-    // Handle select all documents
+    // Handle select all documents (only completed ones)
     const selectAllDocuments = () => {
         hasUserInteracted.current = true
-        setSelectedDocuments(new Set(documents.map(doc => doc.id)))
+        const completedDocuments = documents.filter(doc => doc.indexingStatus === 'completed')
+        setSelectedDocuments(new Set(completedDocuments.map(doc => doc.id)))
     }
 
     // Handle deselect all documents
@@ -243,6 +304,25 @@ export function DatasetDocumentsPanel({
             } catch (err) {
                 console.error('Failed to delete document:', err)
             }
+        }
+    }
+
+    const handleResume = async (documentId: string) => {
+        try {
+            const result = await documentApi.resume(documentId)
+            console.log('Document processing resumed:', result.message)
+
+            // Update the document status to show it's processing
+            setDocuments(prev => prev.map(doc =>
+                doc.id === documentId
+                    ? { ...doc, indexingStatus: 'processing' }
+                    : doc
+            ))
+
+            closeDropdown()
+        } catch (err) {
+            console.error('Failed to resume document processing:', err)
+            alert('Failed to resume document processing. Please try again.')
         }
     }
 
@@ -267,7 +347,7 @@ export function DatasetDocumentsPanel({
                     <div className="flex items-center gap-2">
                         <Button
                             size="sm"
-                            onClick={() => setShowAddDocument(true)}
+                            onClick={() => setShowUploadModal(true)}
                             className="flex items-center gap-2"
                         >
                             <Plus className="h-4 w-4" />
@@ -287,15 +367,27 @@ export function DatasetDocumentsPanel({
                     <div className="h-8 flex items-center justify-between">
                         <span className="text-sm text-gray-600">Select all sources</span>
                         <button
-                            onClick={selectedDocuments.size === documents.length ? deselectAllDocuments : selectAllDocuments}
+                            onClick={() => {
+                                const completedDocuments = documents.filter(doc => doc.indexingStatus === 'completed')
+                                const allCompletedSelected = completedDocuments.length > 0 && completedDocuments.every(doc => selectedDocuments.has(doc.id))
+                                if (allCompletedSelected) {
+                                    deselectAllDocuments()
+                                } else {
+                                    selectAllDocuments()
+                                }
+                            }}
                             className="p-1 hover:bg-gray-200 rounded"
-                            title={selectedDocuments.size === documents.length ? "Deselect all documents" : "Select all documents"}
+                            title="Select all completed documents"
                         >
-                            {selectedDocuments.size === documents.length ? (
-                                <CheckSquare className="h-4 w-4 text-blue-600" />
-                            ) : (
-                                <Square className="h-4 w-4 text-gray-400" />
-                            )}
+                            {(() => {
+                                const completedDocuments = documents.filter(doc => doc.indexingStatus === 'completed')
+                                const allCompletedSelected = completedDocuments.length > 0 && completedDocuments.every(doc => selectedDocuments.has(doc.id))
+                                return allCompletedSelected ? (
+                                    <CheckSquare className="h-4 w-4 text-blue-600" />
+                                ) : (
+                                    <Square className="h-4 w-4 text-gray-400" />
+                                )
+                            })()}
                         </button>
                     </div>
                 )}
@@ -378,10 +470,14 @@ export function DatasetDocumentsPanel({
                                                     className="p-1 hover:bg-gray-200 rounded transition-all duration-200"
                                                     title="More actions"
                                                 >
-                                                    {(document.indexingStatus === 'processing' ||
+                                                    {(document.indexingStatus === 'waiting' ||
+                                                        document.indexingStatus === 'processing' ||
                                                         document.indexingStatus === 'parsing' ||
                                                         document.indexingStatus === 'splitting' ||
-                                                        document.indexingStatus === 'indexing') ? (
+                                                        document.indexingStatus === 'indexing' ||
+                                                        document.indexingStatus === 'chunking' ||
+                                                        document.indexingStatus === 'embedding' ||
+                                                        document.indexingStatus === 'ner_processing') ? (
                                                         <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
                                                     ) : (
                                                         <>
@@ -404,6 +500,21 @@ export function DatasetDocumentsPanel({
                                                             <FileText className="h-3 w-3 text-gray-500" />
                                                             Preview document
                                                         </button>
+                                                        {(document.indexingStatus === 'chunking_failed' ||
+                                                            document.indexingStatus === 'embedding_failed' ||
+                                                            document.indexingStatus === 'ner_failed' ||
+                                                            document.indexingStatus === 'error') && (
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation()
+                                                                        handleResume(document.id)
+                                                                    }}
+                                                                    className="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2"
+                                                                >
+                                                                    <RotateCcw className="h-3 w-3 text-blue-500" />
+                                                                    Resume processing
+                                                                </button>
+                                                            )}
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation()
@@ -429,13 +540,53 @@ export function DatasetDocumentsPanel({
                                                 )}
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <p
-                                                    className="text-sm font-medium text-gray-900 truncate cursor-pointer hover:text-blue-600 transition-colors"
-                                                    onClick={() => handlePreviewDocument(document)}
-                                                    title="Click to preview document content"
-                                                >
-                                                    {document.name}
-                                                </p>
+                                                <div className="flex flex-col gap-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <p
+                                                            className="text-sm font-medium text-gray-900 truncate cursor-pointer hover:text-blue-600 transition-colors"
+                                                            onClick={() => handlePreviewDocument(document)}
+                                                            title="Click to preview document content"
+                                                        >
+                                                            {document.name}
+                                                        </p>
+                                                        {(() => {
+                                                            const statusInfo = getStatusInfo(document.indexingStatus)
+                                                            return (
+                                                                <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusInfo.bgColor} ${statusInfo.color}`}>
+                                                                    {statusInfo.text}
+                                                                </span>
+                                                            )
+                                                        })()}
+                                                    </div>
+
+                                                    {/* Document metadata */}
+                                                    <div className="flex items-center gap-3 text-xs text-gray-500">
+                                                        {document.wordCount && (
+                                                            <span>{document.wordCount.toLocaleString()} words</span>
+                                                        )}
+                                                        {document.docType && (
+                                                            <span className="capitalize">{document.docType}</span>
+                                                        )}
+                                                        {document.processingMetadata?.ner && (
+                                                            <div className="flex items-center gap-1">
+                                                                <span>NER:</span>
+                                                                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${document.processingMetadata.ner.enabled
+                                                                        ? document.processingMetadata.ner.completedAt
+                                                                            ? 'bg-green-100 text-green-700'
+                                                                            : 'bg-blue-100 text-blue-700'
+                                                                        : 'bg-gray-100 text-gray-700'
+                                                                    }`}>
+                                                                    {document.processingMetadata.ner.enabled
+                                                                        ? document.processingMetadata.ner.completedAt
+                                                                            ? 'Completed'
+                                                                            : 'Processing'
+                                                                        : 'Disabled'
+                                                                    }
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </>
                                     )}
@@ -467,15 +618,29 @@ export function DatasetDocumentsPanel({
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation()
-                                                toggleDocumentSelection(document.id)
+                                                // Only allow selection if document is completed
+                                                if (document.indexingStatus === 'completed') {
+                                                    toggleDocumentSelection(document.id)
+                                                }
                                             }}
-                                            className="p-1 hover:bg-gray-200 rounded"
-                                            title={selectedDocuments.has(document.id) ? "Deselect document" : "Select document"}
+                                            className={`p-1 rounded ${document.indexingStatus === 'completed'
+                                                ? 'hover:bg-gray-200'
+                                                : 'cursor-not-allowed opacity-50'
+                                                }`}
+                                            disabled={document.indexingStatus !== 'completed'}
+                                            title={
+                                                document.indexingStatus === 'completed'
+                                                    ? (selectedDocuments.has(document.id) ? "Deselect document" : "Select document")
+                                                    : "Document is still processing"
+                                            }
                                         >
                                             {selectedDocuments.has(document.id) ? (
                                                 <CheckSquare className="h-4 w-4 text-blue-600" />
                                             ) : (
-                                                <Square className="h-4 w-4 text-gray-400" />
+                                                <Square className={`h-4 w-4 ${document.indexingStatus === 'completed'
+                                                    ? 'text-gray-400'
+                                                    : 'text-gray-300'
+                                                    }`} />
                                             )}
                                         </button>
                                     )}
@@ -492,6 +657,16 @@ export function DatasetDocumentsPanel({
                 isOpen={showPreview}
                 onClose={handleClosePreview}
             />
+
+            {/* Document Upload Modal */}
+            {dataset && (
+                <DatasetDocumentUploadModal
+                    isOpen={showUploadModal}
+                    onClose={() => setShowUploadModal(false)}
+                    dataset={dataset}
+                    onUploadSuccess={handleUploadSuccess}
+                />
+            )}
         </div >
     )
 }
