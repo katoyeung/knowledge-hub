@@ -5,6 +5,7 @@ import {
   notificationService,
   DocumentProcessingNotification,
   DatasetNotification,
+  GraphExtractionNotification,
 } from "../notification-service";
 
 export interface UseNotificationsOptions {
@@ -13,6 +14,7 @@ export interface UseNotificationsOptions {
     notification: DocumentProcessingNotification
   ) => void;
   onDatasetUpdate?: (notification: DatasetNotification) => void;
+  onGraphExtractionUpdate?: (notification: GraphExtractionNotification) => void;
   onConnected?: () => void;
   onError?: (error: Event) => void;
   onMaxReconnectAttemptsReached?: () => void;
@@ -23,6 +25,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
     clientId,
     onDocumentProcessingUpdate,
     onDatasetUpdate,
+    onGraphExtractionUpdate,
     onConnected,
     onError,
     onMaxReconnectAttemptsReached,
@@ -32,7 +35,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
 
   useEffect(() => {
     // Connect to notification service only if we're in the browser
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       notificationService.connect(clientId);
     }
 
@@ -45,6 +48,10 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
 
     if (onDatasetUpdate) {
       notificationService.onDatasetUpdate(onDatasetUpdate);
+    }
+
+    if (onGraphExtractionUpdate) {
+      notificationService.onGraphExtractionUpdate(onGraphExtractionUpdate);
     }
 
     if (onConnected) {
@@ -82,6 +89,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
     clientId,
     onDocumentProcessingUpdate,
     onDatasetUpdate,
+    onGraphExtractionUpdate,
     onConnected,
     onError,
     onMaxReconnectAttemptsReached,
@@ -115,6 +123,20 @@ export function useDatasetNotifications(
 ) {
   return useNotifications({
     onDatasetUpdate: (notification) => {
+      if (notification.datasetId === datasetId) {
+        onUpdate(notification);
+      }
+    },
+  });
+}
+
+// Hook specifically for graph extraction notifications
+export function useGraphExtractionNotifications(
+  datasetId: string,
+  onUpdate: (notification: GraphExtractionNotification) => void
+) {
+  return useNotifications({
+    onGraphExtractionUpdate: (notification) => {
       if (notification.datasetId === datasetId) {
         onUpdate(notification);
       }

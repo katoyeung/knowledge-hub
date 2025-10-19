@@ -179,4 +179,40 @@ export class QueueManagerService {
       throw error;
     }
   }
+
+  async getQueueStats(): Promise<{
+    total: number;
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    delayed: number;
+  }> {
+    try {
+      const [waiting, active, completed, failed, delayed] = await Promise.all([
+        this.queue.getWaiting(),
+        this.queue.getActive(),
+        this.queue.getCompleted(),
+        this.queue.getFailed(),
+        this.queue.getDelayed(),
+      ]);
+
+      return {
+        total:
+          waiting.length +
+          active.length +
+          completed.length +
+          failed.length +
+          delayed.length,
+        waiting: waiting.length,
+        active: active.length,
+        completed: completed.length,
+        failed: failed.length,
+        delayed: delayed.length,
+      };
+    } catch (error) {
+      this.logger.error('Failed to get queue stats:', error);
+      throw error;
+    }
+  }
 }

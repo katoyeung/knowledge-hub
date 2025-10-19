@@ -1,13 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2, RotateCcw } from 'lucide-react'
+import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2, RotateCcw, Network } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { documentApi, type Document, type Dataset } from '@/lib/api'
+import { documentApi, datasetApi, type Document, type Dataset } from '@/lib/api'
 import { DocumentPreviewModal } from './document-preview-modal'
 import { DatasetDocumentUploadModal } from './dataset-document-upload-modal'
-import { useDocumentProcessingNotifications } from '@/lib/hooks/use-notifications'
+import { useDocumentProcessingNotifications, useGraphExtractionNotifications } from '@/lib/hooks/use-notifications'
 
 interface DatasetDocumentsPanelProps {
     datasetId: string
@@ -40,6 +40,7 @@ export function DatasetDocumentsPanel({
     const [showPreview, setShowPreview] = useState(false)
     const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
     const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set())
+    const [extractingGraphs, setExtractingGraphs] = useState<Set<string>>(new Set())
     const previousDocumentStatuses = useRef<Map<string, string>>(new Map())
     const hasUserInteracted = useRef<boolean>(false)
     const lastNotifiedSelectedDocs = useRef<Set<string>>(new Set())
@@ -102,6 +103,26 @@ export function DatasetDocumentsPanel({
         }
     }, [])
 
+    const handleGraphExtractionUpdate = useCallback((notification: { documentId: string; stage: string; message?: string; nodesCreated?: number; edgesCreated?: number; error?: string }) => {
+        console.log('Graph extraction update:', notification)
+
+        // Update extracting state
+        if (notification.stage === 'completed' || notification.stage === 'error') {
+            setExtractingGraphs(prev => {
+                const newSet = new Set(prev)
+                newSet.delete(notification.documentId)
+                return newSet
+            })
+        }
+
+        // Show toast notification for important updates
+        if (notification.stage === 'completed') {
+            console.log(`Graph extraction completed: ${notification.nodesCreated} nodes, ${notification.edgesCreated} edges created`)
+        } else if (notification.stage === 'error') {
+            console.error(`Graph extraction failed: ${notification.error}`)
+        }
+    }, [])
+
     // Handle upload success
     const handleUploadSuccess = useCallback((newDocuments: Document[]) => {
         // Add new documents to the list
@@ -116,6 +137,7 @@ export function DatasetDocumentsPanel({
 
     // Set up notifications for this dataset
     useDocumentProcessingNotifications(datasetId, handleDocumentProcessingUpdate)
+    useGraphExtractionNotifications(datasetId, handleGraphExtractionUpdate)
 
     const loadDocuments = useCallback(async () => {
         try {
@@ -326,6 +348,26 @@ export function DatasetDocumentsPanel({
         }
     }
 
+    const handleExtractGraph = async (documentId: string) => {
+        try {
+            setExtractingGraphs(prev => new Set(prev).add(documentId))
+
+            const result = await datasetApi.triggerGraphExtraction(datasetId, documentId)
+            console.log('Graph extraction triggered:', result.message)
+
+            closeDropdown()
+        } catch (err) {
+            console.error('Failed to trigger graph extraction:', err)
+            alert('Failed to trigger graph extraction. Please try again.')
+        } finally {
+            setExtractingGraphs(prev => {
+                const newSet = new Set(prev)
+                newSet.delete(documentId)
+                return newSet
+            })
+        }
+    }
+
 
     if (loading) {
         return (
@@ -515,6 +557,23 @@ export function DatasetDocumentsPanel({
                                                                     Resume processing
                                                                 </button>
                                                             )}
+                                                        {document.indexingStatus === 'completed' && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation()
+                                                                    handleExtractGraph(document.id)
+                                                                }}
+                                                                disabled={extractingGraphs.has(document.id)}
+                                                                className="w-full px-3 py-2 text-left text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                {extractingGraphs.has(document.id) ? (
+                                                                    <Loader2 className="h-3 w-3 text-purple-500 animate-spin" />
+                                                                ) : (
+                                                                    <Network className="h-3 w-3 text-purple-500" />
+                                                                )}
+                                                                {extractingGraphs.has(document.id) ? 'Extracting...' : 'Extract Graph'}
+                                                            </button>
+                                                        )}
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation()
@@ -571,10 +630,10 @@ export function DatasetDocumentsPanel({
                                                             <div className="flex items-center gap-1">
                                                                 <span>NER:</span>
                                                                 <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${document.processingMetadata.ner.enabled
-                                                                        ? document.processingMetadata.ner.completedAt
-                                                                            ? 'bg-green-100 text-green-700'
-                                                                            : 'bg-blue-100 text-blue-700'
-                                                                        : 'bg-gray-100 text-gray-700'
+                                                                    ? document.processingMetadata.ner.completedAt
+                                                                        ? 'bg-green-100 text-green-700'
+                                                                        : 'bg-blue-100 text-blue-700'
+                                                                    : 'bg-gray-100 text-gray-700'
                                                                     }`}>
                                                                     {document.processingMetadata.ner.enabled
                                                                         ? document.processingMetadata.ner.completedAt

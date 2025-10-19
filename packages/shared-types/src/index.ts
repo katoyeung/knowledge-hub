@@ -52,9 +52,18 @@ export const ChatSettingsSchema = z.object({
   conversationHistoryLimit: z.number().min(1).max(50).optional(),
 });
 
+// Graph Settings schema
+export const GraphSettingsSchema = z.object({
+  aiProviderId: z.string().uuid().optional(),
+  model: z.string().optional(),
+  promptId: z.string().uuid().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+});
+
 // User Settings schema
 export const UserSettingsSchema = z.object({
   chat_settings: ChatSettingsSchema.optional(),
+  graph_settings: GraphSettingsSchema.optional(),
 });
 
 // User schema
@@ -216,4 +225,5 @@ export type {
 
 // Export settings types
 export type ChatSettings = z.infer<typeof ChatSettingsSchema>;
+export type GraphSettings = z.infer<typeof GraphSettingsSchema>;
 export type UserSettings = z.infer<typeof UserSettingsSchema>;

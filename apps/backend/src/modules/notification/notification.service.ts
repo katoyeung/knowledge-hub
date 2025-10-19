@@ -7,6 +7,7 @@ export enum NotificationType {
   INDICATOR_UPDATE = 'INDICATOR_UPDATE',
   DOCUMENT_PROCESSING_UPDATE = 'DOCUMENT_PROCESSING_UPDATE',
   DATASET_UPDATE = 'DATASET_UPDATE',
+  GRAPH_EXTRACTION_UPDATE = 'GRAPH_EXTRACTION_UPDATE',
 }
 
 export interface NotificationMessage {
@@ -70,6 +71,14 @@ export class NotificationService {
   sendDatasetUpdate(datasetId: string, data: any) {
     this.sendNotification(NotificationType.DATASET_UPDATE, {
       datasetId,
+      ...data,
+    });
+  }
+
+  sendGraphExtractionUpdate(datasetId: string, documentId: string, data: any) {
+    this.sendNotification(NotificationType.GRAPH_EXTRACTION_UPDATE, {
+      datasetId,
+      documentId,
       ...data,
     });
   }

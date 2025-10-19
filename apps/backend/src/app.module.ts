@@ -20,11 +20,14 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventModule } from '@modules/event/event.module';
 import { SchedulerModule } from '@modules/scheduler/scheduler.module';
 import { DocumentParserModule } from '@modules/document-parser/document-parser.module';
+import { CsvConnectorModule } from '@modules/csv-connector/csv-connector.module';
 import { ChatModule } from '@modules/chat/chat.module';
+import { GraphModule } from '@modules/graph/graph.module';
 import { Document } from './modules/dataset/entities/document.entity';
 import { DocumentSegment } from './modules/dataset/entities/document-segment.entity';
 import { QueueSharedModule } from './modules/queue/queue-shared.module';
 import { DocumentJobsModule } from './modules/queue/jobs/document/document-jobs.module';
+import { GraphJobsModule } from './modules/queue/jobs/graph/graph-jobs.module';
 
 @Module({
   imports: [
@@ -51,16 +54,19 @@ import { DocumentJobsModule } from './modules/queue/jobs/document/document-jobs.
     AiProviderModule,
     PromptsModule,
     DocumentParserModule,
+    CsvConnectorModule,
     ChatModule,
+    GraphModule,
     NotificationModule,
+    QueueSharedModule,
     QueueModule,
     QueueCoreModule,
+    DocumentJobsModule,
+    GraphJobsModule,
     EventEmitterModule.forRoot(),
     EventModule,
     SchedulerModule,
     TypeOrmModule.forFeature([Document, DocumentSegment]),
-    QueueSharedModule,
-    DocumentJobsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

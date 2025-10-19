@@ -45,10 +45,18 @@ export class CreateAiProviderDto {
 
   @IsString()
   @IsIn(
-    ['openai', 'anthropic', 'openrouter', 'dashscope', 'perplexity', 'custom'],
+    [
+      'openai',
+      'anthropic',
+      'openrouter',
+      'dashscope',
+      'perplexity',
+      'ollama',
+      'custom',
+    ],
     {
       message:
-        'Type must be one of: openai, anthropic, openrouter, dashscope, perplexity, custom',
+        'Type must be one of: openai, anthropic, openrouter, dashscope, perplexity, ollama, custom',
     },
   )
   type:
@@ -57,6 +65,7 @@ export class CreateAiProviderDto {
     | 'openrouter'
     | 'dashscope'
     | 'perplexity'
+    | 'ollama'
     | 'custom';
 
   @IsOptional()

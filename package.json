@@ -37,6 +37,7 @@
   },
   "packageManager": "npm@10.5.0",
   "dependencies": {
+    "eventsource": "^4.0.0",
     "typeorm": "https://pkg.pr.new/typeorm/typeorm@11437"
   }
 }

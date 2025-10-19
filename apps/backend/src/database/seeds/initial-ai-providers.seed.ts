@@ -285,14 +285,6 @@ export class InitialAiProvidersSeed {
             contextWindow: 4096,
             pricing: { input: 5.0, output: 5.0 },
           },
-          {
-            id: 'sonar-small',
-            name: 'Sonar Small',
-            description: 'Faster Perplexity model',
-            maxTokens: 4096,
-            contextWindow: 4096,
-            pricing: { input: 1.0, output: 1.0 },
-          },
         ],
       },
       {

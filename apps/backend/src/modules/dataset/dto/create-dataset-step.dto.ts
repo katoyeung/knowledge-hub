@@ -6,6 +6,7 @@ import {
   IsArray,
   IsUUID,
   IsBoolean,
+  IsObject,
   Min,
   Max,
   MinLength,
@@ -370,6 +371,20 @@ export class UploadDocumentDto {
   @IsString()
   @MaxLength(255, { message: 'Dataset ID must not exceed 255 characters' })
   datasetId?: string;
+
+  // CSV-specific fields
+  @IsOptional()
+  @IsString()
+  csvConnectorType?: string;
+
+  @IsOptional()
+  @IsObject()
+  csvFieldMappings?: Record<string, string>; // For custom connector
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  csvSearchableColumns?: string[]; // For custom connector
 }
 
 export class SearchDocumentsDto {

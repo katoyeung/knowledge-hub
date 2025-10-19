@@ -5,6 +5,7 @@ import {
   ValidationPipe,
   Get,
   Patch,
+  Put,
   Param,
   Body,
   Request,
@@ -18,6 +19,7 @@ import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
 import { PermsGuard } from '@modules/access/guards/permissions.guard';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateUserGraphSettingsDto } from './dto/update-user-graph-settings.dto';
 import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
 @Crud({
@@ -86,5 +88,28 @@ export class UserController implements CrudController<User> {
       throw new Error('Unauthorized to update user settings');
     }
     return this.service.updateUserSettings(id, settings);
+  }
+
+  @Put(':id/graph-settings')
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async updateUserGraphSettings(
+    @Param('id') id: string,
+    @Body() updateUserGraphSettingsDto: UpdateUserGraphSettingsDto,
+    @Request() req: any,
+  ) {
+    // Ensure user can only update their own graph settings
+    if (req.user.id !== id) {
+      throw new Error('Unauthorized to update user graph settings');
+    }
+    return this.service.updateUserGraphSettings(id, updateUserGraphSettingsDto);
+  }
+
+  @Get(':id/graph-settings')
+  async getUserGraphSettings(@Param('id') id: string, @Request() req: any) {
+    // Ensure user can only access their own graph settings
+    if (req.user.id !== id) {
+      throw new Error('Unauthorized to access user graph settings');
+    }
+    return this.service.getUserGraphSettings(id);
   }
 }

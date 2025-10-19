@@ -15,7 +15,7 @@ import { CACHE_KEYS } from '@common/constants/cache-keys';
 import { firstValueFrom } from 'rxjs';
 
 @Injectable()
-export abstract class RefactoredBaseLLMClient
+export abstract class BaseLLMClientV2
   extends BaseApiClient
   implements LLMClient
 {
@@ -31,7 +31,7 @@ export abstract class RefactoredBaseLLMClient
       {
         baseUrl: '', // Will be set by initializeConfig
         apiKey: '', // Will be set by initializeConfig
-        timeout: 30000,
+        timeout: 300000,
         cacheTTL: 0,
       },
       httpService,
@@ -53,7 +53,7 @@ export abstract class RefactoredBaseLLMClient
       ) * 1000;
   }
 
-  protected get defaultModel(): string {
+  protected get defaultModel(): string | undefined {
     return this.providerConfig.defaultModel;
   }
 
@@ -115,10 +115,17 @@ export abstract class RefactoredBaseLLMClient
   // Common implementation for all providers
   async chatCompletion(
     messages: LLMMessage[],
-    model: string = this.defaultModel,
+    model: string = this.defaultModel || '',
     jsonSchema?: Record<string, any>,
     temperature?: number,
   ): Promise<ApiResponse<LLMResponse>> {
+    // Validate that model is provided
+    if (!model) {
+      throw new Error(
+        'Model is required but not provided. Please configure a model in your dataset settings.',
+      );
+    }
+
     const cacheKey = this.getLLMCacheKey(
       messages,
       model,
@@ -162,7 +169,7 @@ export abstract class RefactoredBaseLLMClient
   // Common streaming implementation
   async *chatCompletionStream(
     messages: LLMMessage[],
-    model: string = this.defaultModel,
+    model: string = this.defaultModel || '',
     jsonSchema?: Record<string, any>,
     temperature?: number,
   ): AsyncGenerator<string, void, unknown> {
@@ -223,8 +230,15 @@ export abstract class RefactoredBaseLLMClient
       if (this.providerConfig.supportsJsonSchema) {
         payload.response_format = {
           type: 'json_schema',
-          json_schema: jsonSchema,
+          json_schema: {
+            name: 'graph_extraction',
+            strict: true,
+            schema: jsonSchema,
+          },
         };
+      } else if (this.providerConfig.supportsStructuredOutput) {
+        // Handle structured output format based on provider type
+        this.addStructuredOutputFormat(payload, jsonSchema);
       } else {
         // Inject into system message for providers that don't support it natively
         this.injectJsonSchema(messages, jsonSchema);
@@ -232,6 +246,145 @@ export abstract class RefactoredBaseLLMClient
     }
 
     return payload;
+  }
+
+  /**
+   * Build request payload with structured output from a prompt
+   */
+  protected buildRequestPayloadFromPrompt(
+    messages: LLMMessage[],
+    model: string,
+    prompt: any,
+    temperature?: number,
+    stream?: boolean,
+  ): any {
+    const payload: any = {
+      model,
+      messages,
+      temperature: temperature || 0.7,
+      max_tokens: 4096,
+      stream: stream || false,
+    };
+
+    // Extract structured output configuration from prompt
+    if (prompt?.jsonSchema) {
+      const structuredOutput = this.adaptPromptSchemaForProvider(prompt);
+      if (structuredOutput) {
+        // Merge structured output into payload
+        Object.assign(payload, structuredOutput);
+      }
+    }
+
+    return payload;
+  }
+
+  /**
+   * Adapt prompt schema for the current provider
+   */
+  protected adaptPromptSchemaForProvider(prompt: any): any {
+    if (!prompt?.jsonSchema) {
+      return null;
+    }
+
+    const schema = prompt.jsonSchema;
+    const providerType = this.getProviderType();
+
+    // Handle different schema structures
+    const normalizedSchema = this.normalizeSchema(schema);
+
+    if (this.providerConfig.supportsJsonSchema) {
+      return this.buildOpenAIFormat(normalizedSchema, prompt);
+    } else if (this.providerConfig.supportsStructuredOutput) {
+      return this.buildProviderSpecificFormat(normalizedSchema, providerType);
+    } else {
+      // For providers without native support, inject into system message
+      this.injectJsonSchema(prompt.messages || [], normalizedSchema);
+      return {};
+    }
+  }
+
+  /**
+   * Get the provider type for this client
+   */
+  protected getProviderType(): string {
+    // This should be overridden by each provider implementation
+    return 'custom';
+  }
+
+  /**
+   * Normalize schema to handle different input formats
+   */
+  protected normalizeSchema(schema: any): any {
+    // Handle nested schema structure (e.g., { schema: { ... } })
+    if (schema.schema) {
+      return schema.schema;
+    }
+
+    // Handle OpenAI format with json_schema wrapper
+    if (schema.json_schema) {
+      return schema.json_schema;
+    }
+
+    // Return as-is if already normalized
+    return schema;
+  }
+
+  /**
+   * Build OpenAI-compatible format
+   */
+  protected buildOpenAIFormat(schema: any, prompt: any): any {
+    return {
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: prompt.name || 'response',
+          strict: schema.strict ?? true,
+          schema: {
+            ...schema,
+            additionalProperties: schema.additionalProperties ?? false,
+          },
+        },
+      },
+    };
+  }
+
+  /**
+   * Build provider-specific format
+   */
+  protected buildProviderSpecificFormat(
+    schema: any,
+    providerType: string,
+  ): any {
+    switch (providerType) {
+      case 'ollama':
+        return {
+          format: {
+            type: 'object',
+            properties: schema.properties || {},
+            required: schema.required || [],
+            additionalProperties: schema.additionalProperties ?? false,
+          },
+        };
+
+      case 'anthropic':
+        return {
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'response',
+              strict: schema.strict ?? true,
+              schema: {
+                ...schema,
+                additionalProperties: schema.additionalProperties ?? false,
+              },
+            },
+          },
+        };
+
+      default:
+        // For custom providers, return empty object (will use system message injection)
+        return {};
+    }
   }
 
   protected buildHeaders(): Record<string, string> {
@@ -253,6 +406,13 @@ export abstract class RefactoredBaseLLMClient
     stream: boolean,
   ): Promise<any> {
     const requestPath = this.providerConfig.requestPath || '/chat/completions';
+
+    this.logger.debug(
+      `🔧 Making request to: ${this.config.baseUrl}${requestPath}`,
+    );
+    this.logger.debug(
+      `🔧 Request payload: ${JSON.stringify(payload, null, 2)}`,
+    );
 
     return await firstValueFrom(
       this.httpService.post(`${this.config.baseUrl}${requestPath}`, payload, {
@@ -341,7 +501,62 @@ export abstract class RefactoredBaseLLMClient
     }
   }
 
-  private injectJsonSchema(
+  private addStructuredOutputFormat(
+    payload: any,
+    jsonSchema: Record<string, any>,
+  ): void {
+    const format = this.providerConfig.structuredOutputFormat || 'openai';
+
+    switch (format) {
+      case 'openai':
+        // OpenAI format (already handled by supportsJsonSchema)
+        payload.response_format = {
+          type: 'json_schema',
+          json_schema: {
+            name: 'graph_extraction',
+            strict: true,
+            schema: jsonSchema,
+          },
+        };
+        break;
+
+      case 'ollama':
+        // Ollama format - uses 'format' field with JSON schema
+        payload.format = {
+          type: 'object',
+          properties: jsonSchema.properties || jsonSchema,
+          required:
+            jsonSchema.required ||
+            Object.keys(jsonSchema.properties || jsonSchema),
+        };
+        break;
+
+      case 'custom':
+        // Custom format - can be overridden by specific providers
+        this.addCustomStructuredOutputFormat(payload, jsonSchema);
+        break;
+
+      default:
+        // Fallback to system message injection
+        this.injectJsonSchema(payload.messages, jsonSchema);
+        break;
+    }
+  }
+
+  protected addCustomStructuredOutputFormat(
+    payload: any,
+    jsonSchema: Record<string, any>,
+  ): void {
+    // Default custom implementation - can be overridden by specific providers
+    payload.format = {
+      type: 'object',
+      properties: jsonSchema.properties || jsonSchema,
+      required:
+        jsonSchema.required || Object.keys(jsonSchema.properties || jsonSchema),
+    };
+  }
+
+  protected injectJsonSchema(
     messages: LLMMessage[],
     jsonSchema: Record<string, any>,
   ): void {

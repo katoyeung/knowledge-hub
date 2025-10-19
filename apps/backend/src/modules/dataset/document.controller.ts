@@ -35,6 +35,7 @@ import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
+import { ParseJsonStringsPipe } from '../../common/pipes/parse-json-strings.pipe';
 import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id.interceptor';
 
 @Crud({
@@ -104,19 +105,38 @@ export class DocumentController implements CrudController<Document> {
       throw new Error('Document ID is required');
     }
 
-    // Delete the document first
-    await this.service.deleteDocument(id);
+    this.logger.log(
+      `🗑️ Starting document deletion process for document: ${id}`,
+    );
 
-    // Stop ALL ongoing processing jobs asynchronously (don't wait)
-    this.documentProcessingService
-      .stopAllProcessingJobs(
-        'File deleted by user - clearing all processing jobs',
-      )
-      .catch((error) => {
-        this.logger.error('Failed to stop processing jobs:', error);
-      });
+    try {
+      // Step 1: Cancel all processing jobs for this specific document FIRST
+      this.logger.log(`🛑 Cancelling all processing jobs for document: ${id}`);
+      await this.documentProcessingService.cancelAllProcessingJobs(id);
+      this.logger.log(
+        `✅ Successfully cancelled processing jobs for document: ${id}`,
+      );
 
-    return { deleted: true };
+      // Step 2: Delete the document and all related data
+      this.logger.log(`🗑️ Deleting document and related data: ${id}`);
+      await this.service.deleteDocument(id);
+      this.logger.log(`✅ Successfully deleted document: ${id}`);
+
+      // Step 3: Stop ALL ongoing processing jobs asynchronously (cleanup any remaining jobs)
+      this.documentProcessingService
+        .stopAllProcessingJobs(
+          'File deleted by user - clearing all processing jobs',
+        )
+        .catch((error) => {
+          this.logger.error('Failed to stop remaining processing jobs:', error);
+        });
+
+      this.logger.log(`✅ Document deletion completed successfully: ${id}`);
+      return { deleted: true };
+    } catch (error) {
+      this.logger.error(`❌ Failed to delete document ${id}:`, error);
+      throw error;
+    }
   }
 
   @Post('upload')

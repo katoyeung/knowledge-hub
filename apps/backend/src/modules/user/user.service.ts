@@ -7,6 +7,7 @@ import { Cache } from 'cache-manager';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Role } from '@modules/access/entities/role.entity';
 import { Cacheable } from '../../common/decorators/cacheable.decorator';
+import { UpdateUserGraphSettingsDto } from './dto/update-user-graph-settings.dto';
 
 @Injectable()
 export class UserService extends TypeOrmCrudService<User> {
@@ -109,5 +110,46 @@ export class UserService extends TypeOrmCrudService<User> {
       roles: roles || [],
     });
     return this.userRepository.save(user);
+  }
+
+  async updateUserGraphSettings(
+    userId: string,
+    graphSettings: UpdateUserGraphSettingsDto,
+  ): Promise<object> {
+    const existingUser = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'settings'],
+    });
+
+    if (!existingUser) {
+      throw new Error('User not found');
+    }
+
+    const existingSettings = (existingUser.settings as any) || {};
+    const updatedSettings = {
+      ...existingSettings,
+      graph_settings: {
+        ...(existingSettings.graph_settings || {}),
+        ...graphSettings,
+      },
+    };
+
+    await this.userRepository.update(userId, { settings: updatedSettings });
+    await this.invalidateUserCache(userId);
+
+    return updatedSettings;
+  }
+
+  async getUserGraphSettings(userId: string): Promise<object> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'settings'],
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    return (user.settings as any)?.graph_settings || {};
   }
 }

@@ -1,4 +1,14 @@
-import { IsString, IsOptional, IsUUID, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsUUID,
+  MaxLength,
+  IsEnum,
+  IsObject,
+  IsArray,
+} from 'class-validator';
+import { Transform } from 'class-transformer';
+import { CsvConnectorType } from '../../csv-connector/dto/csv-upload-config.dto';
 
 export class UploadDocumentDto {
   @IsOptional()
@@ -48,4 +58,38 @@ export class UploadDocumentDto {
   @IsString()
   @MaxLength(255, { message: 'Doc language must not exceed 255 characters' })
   docLanguage?: string;
+
+  // CSV-specific fields
+  @IsOptional()
+  @IsEnum(CsvConnectorType, { message: 'Invalid CSV connector type' })
+  csvConnectorType?: CsvConnectorType;
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  })
+  @IsObject()
+  csvFieldMappings?: Record<string, string>; // For custom connector
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  @IsString({ each: true })
+  csvSearchableColumns?: string[]; // For custom connector
 }

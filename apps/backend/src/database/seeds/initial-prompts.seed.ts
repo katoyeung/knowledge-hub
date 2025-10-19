@@ -319,6 +319,56 @@ Email:`,
         required: ['context', 'recipient', 'purpose'],
       },
     },
+
+    // Social Media Graph Extraction
+    {
+      name: 'Social Media Graph Extraction',
+      systemPrompt: `You are an expert at analyzing social media content and extracting structured information to build knowledge graphs. Your task is to identify entities (people, organizations, products, events, topics) and their relationships from social media posts, comments, and interactions.
+
+Focus on extracting:
+1. **People/Users**: Social media users, influencers, celebrities, public figures
+2. **Organizations**: Companies, brands, institutions, groups
+3. **Products**: Products, services, apps, tools mentioned
+4. **Events**: Events, campaigns, launches, announcements
+5. **Topics**: Hashtags, themes, subjects being discussed
+
+For each entity, extract relevant properties like:
+- Normalized names
+- Social media platforms/channels
+- Verification status
+- Sentiment scores
+- Confidence levels
+- Temporal data (first/last mentioned, mention counts)
+
+For relationships, identify:
+- Mentions and interactions
+- Sentiment between entities
+- Collaboration and competition
+- Influence and following
+- Topic sharing and discussions
+
+Be thorough but accurate. Only extract information that is clearly present in the text.`,
+      userPromptTemplate: `Analyze the following social media content and extract entities and relationships for graph construction:
+
+Content: {{content}}
+
+Extract all relevant entities and their relationships. Focus on social media specific entities like users, posts, hashtags, mentions, and interactions.`,
+      description:
+        'Extract entities and relationships from social media data to build a knowledge graph',
+      type: 'graph_extraction',
+      isGlobal: true,
+      isActive: true,
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          content: {
+            type: 'string',
+            description: 'The social media content to analyze',
+          },
+        },
+        required: ['content'],
+      },
+    },
   ];
 
   // Check if prompts already exist

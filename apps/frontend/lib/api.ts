@@ -6,10 +6,33 @@ import {
   PaginatedMessagesResponse,
 } from "./types/chat";
 
+// CSV Connector Types
+export enum CsvConnectorType {
+  SOCIAL_MEDIA_POST = "social_media_post",
+  NEWS_ARTICLE = "news_article",
+  CUSTOM = "custom",
+}
+
+export interface CsvConnectorTemplate {
+  name: string;
+  displayName: string;
+  description: string;
+  standardFields: Record<string, string>;
+  searchableColumns: string[];
+  metadataColumns: string[];
+}
+
+export interface CsvUploadConfig {
+  connectorType?: CsvConnectorType;
+  fieldMappings?: Record<string, string>;
+  searchableColumns?: string[];
+  metadataColumns?: string[];
+}
+
 // Create axios instance with base configuration
 const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
-  timeout: 10000, // Reduced timeout to 10 seconds for better UX
+  timeout: 300000, // Increased timeout to 5 minutes for graph extraction operations
   headers: {
     "Content-Type": "application/json",
   },
@@ -69,6 +92,12 @@ export interface Dataset {
       promptId?: string;
       temperature?: number;
       maxChunks?: number;
+    };
+    graph_settings?: {
+      aiProviderId?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
     };
     workflow_settings?: Record<string, unknown>;
   };
@@ -183,9 +212,19 @@ export interface DocumentSegment {
   embedding?: Embedding;
   document?: Document;
   dataset?: Dataset;
+  // Graph data
+  graphNodes?: any[];
+  graphEdges?: any[];
   user?: {
     id: string;
     email: string;
+  };
+  // CSV-specific fields
+  segmentType?: string;
+  hierarchyMetadata?: {
+    csvRow?: Record<string, unknown>;
+    connectorType?: string;
+    fieldMappings?: Record<string, string>;
   };
 }
 
@@ -217,6 +256,23 @@ export const datasetApi = {
       };
     }
 
+    return response.data;
+  },
+
+  // Search datasets with case-insensitive search
+  searchDatasets: async (params?: {
+    q?: string;
+    page?: number;
+    limit?: number;
+    sort?: string;
+  }): Promise<{
+    data: Dataset[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> => {
+    const response = await apiClient.get("/datasets/search", { params });
     return response.data;
   },
 
@@ -291,7 +347,8 @@ export const datasetApi = {
   // Upload documents to existing dataset
   uploadDocuments: async (
     datasetId: string,
-    files: File[]
+    files: File[],
+    csvConfig?: CsvUploadConfig
   ): Promise<{
     success: boolean;
     message: string;
@@ -310,6 +367,25 @@ export const datasetApi = {
     files.forEach((file) => {
       formData.append("files", file);
     });
+
+    // Add CSV configuration if provided
+    if (csvConfig) {
+      if (csvConfig.connectorType) {
+        formData.append("csvConnectorType", csvConfig.connectorType);
+      }
+      if (csvConfig.fieldMappings) {
+        formData.append(
+          "csvFieldMappings",
+          JSON.stringify(csvConfig.fieldMappings)
+        );
+      }
+      if (csvConfig.searchableColumns) {
+        formData.append(
+          "csvSearchableColumns",
+          JSON.stringify(csvConfig.searchableColumns)
+        );
+      }
+    }
 
     const response = await apiClient.post(
       `/datasets/${datasetId}/upload-documents`,
@@ -406,6 +482,63 @@ export const datasetApi = {
     const response = await apiClient.post("/datasets/search-documents", data);
     return response.data;
   },
+
+  // Graph settings methods
+  updateGraphSettings: async (
+    datasetId: string,
+    graphSettings: {
+      aiProviderId?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
+    }
+  ): Promise<Dataset> => {
+    const response = await apiClient.put(
+      `/datasets/${datasetId}/graph-settings`,
+      graphSettings
+    );
+    return response.data.dataset;
+  },
+
+  getGraphSettings: async (
+    datasetId: string
+  ): Promise<{
+    success: boolean;
+    graphSettings: any;
+    message: string;
+  }> => {
+    const response = await apiClient.get(
+      `/datasets/${datasetId}/graph-settings`
+    );
+    return response.data;
+  },
+
+  getResolvedGraphSettings: async (
+    datasetId: string
+  ): Promise<{
+    success: boolean;
+    graphSettings: any;
+    message: string;
+  }> => {
+    const response = await apiClient.get(
+      `/datasets/${datasetId}/resolved-graph-settings`
+    );
+    return response.data;
+  },
+
+  triggerGraphExtraction: async (
+    datasetId: string,
+    documentId: string
+  ): Promise<{
+    success: boolean;
+    result: { nodesCreated: number; edgesCreated: number };
+    message: string;
+  }> => {
+    const response = await apiClient.post(
+      `/datasets/${datasetId}/documents/${documentId}/extract-graph`
+    );
+    return response.data;
+  },
 };
 
 // Document API functions
@@ -413,7 +546,7 @@ export const documentApi = {
   // Get documents by dataset ID
   getByDataset: async (datasetId: string): Promise<Document[]> => {
     const response = await apiClient.get(
-      `/documents?filter=dataset.id||eq||${datasetId}`
+      `/documents?filter=datasetId||eq||${datasetId}`
     );
     // Handle both direct array response and paginated response
     return Array.isArray(response.data)
@@ -428,6 +561,7 @@ export const documentApi = {
       datasetId?: string;
       datasetName?: string;
       datasetDescription?: string;
+      csvConfig?: CsvUploadConfig;
     } = {}
   ): Promise<{
     success: boolean;
@@ -459,6 +593,25 @@ export const documentApi = {
     }
     if (options.datasetDescription) {
       formData.append("datasetDescription", options.datasetDescription);
+    }
+
+    // Add CSV configuration if provided
+    if (options.csvConfig) {
+      if (options.csvConfig.connectorType) {
+        formData.append("csvConnectorType", options.csvConfig.connectorType);
+      }
+      if (options.csvConfig.fieldMappings) {
+        formData.append(
+          "csvFieldMappings",
+          JSON.stringify(options.csvConfig.fieldMappings)
+        );
+      }
+      if (options.csvConfig.searchableColumns) {
+        formData.append(
+          "csvSearchableColumns",
+          JSON.stringify(options.csvConfig.searchableColumns)
+        );
+      }
     }
 
     const response = await apiClient.post("/documents/upload", formData, {
@@ -589,6 +742,42 @@ export const documentApi = {
     const response = await apiClient.get(`/documents/${id}/job-status`);
     return response.data;
   },
+
+  // Get CSV connector templates
+  getCsvTemplates: async (): Promise<
+    Array<{
+      name: string;
+      displayName: string;
+      description: string;
+      standardFields: Record<string, string>;
+      searchableColumns: string[];
+      metadataColumns: string[];
+    }>
+  > => {
+    const response = await apiClient.get("/csv-connector/templates");
+    return response.data;
+  },
+
+  // Validate CSV headers against template
+  validateCsvHeaders: async (
+    file: File,
+    templateName: string
+  ): Promise<{
+    isValid: boolean;
+    missingColumns: string[];
+    extraColumns: string[];
+  }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("templateName", templateName);
+
+    const response = await apiClient.post("/csv-connector/validate", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+    return response.data;
+  },
 };
 
 // Document Segment API functions
@@ -616,6 +805,25 @@ export const documentSegmentApi = {
   }> =>
     apiClient
       .get(`/document-segments/document/${documentId}`, { params })
+      .then((res) => res.data),
+
+  getByDocumentWithFilters: (
+    documentId: string,
+    params?: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      hasGraphData?: "true" | "false" | "all";
+    }
+  ): Promise<{
+    data: DocumentSegment[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> =>
+    apiClient
+      .get(`/document-segments/document/${documentId}/filtered`, { params })
       .then((res) => res.data),
 
   getByDataset: (datasetId: string): Promise<DocumentSegment[]> =>
@@ -665,6 +873,7 @@ export interface AiProvider {
     | "openrouter"
     | "dashscope"
     | "perplexity"
+    | "ollama"
     | "custom";
   apiKey?: string;
   baseUrl?: string;
@@ -1223,6 +1432,709 @@ export const userApi = {
       settings
     );
     return response.data;
+  },
+
+  // User graph settings methods
+  updateUserGraphSettings: async (
+    userId: string,
+    graphSettings: {
+      aiProviderId?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
+    }
+  ): Promise<any> => {
+    const response = await apiClient.put(
+      `/users/${userId}/graph-settings`,
+      graphSettings
+    );
+    return response.data;
+  },
+
+  getUserGraphSettings: async (userId: string): Promise<any> => {
+    const response = await apiClient.get(`/users/${userId}/graph-settings`);
+    return response.data;
+  },
+};
+
+// Graph API Types
+export interface GraphNode {
+  id: string;
+  datasetId: string;
+  documentId: string;
+  segmentId?: string;
+  nodeType:
+    | "author"
+    | "brand"
+    | "topic"
+    | "hashtag"
+    | "influencer"
+    | "location"
+    | "organization"
+    | "product"
+    | "event";
+  label: string;
+  properties?: {
+    normalized_name?: string;
+    channel?: string;
+    platform?: string;
+    verified?: boolean;
+    follower_count?: number;
+    engagement_rate?: number;
+    sentiment_score?: number;
+    confidence?: number;
+    temporal_data?: {
+      first_mentioned: string;
+      last_mentioned: string;
+      mention_count: number;
+    };
+    [key: string]: unknown;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GraphEdge {
+  id: string;
+  datasetId: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  edgeType:
+    | "mentions"
+    | "sentiment"
+    | "interacts_with"
+    | "competes_with"
+    | "discusses"
+    | "shares_topic"
+    | "follows"
+    | "collaborates"
+    | "influences"
+    | "located_in"
+    | "part_of"
+    | "related_to";
+  weight: number;
+  properties?: {
+    sentiment?: "positive" | "negative" | "neutral";
+    sentiment_score?: number;
+    interaction_count?: number;
+    engagement_rate?: number;
+    temporal_data?: {
+      first_interaction: string;
+      last_interaction: string;
+      frequency: number;
+    };
+    confidence?: number;
+    context?: string;
+    [key: string]: unknown;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GraphQuery {
+  nodeTypes?: string[];
+  edgeTypes?: string[];
+  labels?: string[];
+  brands?: string[];
+  authors?: string[];
+  topics?: string[];
+  startDate?: string;
+  endDate?: string;
+  minWeight?: number;
+  maxWeight?: number;
+  limit?: number;
+  offset?: number;
+  searchTerm?: string;
+  includeProperties?: boolean;
+  propertiesFilter?: Record<string, unknown>;
+  sortBy?: "createdAt" | "updatedAt" | "weight" | "label";
+  sortOrder?: "ASC" | "DESC";
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats: {
+    totalNodes: number;
+    totalEdges: number;
+    nodeTypeDistribution: Array<{ type: string; count: number }>;
+    edgeTypeDistribution: Array<{ type: string; count: number }>;
+    topBrands: Array<{ brand: string; mentionCount: number }>;
+  };
+}
+
+export interface GraphExtractionConfig {
+  promptId?: string;
+  aiProviderId?: string;
+  model?: string;
+  temperature?: number;
+  enableDeduplication?: boolean;
+  nodeTypeFilters?: {
+    include?: string[];
+    exclude?: string[];
+  };
+  edgeTypeFilters?: {
+    include?: string[];
+    exclude?: string[];
+  };
+  batchSize?: number;
+  confidenceThreshold?: number;
+  normalizationRules?: {
+    brandNames?: Record<string, string>;
+    authorNames?: Record<string, string>;
+    topicMappings?: Record<string, string>;
+  };
+  extractionSettings?: {
+    extractSentiment?: boolean;
+    extractEngagement?: boolean;
+    extractTemporalData?: boolean;
+    extractCompetitorMentions?: boolean;
+    extractInfluencerNetworks?: boolean;
+  };
+  syncMode?: boolean; // Execute synchronously instead of using queue
+}
+
+export interface BrandComparisonRequest {
+  brands: string[];
+  metrics?: string[];
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+  timeGranularity?: "hour" | "day" | "week" | "month";
+  confidenceThreshold?: number;
+}
+
+export interface BrandComparisonResponse {
+  brands: string[];
+  comparisonDate: string;
+  metrics: {
+    sentiment?: Array<{
+      brand: string;
+      positive: number;
+      negative: number;
+      neutral: number;
+      total: number;
+      averageScore: number;
+      trend: "increasing" | "decreasing" | "stable";
+    }>;
+    mentionVolume?: Array<{
+      brand: string;
+      totalMentions: number;
+      uniqueAuthors: number;
+      averagePerDay: number;
+      peakDate: string;
+      peakMentions: number;
+    }>;
+    engagement?: Array<{
+      brand: string;
+      totalLikes: number;
+      totalShares: number;
+      totalComments: number;
+      averageEngagementRate: number;
+      topPerformingPost: {
+        content: string;
+        engagement: number;
+        date: string;
+      };
+    }>;
+    topicAnalysis?: Array<{
+      brand: string;
+      topics: Array<{
+        topic: string;
+        frequency: number;
+        sentiment: number;
+        uniqueAuthors: number;
+      }>;
+      uniqueTopics: string[];
+      sharedTopics: string[];
+    }>;
+    influencerOverlap?: Array<{
+      brand1: string;
+      brand2: string;
+      sharedInfluencers: Array<{
+        influencer: string;
+        mentions1: number;
+        mentions2: number;
+        overlapScore: number;
+      }>;
+      overlapCoefficient: number;
+      uniqueInfluencers1: number;
+      uniqueInfluencers2: number;
+    }>;
+    competitiveLandscape?: Array<{
+      brand: string;
+      competitors: Array<{
+        competitor: string;
+        coMentionFrequency: number;
+        competitiveSentiment: number;
+        marketPosition: "leader" | "challenger" | "follower" | "niche";
+      }>;
+      marketShare: number;
+      competitiveIntensity: number;
+    }>;
+    temporalTrends?: Array<{
+      date: string;
+      data: Record<string, number>;
+    }>;
+  };
+  summary: {
+    totalBrands: number;
+    analysisPeriod: {
+      start: string;
+      end: string;
+    };
+    keyInsights: string[];
+    recommendations: string[];
+  };
+}
+
+// Graph API functions
+export const graphApi = {
+  // Get graph data for a dataset
+  getGraphData: async (
+    datasetId: string,
+    query?: GraphQuery
+  ): Promise<GraphData> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/graph`,
+      {
+        params: query,
+      }
+    );
+    return response.data.data;
+  },
+
+  // Get graph nodes
+  getNodes: async (
+    datasetId: string,
+    query?: GraphQuery
+  ): Promise<{
+    data: GraphNode[];
+    total: number;
+    page: number;
+    limit: number;
+  }> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/nodes`,
+      {
+        params: query,
+      }
+    );
+    return response.data;
+  },
+
+  // Get graph edges
+  getEdges: async (
+    datasetId: string,
+    query?: GraphQuery
+  ): Promise<{
+    data: GraphEdge[];
+    total: number;
+    page: number;
+    limit: number;
+  }> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/edges`,
+      {
+        params: query,
+      }
+    );
+    return response.data;
+  },
+
+  // Get graph statistics
+  getStats: async (
+    datasetId: string,
+    query?: GraphQuery
+  ): Promise<{
+    totalNodes: number;
+    totalEdges: number;
+    nodeTypeDistribution: Array<{ type: string; count: number }>;
+    edgeTypeDistribution: Array<{ type: string; count: number }>;
+    topBrands: Array<{ brand: string; mentionCount: number }>;
+  }> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/stats`,
+      {
+        params: query,
+      }
+    );
+    return response.data.data;
+  },
+
+  // Get graph data for a specific segment
+  getSegmentGraphData: async (
+    segmentId: string
+  ): Promise<{
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+  }> => {
+    const response = await apiClient.get(
+      `/api/graph/segments/${segmentId}/graph`
+    );
+    return response.data.data;
+  },
+
+  // Trigger graph extraction for a dataset
+  triggerExtraction: async (
+    datasetId: string,
+    config: GraphExtractionConfig
+  ): Promise<{ success: boolean; message: string; jobCount: number }> => {
+    const response = await apiClient.post(
+      `/api/graph/datasets/${datasetId}/extract`,
+      config
+    );
+    return response.data;
+  },
+
+  // Trigger graph extraction for a specific document
+  triggerDocumentExtraction: async (
+    documentId: string,
+    config: GraphExtractionConfig
+  ): Promise<{ success: boolean; message: string; documentId: string }> => {
+    const response = await apiClient.post(
+      `/api/graph/documents/${documentId}/extract`,
+      config
+    );
+    return response.data;
+  },
+
+  // Trigger graph extraction for specific segments
+  triggerSegmentExtraction: async (
+    documentId: string,
+    segmentIds: string[],
+    config: GraphExtractionConfig
+  ): Promise<{
+    success: boolean;
+    message: string;
+    nodesCreated: number;
+    edgesCreated: number;
+    nodes?: GraphNode[];
+    edges?: GraphEdge[];
+  }> => {
+    const response = await apiClient.post(
+      `/api/graph/documents/${documentId}/segments/extract`,
+      {
+        segmentIds,
+        ...config,
+      }
+    );
+    return response.data;
+  },
+
+  // Get a specific node
+  getNode: async (nodeId: string): Promise<GraphNode> => {
+    const response = await apiClient.get(`/api/graph/nodes/${nodeId}`);
+    return response.data.data;
+  },
+
+  // Get a specific edge
+  getEdge: async (edgeId: string): Promise<GraphEdge> => {
+    const response = await apiClient.get(`/api/graph/edges/${edgeId}`);
+    return response.data.data;
+  },
+
+  // Get node neighbors
+  getNodeNeighbors: async (
+    datasetId: string,
+    nodeId: string,
+    depth?: number,
+    nodeTypes?: string[]
+  ): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/nodes/${nodeId}/neighbors`,
+      {
+        params: { depth, nodeTypes: nodeTypes?.join(",") },
+      }
+    );
+    return response.data.data;
+  },
+
+  // Find shortest path between nodes
+  getShortestPath: async (
+    datasetId: string,
+    sourceId: string,
+    targetId: string,
+    maxDepth?: number
+  ): Promise<{
+    path: GraphNode[];
+    distance: number;
+    edges: GraphEdge[];
+  } | null> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/shortest-path/${sourceId}/${targetId}`,
+      {
+        params: { maxDepth },
+      }
+    );
+    return response.data.data;
+  },
+
+  // Detect communities
+  getCommunities: async (
+    datasetId: string,
+    minSize?: number
+  ): Promise<{
+    communities: Array<{
+      id: number;
+      nodes: GraphNode[];
+      size: number;
+      density: number;
+    }>;
+    modularity: number;
+  }> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/communities`,
+      {
+        params: { minSize },
+      }
+    );
+    return response.data.data;
+  },
+
+  // Calculate centrality
+  getCentrality: async (
+    datasetId: string,
+    type: "degree" | "betweenness" | "closeness" = "degree",
+    limit?: number
+  ): Promise<Array<{ node: GraphNode; centrality: number; rank: number }>> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/centrality`,
+      {
+        params: { type, limit },
+      }
+    );
+    return response.data.data;
+  },
+
+  // Get influential nodes
+  getInfluentialNodes: async (
+    datasetId: string,
+    nodeType?: string,
+    minConnections?: number,
+    limit?: number
+  ): Promise<Array<{ node: GraphNode; centrality: number; rank: number }>> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/influential-nodes`,
+      {
+        params: { nodeType, minConnections, limit },
+      }
+    );
+    return response.data.data;
+  },
+
+  // Get bridge nodes
+  getBridgeNodes: async (
+    datasetId: string,
+    minBetweenness?: number
+  ): Promise<Array<{ node: GraphNode; centrality: number; rank: number }>> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/bridge-nodes`,
+      {
+        params: { minBetweenness },
+      }
+    );
+    return response.data.data;
+  },
+
+  // Get graph metrics
+  getGraphMetrics: async (
+    datasetId: string
+  ): Promise<{ density: number; averagePathLength: number }> => {
+    const response = await apiClient.get(
+      `/api/graph/datasets/${datasetId}/graph-metrics`
+    );
+    return response.data.data;
+  },
+
+  // Delete graph data
+  deleteGraphData: async (
+    datasetId: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const response = await apiClient.delete(`/api/graph/datasets/${datasetId}`);
+    return response.data;
+  },
+
+  // Clear graph data for a specific segment
+  clearSegmentGraph: async (
+    segmentId: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const response = await apiClient.delete(`/api/graph/segments/${segmentId}`);
+    return response.data;
+  },
+};
+
+// Brand Comparison API functions
+export const brandComparisonApi = {
+  // Compare brands
+  compareBrands: async (
+    datasetId: string,
+    request: BrandComparisonRequest
+  ): Promise<BrandComparisonResponse> => {
+    const response = await apiClient.post(
+      `/brand-comparison/datasets/${datasetId}/compare`,
+      request
+    );
+    return response.data.data;
+  },
+
+  // Compare brand sentiment
+  compareSentiment: async (
+    datasetId: string,
+    request: BrandComparisonRequest
+  ): Promise<
+    Array<{
+      brand: string;
+      positive: number;
+      negative: number;
+      neutral: number;
+      total: number;
+      averageScore: number;
+      trend: "increasing" | "decreasing" | "stable";
+    }>
+  > => {
+    const response = await apiClient.post(
+      `/brand-comparison/datasets/${datasetId}/sentiment-analysis`,
+      request
+    );
+    return response.data.data;
+  },
+
+  // Compare mention volume
+  compareMentionVolume: async (
+    datasetId: string,
+    request: BrandComparisonRequest
+  ): Promise<
+    Array<{
+      brand: string;
+      totalMentions: number;
+      uniqueAuthors: number;
+      averagePerDay: number;
+      peakDate: string;
+      peakMentions: number;
+    }>
+  > => {
+    const response = await apiClient.post(
+      `/brand-comparison/datasets/${datasetId}/mention-volume`,
+      request
+    );
+    return response.data.data;
+  },
+
+  // Compare engagement
+  compareEngagement: async (
+    datasetId: string,
+    request: BrandComparisonRequest
+  ): Promise<
+    Array<{
+      brand: string;
+      totalLikes: number;
+      totalShares: number;
+      totalComments: number;
+      averageEngagementRate: number;
+      topPerformingPost: {
+        content: string;
+        engagement: number;
+        date: string;
+      };
+    }>
+  > => {
+    const response = await apiClient.post(
+      `/brand-comparison/datasets/${datasetId}/engagement-analysis`,
+      request
+    );
+    return response.data.data;
+  },
+
+  // Compare topics
+  compareTopics: async (
+    datasetId: string,
+    request: BrandComparisonRequest
+  ): Promise<
+    Array<{
+      brand: string;
+      topics: Array<{
+        topic: string;
+        frequency: number;
+        sentiment: number;
+        uniqueAuthors: number;
+      }>;
+      uniqueTopics: string[];
+      sharedTopics: string[];
+    }>
+  > => {
+    const response = await apiClient.post(
+      `/brand-comparison/datasets/${datasetId}/topic-analysis`,
+      request
+    );
+    return response.data.data;
+  },
+
+  // Analyze influencer overlap
+  analyzeInfluencerOverlap: async (
+    datasetId: string,
+    request: BrandComparisonRequest
+  ): Promise<
+    Array<{
+      brand1: string;
+      brand2: string;
+      sharedInfluencers: Array<{
+        influencer: string;
+        mentions1: number;
+        mentions2: number;
+        overlapScore: number;
+      }>;
+      overlapCoefficient: number;
+      uniqueInfluencers1: number;
+      uniqueInfluencers2: number;
+    }>
+  > => {
+    const response = await apiClient.post(
+      `/brand-comparison/datasets/${datasetId}/influencer-overlap`,
+      request
+    );
+    return response.data.data;
+  },
+
+  // Analyze competitive landscape
+  analyzeCompetitiveLandscape: async (
+    datasetId: string,
+    request: BrandComparisonRequest
+  ): Promise<
+    Array<{
+      brand: string;
+      competitors: Array<{
+        competitor: string;
+        coMentionFrequency: number;
+        competitiveSentiment: number;
+        marketPosition: "leader" | "challenger" | "follower" | "niche";
+      }>;
+      marketShare: number;
+      competitiveIntensity: number;
+    }>
+  > => {
+    const response = await apiClient.post(
+      `/brand-comparison/datasets/${datasetId}/competitive-landscape`,
+      request
+    );
+    return response.data.data;
+  },
+
+  // Analyze temporal trends
+  analyzeTemporalTrends: async (
+    datasetId: string,
+    request: BrandComparisonRequest
+  ): Promise<
+    Array<{
+      date: string;
+      data: Record<string, number>;
+    }>
+  > => {
+    const response = await apiClient.post(
+      `/brand-comparison/datasets/${datasetId}/temporal-trends`,
+      request
+    );
+    return response.data.data;
   },
 };
 

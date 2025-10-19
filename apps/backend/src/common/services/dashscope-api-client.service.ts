@@ -1,187 +1,61 @@
 import { Injectable } from '@nestjs/common';
-import { BaseLLMClient } from './base-llm-client.service';
+import { BaseLLMClientV2 } from './base-llm-client-v2.service';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { Cache } from 'cache-manager';
-import { ApiResponse } from '../interfaces/api-client.interface';
-import { LLMMessage, LLMResponse } from '../interfaces/llm-client.interface';
+import { LLMProviderConfig } from '../interfaces/llm-provider-config.interface';
 
 @Injectable()
-export class DashScopeApiClient extends BaseLLMClient {
-  protected readonly defaultModel = 'qwen3-max';
+export class DashScopeApiClient extends BaseLLMClientV2 {
+  protected readonly providerConfig: LLMProviderConfig = {
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    apiKeyEnv: 'DASHSCOPE_API_KEY',
+    defaultModel: 'qwen3-max',
+    supportsJsonSchema: false, // DashScope doesn't support native JSON schema
+    supportsStructuredOutput: true, // DashScope supports structured output via system message
+    structuredOutputFormat: 'custom', // Use custom format for system message injection
+    streamingFormat: 'sse',
+    streamTransform: {
+      contentPath: 'choices[0].delta.content',
+      doneSignal: '[DONE]',
+    },
+  };
 
   constructor(
     configService: ConfigService,
     httpService: HttpService,
     cacheManager: Cache,
   ) {
-    super(configService, httpService, cacheManager, {
-      baseUrl: configService.get<string>(
-        'DASHSCOPE_BASE_URL',
-        'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      ),
-      apiKeyEnv: 'DASHSCOPE_API_KEY',
-      timeout: configService.get<number>('DASHSCOPE_TIMEOUT', 30000),
-      cacheTTL: configService.get<number>('DASHSCOPE_CACHE_TTL', 0) * 1000,
-    });
+    super(configService, httpService, cacheManager);
+    this.initializeConfig(configService);
   }
 
-  async chatCompletion(
-    messages: LLMMessage[],
-    model: string = this.defaultModel,
-    jsonSchema?: Record<string, any>,
-    temperature?: number,
-  ): Promise<ApiResponse<LLMResponse>> {
-    const cacheKey = this.getLLMCacheKey(
-      messages,
-      model,
-      jsonSchema,
-      temperature,
-    );
-
-    // Check cache first
-    if (this.cacheTTL > 0) {
-      const cached = await this.cacheManager.get<LLMResponse>(cacheKey);
-      if (cached) {
-        return {
-          data: cached,
-          status: 200,
-          headers: {},
-        };
-      }
-    }
-
-    const requestBody = {
-      model,
-      messages: messages.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      })),
-      temperature: temperature || 0.7,
-      max_tokens: 8192,
-      stream: false,
-    };
-
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${this.config.apiKey}`,
-    };
-
-    try {
-      const response = await this.httpService.axiosRef.post(
-        `${this.config.baseUrl}/chat/completions`,
-        requestBody,
-        {
-          headers,
-          timeout: this.config.timeout,
-        },
-      );
-
-      const responseData = response.data;
-
-      if (!responseData.choices || !responseData.choices[0]) {
-        throw new Error('Invalid response format from DashScope API');
-      }
-
-      const llmResponse: LLMResponse = {
-        choices: responseData.choices,
-        usage: responseData.usage,
-      };
-
-      // Cache the response
-      if (this.cacheTTL > 0) {
-        await this.cacheManager.set(cacheKey, llmResponse, this.cacheTTL);
-      }
-
-      return {
-        data: llmResponse,
-        status: response.status,
-        headers: response.headers as Record<string, string>,
-      };
-    } catch (error) {
-      console.error(
-        'DashScope API error:',
-        error.response?.data || error.message,
-      );
-      throw error;
-    }
+  // Override to use DashScope's specific base URL configuration
+  protected initializeConfig(configService: ConfigService): void {
+    this.config.baseUrl =
+      configService.get<string>('DASHSCOPE_BASE_URL') ||
+      this.providerConfig.baseUrl;
+    this.config.apiKey =
+      configService.get<string>(this.providerConfig.apiKeyEnv) || '';
+    this.cacheTTL =
+      configService.get<number>(
+        `${this.providerConfig.apiKeyEnv}_CACHE_TTL`,
+        0,
+      ) * 1000;
   }
 
-  async *chatCompletionStream(
-    messages: LLMMessage[],
-    model: string = this.defaultModel,
-    jsonSchema?: Record<string, any>,
-    temperature?: number,
-  ): AsyncGenerator<string, void, unknown> {
-    const requestBody = {
-      model,
-      messages: messages.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      })),
-      temperature: temperature || 0.7,
-      max_tokens: 8192,
-      stream: true,
-    };
+  // Override to specify provider type
+  protected getProviderType(): string {
+    return 'dashscope';
+  }
 
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${this.config.apiKey}`,
-    };
-
-    try {
-      const response = await this.httpService.axiosRef.post(
-        `${this.config.baseUrl}/chat/completions`,
-        requestBody,
-        {
-          headers,
-          timeout: this.config.timeout,
-          responseType: 'stream',
-        },
-      );
-
-      const stream = response.data;
-      let buffer = '';
-
-      for await (const chunk of stream) {
-        buffer += chunk.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') {
-              return;
-            }
-
-            try {
-              const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content;
-              if (content) {
-                yield content;
-              }
-            } catch (parseError) {
-              // Skip invalid JSON lines
-              continue;
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error(
-        'DashScope streaming error:',
-        error.response?.data || error.message,
-      );
-
-      // If it's an HTTP error, provide more context
-      if (error.response) {
-        const errorMessage = `API Error (${error.response.status}): ${error.response.data?.message || error.message}`;
-        throw new Error(errorMessage);
-      }
-
-      throw error;
-    }
+  // Override custom structured output format for DashScope
+  protected addCustomStructuredOutputFormat(
+    payload: any,
+    jsonSchema: Record<string, any>,
+  ): void {
+    // DashScope uses system message injection for structured output
+    this.injectJsonSchema(payload.messages, jsonSchema);
   }
 
   async healthCheck(): Promise<boolean> {

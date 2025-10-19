@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Global, Scope } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
 
-@Injectable()
+@Global()
+@Injectable({ scope: Scope.DEFAULT })
 export class JobRegistryService {
   private readonly logger = new Logger(JobRegistryService.name);
   private readonly jobs: Map<string, any> = new Map();

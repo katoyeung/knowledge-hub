@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { QueueCoreModule } from './queue-core.module';
+import { QueueController } from './queue.controller';
 
 @Module({
   imports: [
@@ -26,5 +27,6 @@ import { QueueCoreModule } from './queue-core.module';
     }),
     QueueCoreModule,
   ],
+  controllers: [QueueController],
 })
 export class QueueModule {}

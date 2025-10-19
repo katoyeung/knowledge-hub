@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Edit, Trash2, FileText, Search, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
+import { Plus, Edit, Trash2, FileText, Search, ChevronLeft, ChevronRight, ChevronDown, Code, Eye, EyeOff, Copy } from 'lucide-react'
 import { promptApi, type Prompt } from '@/lib/api'
 import { useToast } from '@/components/ui/simple-toast'
 
@@ -26,6 +26,49 @@ function PromptsContent() {
     const [searchQuery, setSearchQuery] = useState('')
     const [currentPage, setCurrentPage] = useState(1)
     const [itemsPerPage] = useState(20)
+    const [jsonSchemaText, setJsonSchemaText] = useState('')
+    const [jsonSchemaError, setJsonSchemaError] = useState<string | null>(null)
+    const [showJsonPreview, setShowJsonPreview] = useState(false)
+    const [activeTab, setActiveTab] = useState<'system' | 'user' | 'json'>('system')
+
+    const [formData, setFormData] = useState<CreatePromptDto>({
+        name: '',
+        systemPrompt: '',
+        userPromptTemplate: '',
+        description: '',
+        jsonSchema: undefined,
+        type: 'chat',
+        isGlobal: false,
+        isActive: true,
+    })
+
+    // JSON Schema validation
+    const validateJsonSchema = (jsonString: string): { isValid: boolean; error: string | null; parsed: object | null } => {
+        if (!jsonString.trim()) {
+            return { isValid: true, error: null, parsed: null }
+        }
+
+        try {
+            const parsed = JSON.parse(jsonString)
+            return { isValid: true, error: null, parsed }
+        } catch (err) {
+            return {
+                isValid: false,
+                error: err instanceof Error ? err.message : 'Invalid JSON format',
+                parsed: null
+            }
+        }
+    }
+
+    const handleJsonSchemaChange = (value: string) => {
+        setJsonSchemaText(value)
+        const validation = validateJsonSchema(value)
+        setJsonSchemaError(validation.error)
+
+        if (validation.isValid) {
+            setFormData(prev => ({ ...prev, jsonSchema: validation.parsed || undefined }))
+        }
+    }
 
     const loadPrompts = useCallback(async () => {
         setLoading(true)
@@ -96,13 +139,35 @@ function PromptsContent() {
     const handleDelete = async (id: string) => {
         if (window.confirm('Are you sure you want to delete this prompt?')) {
             try {
-                await promptApi.remove(id)
+                await promptApi.delete(id)
                 success('Prompt Deleted', 'Prompt has been deleted successfully')
                 loadPrompts()
             } catch (err) {
                 console.error('Failed to delete prompt:', err)
                 error('Failed to Delete', 'Could not delete prompt')
             }
+        }
+    }
+
+    const handleDuplicate = async (prompt: Prompt) => {
+        try {
+            const duplicatedData: CreatePromptDto = {
+                name: `Copy of ${prompt.name}`,
+                systemPrompt: prompt.systemPrompt,
+                userPromptTemplate: prompt.userPromptTemplate || '',
+                description: prompt.description || '',
+                jsonSchema: prompt.jsonSchema || undefined,
+                type: prompt.type as CreatePromptDto['type'],
+                isGlobal: prompt.isGlobal,
+                isActive: prompt.isActive,
+            }
+
+            await promptApi.create(duplicatedData)
+            success('Prompt Duplicated', `"${duplicatedData.name}" has been created successfully`)
+            loadPrompts()
+        } catch (err) {
+            console.error('Failed to duplicate prompt:', err)
+            error('Failed to Duplicate', 'Could not duplicate prompt')
         }
     }
 
@@ -114,10 +179,18 @@ function PromptsContent() {
             userPromptTemplate: prompt.userPromptTemplate || '',
             description: prompt.description || '',
             jsonSchema: prompt.jsonSchema || undefined,
-            type: prompt.type,
+            type: prompt.type as CreatePromptDto['type'],
             isGlobal: prompt.isGlobal,
             isActive: prompt.isActive,
         })
+
+        // Set JSON schema text for editing
+        if (prompt.jsonSchema) {
+            setJsonSchemaText(JSON.stringify(prompt.jsonSchema, null, 2))
+        } else {
+            setJsonSchemaText('')
+        }
+        setJsonSchemaError(null)
         setShowCreateModal(true)
     }
 
@@ -131,6 +204,25 @@ function PromptsContent() {
             }
             return newSet
         })
+    }
+
+    // Pagination functions
+    const goToPreviousPage = () => {
+        if (currentPage > 1) {
+            setCurrentPage(currentPage - 1)
+        }
+    }
+
+    const goToNextPage = () => {
+        if (currentPage < totalPages) {
+            setCurrentPage(currentPage + 1)
+        }
+    }
+
+    const goToPage = (page: number) => {
+        if (page >= 1 && page <= totalPages) {
+            setCurrentPage(page)
+        }
     }
 
     const filteredPrompts = prompts.filter(prompt =>
@@ -152,17 +244,6 @@ function PromptsContent() {
         { value: 'system', label: 'System' },
         { value: 'custom', label: 'Custom' },
     ]
-
-    const [formData, setFormData] = useState<CreatePromptDto>({
-        name: '',
-        systemPrompt: '',
-        userPromptTemplate: '',
-        description: '',
-        jsonSchema: undefined,
-        type: 'chat',
-        isGlobal: false,
-        isActive: true,
-    })
 
     if (loading) {
         return (
@@ -286,14 +367,23 @@ function PromptsContent() {
                                     </div>
                                     <div className="flex items-center space-x-2">
                                         <button
+                                            onClick={() => handleDuplicate(prompt)}
+                                            className="inline-flex items-center p-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                            title="Duplicate prompt"
+                                        >
+                                            <Copy className="w-4 h-4" />
+                                        </button>
+                                        <button
                                             onClick={() => handleEditClick(prompt)}
                                             className="inline-flex items-center p-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                            title="Edit prompt"
                                         >
                                             <Edit className="w-4 h-4" />
                                         </button>
                                         <button
                                             onClick={() => handleDelete(prompt.id)}
                                             className="inline-flex items-center p-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                                            title="Delete prompt"
                                         >
                                             <Trash2 className="w-4 h-4" />
                                         </button>
@@ -301,25 +391,43 @@ function PromptsContent() {
                                 </div>
 
                                 {expandedPrompts.has(prompt.id) && (
-                                    <div className="mt-4 pl-8 border-l border-gray-200 space-y-3">
+                                    <div className="mt-4 pl-8 border-l border-gray-200 space-y-4">
                                         {prompt.description && (
                                             <div>
-                                                <p className="text-sm font-medium text-gray-700">Description:</p>
-                                                <p className="text-sm text-gray-600">{prompt.description}</p>
+                                                <div className="flex items-center mb-2">
+                                                    <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-800 mr-2">
+                                                        Description
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm text-gray-600 bg-blue-50 p-3 rounded-md">{prompt.description}</p>
                                             </div>
                                         )}
 
                                         <div>
-                                            <p className="text-sm font-medium text-gray-700">System Prompt:</p>
-                                            <div className="bg-gray-50 p-3 rounded-md text-sm font-mono whitespace-pre-wrap">
+                                            <div className="flex items-center mb-2">
+                                                <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-800 mr-2">
+                                                    System Prompt
+                                                </span>
+                                                <span className="text-xs text-gray-500">
+                                                    {prompt.systemPrompt.length} characters
+                                                </span>
+                                            </div>
+                                            <div className="bg-gray-50 p-4 rounded-md text-sm font-mono whitespace-pre-wrap border max-h-60 overflow-y-auto">
                                                 {prompt.systemPrompt}
                                             </div>
                                         </div>
 
                                         {prompt.userPromptTemplate && (
                                             <div>
-                                                <p className="text-sm font-medium text-gray-700">User Prompt Template:</p>
-                                                <div className="bg-gray-50 p-3 rounded-md text-sm font-mono whitespace-pre-wrap">
+                                                <div className="flex items-center mb-2">
+                                                    <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-yellow-100 text-yellow-800 mr-2">
+                                                        User Prompt Template
+                                                    </span>
+                                                    <span className="text-xs text-gray-500">
+                                                        {prompt.userPromptTemplate.length} characters
+                                                    </span>
+                                                </div>
+                                                <div className="bg-gray-50 p-4 rounded-md text-sm font-mono whitespace-pre-wrap border max-h-40 overflow-y-auto">
                                                     {prompt.userPromptTemplate}
                                                 </div>
                                             </div>
@@ -327,10 +435,23 @@ function PromptsContent() {
 
                                         {prompt.jsonSchema && (
                                             <div>
-                                                <p className="text-sm font-medium text-gray-700">JSON Schema:</p>
-                                                <div className="bg-gray-50 p-3 rounded-md text-sm font-mono whitespace-pre-wrap">
+                                                <div className="flex items-center mb-2">
+                                                    <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-800 mr-2">
+                                                        JSON Schema
+                                                    </span>
+                                                    <span className="text-xs text-gray-500">
+                                                        {JSON.stringify(prompt.jsonSchema).length} characters
+                                                    </span>
+                                                </div>
+                                                <div className="bg-gray-50 p-4 rounded-md text-sm font-mono whitespace-pre-wrap border max-h-60 overflow-y-auto">
                                                     {JSON.stringify(prompt.jsonSchema, null, 2)}
                                                 </div>
+                                            </div>
+                                        )}
+
+                                        {!prompt.jsonSchema && (
+                                            <div className="text-sm text-gray-500 italic">
+                                                No JSON schema defined
                                             </div>
                                         )}
                                     </div>
@@ -415,7 +536,8 @@ function PromptsContent() {
                         </div>
 
                         <form onSubmit={editingPrompt ? handleUpdate : handleCreate} className="px-6 py-4">
-                            <div className="space-y-4">
+                            {/* Basic Info Section */}
+                            <div className="space-y-4 mb-6">
                                 <div>
                                     <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
                                         Prompt Name
@@ -423,73 +545,45 @@ function PromptsContent() {
                                     <input
                                         type="text"
                                         id="name"
-                                        className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                        className="block w-full border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm px-3 py-2"
                                         value={formData.name}
                                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                         required
                                     />
                                 </div>
 
-                                <div>
-                                    <label htmlFor="type" className="block text-sm font-medium text-gray-700 mb-1">
-                                        Type
-                                    </label>
-                                    <select
-                                        id="type"
-                                        className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                                        value={formData.type}
-                                        onChange={(e) => setFormData({ ...formData, type: e.target.value as CreatePromptDto['type'] })}
-                                        required
-                                    >
-                                        {promptTypes.map((type) => (
-                                            <option key={type.value} value={type.value}>
-                                                {type.label}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
-                                        Description
-                                    </label>
-                                    <input
-                                        type="text"
-                                        id="description"
-                                        className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                                        value={formData.description}
-                                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                        placeholder="Optional description"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label htmlFor="systemPrompt" className="block text-sm font-medium text-gray-700 mb-1">
-                                        System Prompt
-                                    </label>
-                                    <textarea
-                                        id="systemPrompt"
-                                        rows={6}
-                                        className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                                        value={formData.systemPrompt}
-                                        onChange={(e) => setFormData({ ...formData, systemPrompt: e.target.value })}
-                                        required
-                                        placeholder="Enter the system prompt..."
-                                    />
-                                </div>
-
-                                <div>
-                                    <label htmlFor="userPromptTemplate" className="block text-sm font-medium text-gray-700 mb-1">
-                                        User Prompt Template (Optional)
-                                    </label>
-                                    <textarea
-                                        id="userPromptTemplate"
-                                        rows={4}
-                                        className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                                        value={formData.userPromptTemplate}
-                                        onChange={(e) => setFormData({ ...formData, userPromptTemplate: e.target.value })}
-                                        placeholder="Enter the user prompt template..."
-                                    />
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label htmlFor="type" className="block text-sm font-medium text-gray-700 mb-1">
+                                            Type
+                                        </label>
+                                        <select
+                                            id="type"
+                                            className="block w-full border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm px-3 py-2"
+                                            value={formData.type}
+                                            onChange={(e) => setFormData({ ...formData, type: e.target.value as CreatePromptDto['type'] })}
+                                            required
+                                        >
+                                            {promptTypes.map((type) => (
+                                                <option key={type.value} value={type.value}>
+                                                    {type.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
+                                            Description
+                                        </label>
+                                        <input
+                                            type="text"
+                                            id="description"
+                                            className="block w-full border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm px-3 py-2"
+                                            value={formData.description}
+                                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                            placeholder="Optional description"
+                                        />
+                                    </div>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-4">
@@ -522,6 +616,159 @@ function PromptsContent() {
                                 </div>
                             </div>
 
+                            {/* Tabs */}
+                            <div className="border-b border-gray-200 mb-4">
+                                <nav className="-mb-px flex space-x-8">
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('system')}
+                                        className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'system'
+                                            ? 'border-blue-500 text-blue-600'
+                                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                            }`}
+                                    >
+                                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-800">
+                                            System Prompt
+                                        </span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('user')}
+                                        className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'user'
+                                            ? 'border-blue-500 text-blue-600'
+                                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                            }`}
+                                    >
+                                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-yellow-100 text-yellow-800">
+                                            User Template
+                                        </span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('json')}
+                                        className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'json'
+                                            ? 'border-blue-500 text-blue-600'
+                                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                            }`}
+                                    >
+                                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-800">
+                                            JSON Schema
+                                        </span>
+                                    </button>
+                                </nav>
+                            </div>
+
+                            {/* Tab Content */}
+                            <div className="min-h-[400px]">
+                                {activeTab === 'system' && (
+                                    <div>
+                                        <div className="flex items-center mb-2">
+                                            <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-800 mr-2">
+                                                System Prompt
+                                            </span>
+                                            <span className="text-xs text-gray-500">
+                                                {formData.systemPrompt.length} characters
+                                            </span>
+                                        </div>
+                                        <textarea
+                                            id="systemPrompt"
+                                            rows={12}
+                                            className="block w-full border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm font-mono text-sm px-3 py-2"
+                                            value={formData.systemPrompt}
+                                            onChange={(e) => setFormData({ ...formData, systemPrompt: e.target.value })}
+                                            required
+                                            placeholder="Enter the system prompt..."
+                                        />
+                                    </div>
+                                )}
+
+                                {activeTab === 'user' && (
+                                    <div>
+                                        <div className="flex items-center mb-2">
+                                            <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-yellow-100 text-yellow-800 mr-2">
+                                                User Prompt Template
+                                            </span>
+                                            <span className="text-xs text-gray-500">
+                                                {formData.userPromptTemplate?.length || 0} characters
+                                            </span>
+                                        </div>
+                                        <textarea
+                                            id="userPromptTemplate"
+                                            rows={12}
+                                            className="block w-full border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm font-mono text-sm px-3 py-2"
+                                            value={formData.userPromptTemplate}
+                                            onChange={(e) => setFormData({ ...formData, userPromptTemplate: e.target.value })}
+                                            placeholder="Enter the user prompt template..."
+                                        />
+                                    </div>
+                                )}
+
+                                {activeTab === 'json' && (
+                                    <div>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center">
+                                                <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-800 mr-2">
+                                                    JSON Schema
+                                                </span>
+                                                <span className="text-xs text-gray-500">
+                                                    {jsonSchemaText.length} characters
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center space-x-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowJsonPreview(!showJsonPreview)}
+                                                    className="flex items-center text-xs text-gray-500 hover:text-gray-700"
+                                                >
+                                                    {showJsonPreview ? <EyeOff className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />}
+                                                    {showJsonPreview ? 'Hide Preview' : 'Show Preview'}
+                                                </button>
+                                                <span className="text-xs text-gray-400">|</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        try {
+                                                            const formatted = JSON.stringify(JSON.parse(jsonSchemaText), null, 2)
+                                                            setJsonSchemaText(formatted)
+                                                        } catch {
+                                                            // Ignore if not valid JSON
+                                                        }
+                                                    }}
+                                                    className="flex items-center text-xs text-gray-500 hover:text-gray-700"
+                                                >
+                                                    <Code className="w-4 h-4 mr-1" />
+                                                    Format
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <textarea
+                                            id="jsonSchema"
+                                            rows={12}
+                                            className={`block w-full border rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm font-mono text-sm px-3 py-2 ${jsonSchemaError ? 'border-red-300' : 'border-gray-300'
+                                                }`}
+                                            value={jsonSchemaText}
+                                            onChange={(e) => handleJsonSchemaChange(e.target.value)}
+                                            placeholder="Enter JSON schema (optional)..."
+                                        />
+                                        {jsonSchemaError && (
+                                            <p className="mt-1 text-sm text-red-600">{jsonSchemaError}</p>
+                                        )}
+                                        {jsonSchemaText && !jsonSchemaError && (
+                                            <p className="mt-1 text-sm text-green-600">✓ Valid JSON</p>
+                                        )}
+
+                                        {showJsonPreview && formData.jsonSchema && (
+                                            <div className="mt-2 p-3 bg-gray-50 rounded-md">
+                                                <h4 className="text-sm font-medium text-gray-700 mb-2">JSON Schema Preview:</h4>
+                                                <pre className="text-xs text-gray-600 overflow-auto max-h-40">
+                                                    {JSON.stringify(formData.jsonSchema, null, 2)}
+                                                </pre>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
                             <div className="flex justify-end space-x-3 mt-6">
                                 <button
                                     type="button"
@@ -538,6 +785,10 @@ function PromptsContent() {
                                             isGlobal: false,
                                             isActive: true,
                                         })
+                                        setJsonSchemaText('')
+                                        setJsonSchemaError(null)
+                                        setShowJsonPreview(false)
+                                        setActiveTab('system')
                                     }}
                                     className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                                 >

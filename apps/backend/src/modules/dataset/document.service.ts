@@ -12,6 +12,10 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { UploadDocumentDto } from './dto/create-dataset-step.dto';
 import { EventTypes } from '../event/constants/event-types';
 import { DocumentUploadedEvent } from '../event/interfaces/document-events.interface';
+import { CsvConnectorTemplateService } from '../csv-connector/services/csv-connector-template.service';
+import { CsvParserService } from '../csv-connector/services/csv-parser.service';
+import { promises as fs } from 'fs';
+import { join } from 'path';
 
 @Injectable()
 export class DocumentService extends TypeOrmCrudService<Document> {
@@ -29,6 +33,8 @@ export class DocumentService extends TypeOrmCrudService<Document> {
     @Inject(CACHE_MANAGER)
     private readonly cacheManager: Cache,
     private readonly eventEmitter: EventEmitter2,
+    private readonly csvTemplateService: CsvConnectorTemplateService,
+    private readonly csvParserService: CsvParserService,
   ) {
     super(documentRepository);
   }
@@ -68,8 +74,68 @@ export class DocumentService extends TypeOrmCrudService<Document> {
     await this.cacheManager.del('documents:all');
   }
 
+  async invalidateDatasetCache(datasetId: string): Promise<void> {
+    await this.cacheManager.del(`dataset:${datasetId}`);
+    await this.cacheManager.del('datasets:all');
+  }
+
+  /**
+   * Delete physical file from disk
+   * @param fileId - The file ID stored in the document
+   * @param datasetId - The dataset ID for logging purposes
+   */
+  private async deletePhysicalFile(
+    fileId: string | null,
+    datasetId: string,
+  ): Promise<void> {
+    if (!fileId) {
+      this.logger.log(
+        `📄 No fileId found for document in dataset ${datasetId}, skipping file deletion`,
+      );
+      return;
+    }
+
+    try {
+      const filePath = join(process.cwd(), 'uploads', 'documents', fileId);
+
+      // Check if file exists before attempting deletion
+      await fs.access(filePath);
+
+      // Delete the file
+      await fs.unlink(filePath);
+      this.logger.log(`🗑️ Successfully deleted physical file: ${filePath}`);
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        this.logger.warn(
+          `⚠️ Physical file not found (may have been already deleted): ${fileId}`,
+        );
+      } else {
+        this.logger.error(
+          `❌ Failed to delete physical file ${fileId}:`,
+          error.message,
+        );
+        // Don't throw error - file deletion failure shouldn't prevent document deletion
+      }
+    }
+  }
+
   async deleteDocument(id: string): Promise<void> {
     this.logger.log(`🗑️ Starting document deletion: ${id}`);
+
+    // First, get the document to retrieve fileId for physical file deletion
+    const document = await this.documentRepository.findOne({
+      where: { id },
+      select: ['id', 'fileId', 'datasetId'],
+    });
+
+    if (!document) {
+      this.logger.warn(`⚠️ Document ${id} not found, skipping deletion`);
+      return;
+    }
+
+    this.logger.log(
+      `📄 Document found: ${document.name} (fileId: ${document.fileId})`,
+    );
 
     // Use a transaction to ensure all deletions happen atomically
     const queryRunner =
@@ -124,7 +190,13 @@ export class DocumentService extends TypeOrmCrudService<Document> {
       // Commit the transaction
       await queryRunner.commitTransaction();
 
+      // After successful database deletion, delete the physical file
+      await this.deletePhysicalFile(document.fileId, document.datasetId);
+
+      // Invalidate caches
       await this.invalidateDocumentCache(id);
+      await this.invalidateDatasetCache(document.datasetId);
+
       this.logger.log(`🎉 Document deletion completed successfully: ${id}`);
     } catch (error) {
       // Rollback the transaction on error
@@ -210,6 +282,52 @@ export class DocumentService extends TypeOrmCrudService<Document> {
     // Create documents for each uploaded file
     const documents: Document[] = [];
     for (const file of files) {
+      const docType = uploadData.docType || this.getFileType(file.originalname);
+
+      // Prepare base metadata
+      const baseMetadata = {
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+        uploadedAt: new Date(),
+      };
+
+      // Handle CSV configuration
+      let csvConfig = null;
+      if (docType === 'csv' && uploadData.csvConnectorType) {
+        try {
+          // Parse CSV to get headers
+          const filePath = file.path;
+          const parseResult =
+            await this.csvParserService.parseCsvFile(filePath);
+
+          if (parseResult.success) {
+            if (uploadData.csvConnectorType === 'custom') {
+              // Create custom configuration
+              csvConfig = this.csvTemplateService.createCustomConfig(
+                uploadData.csvFieldMappings || {},
+                uploadData.csvSearchableColumns || [],
+                parseResult.headers,
+              );
+            } else {
+              // Create configuration from template
+              csvConfig = this.csvTemplateService.createConfigFromTemplate(
+                uploadData.csvConnectorType,
+                parseResult.headers,
+              );
+            }
+
+            if (csvConfig) {
+              csvConfig.totalRows = parseResult.totalRows;
+            }
+          }
+        } catch (error) {
+          this.logger.warn(
+            `Failed to parse CSV for configuration: ${error.message}`,
+          );
+        }
+      }
+
       const document = this.documentRepository.create({
         datasetId: dataset.id,
         position: nextPosition++,
@@ -218,7 +336,7 @@ export class DocumentService extends TypeOrmCrudService<Document> {
         name: file.originalname,
         createdFrom: uploadData.createdFrom || 'upload',
         fileId: file.filename, // Store the uploaded file name/path
-        docType: uploadData.docType || this.getFileType(file.originalname),
+        docType,
         docForm: uploadData.docForm || 'text_model',
         docLanguage: uploadData.docLanguage || 'en',
         indexingStatus: 'waiting',
@@ -226,10 +344,8 @@ export class DocumentService extends TypeOrmCrudService<Document> {
         archived: false,
         userId,
         docMetadata: {
-          originalName: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size,
-          uploadedAt: new Date(),
+          ...baseMetadata,
+          ...(csvConfig && { csvConfig }),
         },
       });
 
@@ -271,6 +387,10 @@ export class DocumentService extends TypeOrmCrudService<Document> {
         return 'text';
       case 'md':
         return 'markdown';
+      case 'json':
+        return 'json';
+      case 'csv':
+        return 'csv';
       default:
         return 'file';
     }

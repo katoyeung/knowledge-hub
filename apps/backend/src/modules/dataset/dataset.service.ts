@@ -19,10 +19,15 @@ import {
   CreateDatasetStepTwoDto,
   ProcessDocumentsDto,
 } from './dto/create-dataset-step.dto';
+import { UploadDocumentDto } from './dto/upload-document.dto';
 import { EventTypes } from '../event/constants/event-types';
+import { CsvParserService } from '../csv-connector/services/csv-parser.service';
+import { CsvConnectorTemplateService } from '../csv-connector/services/csv-connector-template.service';
 import { DocumentUploadedEvent } from '../event/interfaces/document-events.interface';
 import { Logger } from '@nestjs/common';
 import { EmbeddingConfigProcessorService } from './services/embedding-config-processor.service';
+import { UpdateGraphSettingsDto } from './dto/update-graph-settings.dto';
+import { UserService } from '../user/user.service';
 
 @Injectable()
 export class DatasetService extends TypeOrmCrudService<Dataset> {
@@ -46,6 +51,9 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     private readonly eventEmitter: EventEmitter2,
     private readonly embeddingConfigProcessor: EmbeddingConfigProcessorService,
     private readonly jobDispatcher: JobDispatcherService,
+    private readonly csvParserService: CsvParserService,
+    private readonly csvTemplateService: CsvConnectorTemplateService,
+    private readonly userService: UserService,
   ) {
     super(datasetRepository);
   }
@@ -368,6 +376,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     datasetId: string,
     files: Express.Multer.File[],
     userId: string,
+    uploadData?: UploadDocumentDto,
   ): Promise<{ dataset: Dataset; documents: Document[] }> {
     const dataset = await this.datasetRepository.findOne({
       where: { id: datasetId },
@@ -390,17 +399,55 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     // Create documents for each uploaded file
     const documents: Document[] = [];
     for (const file of files) {
+      const docType = this.getFileType(file.originalname);
+
+      // Handle CSV configuration
+      let csvConfig = null;
+      if (docType === 'csv' && uploadData?.csvConnectorType) {
+        try {
+          // Parse CSV to get headers
+          const filePath = file.path;
+          const parseResult =
+            await this.csvParserService.parseCsvFile(filePath);
+
+          if (parseResult.success) {
+            if (uploadData.csvConnectorType === 'custom') {
+              // Create custom configuration
+              csvConfig = this.csvTemplateService.createCustomConfig(
+                uploadData.csvFieldMappings || {},
+                uploadData.csvSearchableColumns || [],
+                parseResult.headers,
+              );
+            } else {
+              // Create configuration from template
+              csvConfig = this.csvTemplateService.createConfigFromTemplate(
+                uploadData.csvConnectorType,
+                parseResult.headers,
+              );
+            }
+
+            if (csvConfig) {
+              csvConfig.totalRows = parseResult.totalRows;
+            }
+          }
+        } catch (error) {
+          this.logger.warn(
+            `Failed to parse CSV for configuration: ${error.message}`,
+          );
+        }
+      }
+
       const document = this.documentRepository.create({
         datasetId: dataset.id,
         position: nextPosition++,
-        dataSourceType: 'upload_file',
-        batch: `upload_${Date.now()}`,
+        dataSourceType: uploadData?.dataSourceType || 'upload_file',
+        batch: uploadData?.batch || `upload_${Date.now()}`,
         name: file.originalname,
-        createdFrom: 'upload',
+        createdFrom: uploadData?.createdFrom || 'upload',
         fileId: file.filename,
-        docType: this.getFileType(file.originalname),
-        docForm: 'text_model',
-        docLanguage: 'en',
+        docType,
+        docForm: uploadData?.docForm || 'text_model',
+        docLanguage: uploadData?.docLanguage || 'en',
         indexingStatus: 'waiting',
         enabled: true,
         archived: false,
@@ -410,6 +457,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
           mimeType: file.mimetype,
           size: file.size,
           uploadedAt: new Date(),
+          ...(csvConfig && { csvConfig }),
         },
       });
 
@@ -783,5 +831,126 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     );
 
     return updatedDataset;
+  }
+
+  async updateGraphSettings(
+    datasetId: string,
+    graphSettings: UpdateGraphSettingsDto,
+    userId: string,
+  ): Promise<Dataset> {
+    this.logger.log(`Updating graph settings for dataset ${datasetId}`);
+
+    const dataset = await this.datasetRepository.findOne({
+      where: { id: datasetId, userId },
+    });
+
+    if (!dataset) {
+      throw new Error('Dataset not found or access denied');
+    }
+
+    // Get existing settings or create new ones
+    const existingSettings = (dataset.settings as any) || {};
+    const updatedSettings = {
+      ...existingSettings,
+      graph_settings: {
+        ...graphSettings,
+      },
+    };
+
+    // Update the dataset with new settings
+    await this.datasetRepository.update(datasetId, {
+      settings: updatedSettings,
+    });
+
+    // Invalidate cache
+    await this.invalidateDatasetCache(datasetId);
+
+    // Return updated dataset
+    const updatedDataset = await this.datasetRepository.findOne({
+      where: { id: datasetId },
+    });
+
+    if (!updatedDataset) {
+      throw new Error('Failed to retrieve updated dataset');
+    }
+
+    this.logger.log(
+      `Graph settings updated for dataset ${datasetId}: ${JSON.stringify(graphSettings)}`,
+    );
+
+    return updatedDataset;
+  }
+
+  async getGraphSettings(datasetId: string, userId: string): Promise<object> {
+    const dataset = await this.datasetRepository.findOne({
+      where: { id: datasetId, userId },
+      select: ['id', 'settings'],
+    });
+
+    if (!dataset) {
+      throw new Error('Dataset not found or access denied');
+    }
+
+    return (dataset.settings as any)?.graph_settings || {};
+  }
+
+  async resolveGraphSettings(
+    datasetId: string,
+    userId: string,
+  ): Promise<object> {
+    // Get user's default graph settings
+    const userGraphSettings =
+      await this.userService.getUserGraphSettings(userId);
+
+    // Get dataset's graph settings
+    const datasetGraphSettings = await this.getGraphSettings(datasetId, userId);
+
+    // Merge user defaults with dataset overrides
+    return {
+      ...userGraphSettings,
+      ...datasetGraphSettings,
+    };
+  }
+
+  async searchDatasets(
+    searchQuery?: string,
+    page: number = 1,
+    limit: number = 10,
+    sort: string = 'createdAt,DESC',
+  ) {
+    const queryBuilder = this.datasetRepository
+      .createQueryBuilder('dataset')
+      .leftJoinAndSelect('dataset.user', 'user');
+
+    // Add search filter if provided
+    if (searchQuery && searchQuery.trim()) {
+      queryBuilder.where(
+        '(dataset.name ILIKE :search OR dataset.description ILIKE :search)',
+        { search: `%${searchQuery}%` },
+      );
+    }
+
+    // Parse sort parameter
+    const [sortField, sortOrder] = sort.split(',');
+    const validSortFields = ['name', 'createdAt', 'updatedAt', 'provider'];
+    const field = validSortFields.includes(sortField) ? sortField : 'createdAt';
+    const order = sortOrder === 'ASC' ? 'ASC' : 'DESC';
+
+    queryBuilder.orderBy(`dataset.${field}`, order);
+
+    // Add pagination
+    const offset = (page - 1) * limit;
+    queryBuilder.skip(offset).take(limit);
+
+    // Execute query
+    const [data, total] = await queryBuilder.getManyAndCount();
+
+    return {
+      data,
+      count: data.length,
+      total,
+      page,
+      pageCount: Math.ceil(total / limit),
+    };
   }
 }

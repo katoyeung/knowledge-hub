@@ -32,6 +32,7 @@ import { ChunkingService } from '../../../dataset/services/chunking.service';
 import { EmbeddingProcessingService } from '../../../dataset/services/embedding-processing.service';
 import { NerProcessingService } from '../../../dataset/services/ner-processing.service';
 import { DocumentParserModule } from '../../../document-parser/document-parser.module';
+import { CsvConnectorModule } from '../../../csv-connector/csv-connector.module';
 import { DetectorService } from '../../../../common/services/detector.service';
 import { DatasetModule } from '../../../dataset/dataset.module';
 import { JobDispatcherService } from '../../services/job-dispatcher.service';
@@ -43,6 +44,7 @@ import { NotificationService } from '../../../notification/notification.service'
   imports: [
     TypeOrmModule.forFeature([Document, DocumentSegment, Dataset, Embedding]),
     DocumentParserModule,
+    CsvConnectorModule,
     HttpModule,
     ConfigModule,
     CacheModule.register(),

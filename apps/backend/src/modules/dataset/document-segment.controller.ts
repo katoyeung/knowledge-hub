@@ -20,7 +20,14 @@ import { CreateDocumentSegmentDto } from './dto/create-document-segment.dto';
 import { UpdateDocumentSegmentDto } from './dto/update-document-segment.dto';
 import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
-import { IsArray, IsString, IsBoolean, IsOptional, IsNumber, Min } from 'class-validator';
+import {
+  IsArray,
+  IsString,
+  IsBoolean,
+  IsOptional,
+  IsNumber,
+  Min,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 
 // DTO for pagination
@@ -36,6 +43,17 @@ class PaginationQueryDto {
   @IsNumber()
   @Min(1)
   limit?: number = 20;
+}
+
+// DTO for filtering segments by graph data
+class SegmentFilterQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  hasGraphData?: 'true' | 'false' | 'all' = 'all';
 }
 
 // DTO for bulk operations
@@ -115,6 +133,20 @@ export class DocumentSegmentController
       documentId,
       paginationQuery.page || 1,
       paginationQuery.limit || 20,
+    );
+  }
+
+  @Get('document/:documentId/filtered')
+  async findByDocumentWithFilters(
+    @Param('documentId') documentId: string,
+    @Query() filterQuery: SegmentFilterQueryDto,
+  ) {
+    return await this.service.findByDocumentIdWithFilters(
+      documentId,
+      filterQuery.page || 1,
+      filterQuery.limit || 20,
+      filterQuery.search,
+      filterQuery.hasGraphData,
     );
   }
 

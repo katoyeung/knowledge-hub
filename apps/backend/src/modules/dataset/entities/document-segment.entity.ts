@@ -4,6 +4,7 @@ import { User } from '../../user/user.entity';
 import { Dataset } from './dataset.entity';
 import { Document } from './document.entity';
 import { Embedding } from './embedding.entity';
+import { GraphNode } from '../../graph/entities/graph-node.entity';
 
 @Entity({ name: 'document_segments' })
 export class DocumentSegment extends BaseEntity {
@@ -53,6 +54,9 @@ export class DocumentSegment extends BaseEntity {
 
   @Column({ length: 255, default: 'waiting' })
   status: string;
+
+  @Column({ length: 255, default: 'waiting' })
+  graphExtractionStatus: string;
 
   @Column('timestamp', { nullable: true })
   indexingAt: Date;
@@ -119,4 +123,7 @@ export class DocumentSegment extends BaseEntity {
     cascade: true,
   })
   children: DocumentSegment[];
+
+  @OneToMany(() => GraphNode, (node) => node.segment)
+  graphNodes: GraphNode[];
 }

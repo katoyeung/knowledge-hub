@@ -43,7 +43,7 @@ export class DashScopeEmbeddingClient implements EmbeddingClient {
       'https://dashscope.aliyuncs.com/compatible-mode/v1',
     );
     this.apiKey = this.configService.get<string>('DASHSCOPE_API_KEY');
-    this.timeout = this.configService.get<number>('DASHSCOPE_TIMEOUT', 30000);
+    this.timeout = this.configService.get<number>('DASHSCOPE_TIMEOUT', 300000);
 
     if (!this.apiKey) {
       this.logger.warn('DASHSCOPE_API_KEY not found in environment variables');

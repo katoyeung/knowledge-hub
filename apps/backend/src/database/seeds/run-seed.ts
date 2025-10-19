@@ -4,6 +4,7 @@ import { InitialRolesSeed } from './initial-roles.seed';
 import { InitialAdminSeed } from './initial-admin.seed';
 import { InitialAiProvidersSeed } from './initial-ai-providers.seed';
 import { seedPrompts } from './initial-prompts.seed';
+import { seedSocialMediaGraphExtractionPrompt } from './social-media-graph-extraction-prompt.seed';
 import Keyv from 'keyv';
 
 export class SeedRunner {
@@ -37,6 +38,24 @@ export class SeedRunner {
       // Create prompts
       await seedPrompts(this.dataSource);
       console.log('✅ Prompts seeded successfully');
+
+      // Create social media graph extraction prompt
+      await seedSocialMediaGraphExtractionPrompt(this.dataSource);
+      console.log(
+        '✅ Social Media Graph Extraction prompt seeded successfully',
+      );
+
+      // Create graph extraction prompts
+      // TODO: Re-enable when TypeScript can resolve the dynamic import
+      // try {
+      //   const { seedGraphExtractionPrompts } = await import(
+      //     './graph-extraction-prompts.seed'
+      //   );
+      //   await seedGraphExtractionPrompts(this.dataSource);
+      //   console.log('✅ Graph extraction prompts seeded successfully');
+      // } catch (error) {
+      //   console.warn('⚠️ Graph extraction prompts seed not found, skipping...');
+      // }
 
       // Invalidate user cache
       await this.invalidateUserCache();

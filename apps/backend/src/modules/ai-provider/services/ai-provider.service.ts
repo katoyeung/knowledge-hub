@@ -440,7 +440,8 @@ export class AiProviderService extends TypeOrmCrudService<AiProvider> {
       openrouter: LLMProvider.OPENROUTER,
       dashscope: LLMProvider.DASHSCOPE,
       perplexity: LLMProvider.PERPLEXITY,
-      custom: LLMProvider.OLLAMA,
+      ollama: LLMProvider.OLLAMA,
+      custom: LLMProvider.OPENROUTER, // Map custom to OpenAI (OpenRouter)
     };
 
     return providerTypeMap[providerType] || LLMProvider.DASHSCOPE;

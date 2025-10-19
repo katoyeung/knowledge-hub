@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { datasetApi, documentApi, type Dataset, type Document } from '@/lib/api'
-import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, LogOut, MessageSquare, FileText, StickyNote } from 'lucide-react'
+import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, LogOut, MessageSquare, FileText, StickyNote, Network } from 'lucide-react'
 import Link from 'next/link'
 import { authUtil } from '@/lib/auth'
 import type { AuthUser } from '@knowledge-hub/shared-types'
@@ -11,6 +11,7 @@ import { DatasetDocumentsPanel } from '@/components/dataset-documents-panel'
 import { DatasetChatPanel } from '@/components/dataset-chat-panel'
 import { DatasetNotesPanel } from '@/components/dataset-notes-panel'
 import { DocumentPreviewModal } from '@/components/document-preview-modal'
+import { GraphPage } from '@/components/graph-page'
 import { AuthGuard } from '@/components/auth-guard'
 
 // Collapsed Documents Panel Component
@@ -104,7 +105,7 @@ function DatasetDetailContent() {
     const [rightCollapsed, setRightCollapsed] = useState(false)
     const [user, setUser] = useState<AuthUser | null>(null)
     const [isDropdownOpen, setIsDropdownOpen] = useState(false)
-    const [activeTab, setActiveTab] = useState<'documents' | 'chat' | 'notes'>('chat')
+    const [activeTab, setActiveTab] = useState<'documents' | 'chat' | 'notes' | 'graph'>('graph')
     const [isMobile, setIsMobile] = useState<boolean | null>(null)
 
     // Refs to prevent duplicate API calls in React StrictMode
@@ -364,7 +365,7 @@ function DatasetDetailContent() {
                     <div className="flex bg-white border border-gray-200 rounded-lg mb-4 overflow-hidden">
                         <button
                             onClick={() => setActiveTab('documents')}
-                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${activeTab === 'documents'
+                            className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 text-sm font-medium transition-colors ${activeTab === 'documents'
                                 ? 'bg-blue-600 text-white'
                                 : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                                 }`}
@@ -374,7 +375,7 @@ function DatasetDetailContent() {
                         </button>
                         <button
                             onClick={() => setActiveTab('chat')}
-                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${activeTab === 'chat'
+                            className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 text-sm font-medium transition-colors ${activeTab === 'chat'
                                 ? 'bg-blue-600 text-white'
                                 : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                                 }`}
@@ -383,8 +384,18 @@ function DatasetDetailContent() {
                             Chat
                         </button>
                         <button
+                            onClick={() => setActiveTab('graph')}
+                            className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 text-sm font-medium transition-colors ${activeTab === 'graph'
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                }`}
+                        >
+                            <Network className="h-4 w-4" />
+                            Graph
+                        </button>
+                        <button
                             onClick={() => setActiveTab('notes')}
-                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${activeTab === 'notes'
+                            className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 text-sm font-medium transition-colors ${activeTab === 'notes'
                                 ? 'bg-blue-600 text-white'
                                 : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                                 }`}
@@ -422,6 +433,14 @@ function DatasetDetailContent() {
                                 />
                             </div>
                         )}
+                        {activeTab === 'graph' && (
+                            <div className="flex-1 min-h-0">
+                                <GraphPage
+                                    datasetId={datasetId}
+                                    datasetName={dataset?.name}
+                                />
+                            </div>
+                        )}
                         {activeTab === 'notes' && (
                             <div className="flex-1 min-h-0">
                                 <DatasetNotesPanel
@@ -433,64 +452,95 @@ function DatasetDetailContent() {
                     </div>
                 </div>
             ) : (
-                /* Desktop 3-Column Layout */
-                <div className="flex-1 flex px-6 gap-4 mt-4 pb-4">
-                    {/* Left Column - Documents */}
-                    <div className={`${leftCollapsed ? 'w-12' : 'w-80'} flex-shrink-0 transition-all duration-300`}>
-                        {leftCollapsed ? (
-                            <CollapsedDocumentsPanel
-                                documents={documents}
-                                loading={documentsLoading}
-                                onDocumentClick={handleDocumentClick}
-                                onExpand={() => setLeftCollapsed(false)}
-                            />
-                        ) : (
-                            <DatasetDocumentsPanel
-                                datasetId={datasetId}
-                                documents={documents}
-                                loading={documentsLoading}
-                                onDocumentClick={handleDocumentClick}
-                                onSelectedDocumentsChange={handleSelectedDocumentsChange}
-                                onCollapse={() => setLeftCollapsed(true)}
-                                dataset={dataset || undefined}
-                            />
-                        )}
+                /* Desktop Layout with Tabs */
+                <div className="flex-1 flex flex-col px-6 gap-4 mt-4 pb-4">
+                    {/* Tab Navigation */}
+                    <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
+                        <button
+                            onClick={() => setActiveTab('documents')}
+                            className={`flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'documents'
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                }`}
+                        >
+                            <FileText className="h-4 w-4" />
+                            Documents
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('chat')}
+                            className={`flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'chat'
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                }`}
+                        >
+                            <MessageSquare className="h-4 w-4" />
+                            Chat
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('graph')}
+                            className={`flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'graph'
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                }`}
+                        >
+                            <Network className="h-4 w-4" />
+                            Graph
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('notes')}
+                            className={`flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'notes'
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                }`}
+                        >
+                            <StickyNote className="h-4 w-4" />
+                            Notes
+                        </button>
                     </div>
 
-                    {/* Middle Column - Chat */}
-                    <div className="flex-1 min-w-0">
-                        <DatasetChatPanel
-                            datasetId={datasetId}
-                            selectedDocumentId={selectedDocument?.id}
-                            selectedDocumentIds={selectedDocuments.map(doc => doc.id)}
-                            datasetName={dataset?.name}
-                            dataset={loading ? undefined : dataset || undefined}
-                        />
-                    </div>
-
-                    {/* Right Column - Notes */}
-                    <div className={`${rightCollapsed ? 'w-12' : 'w-80'} flex-shrink-0 transition-all duration-300`}>
-                        {rightCollapsed ? (
-                            <div className="h-full bg-white border border-gray-200 rounded-lg flex flex-col">
-                                <div className="p-2 border-b border-gray-200">
-                                    <button
-                                        onClick={() => setRightCollapsed(false)}
-                                        className="w-full p-2 hover:bg-gray-100 rounded flex items-center justify-center"
-                                    >
-                                        <ChevronLeft className="h-4 w-4" />
-                                    </button>
-                                </div>
-                                <div className="flex-1 flex items-center justify-center">
-                                    <div className="text-xs text-gray-500 transform -rotate-90 whitespace-nowrap">
-                                        Notes
-                                    </div>
-                                </div>
+                    {/* Tab Content */}
+                    <div className="flex-1 min-h-0">
+                        {activeTab === 'documents' && (
+                            <div className="h-full">
+                                <DatasetDocumentsPanel
+                                    datasetId={datasetId}
+                                    documents={documents}
+                                    loading={documentsLoading}
+                                    onDocumentClick={handleDocumentClick}
+                                    onSelectedDocumentsChange={handleSelectedDocumentsChange}
+                                    showCollapseButton={false}
+                                    dataset={dataset || undefined}
+                                />
                             </div>
-                        ) : (
-                            <DatasetNotesPanel
-                                datasetId={datasetId}
-                                onCollapse={() => setRightCollapsed(true)}
-                            />
+                        )}
+                        {activeTab === 'chat' && (
+                            <div className="h-full">
+                                <DatasetChatPanel
+                                    key={`chat-${datasetId}-${activeTab}`}
+                                    datasetId={datasetId}
+                                    selectedDocumentId={selectedDocument?.id}
+                                    selectedDocumentIds={selectedDocuments.map(doc => doc.id)}
+                                    datasetName={dataset?.name}
+                                    dataset={loading ? undefined : dataset || undefined}
+                                    requireDocumentSelection={false}
+                                />
+                            </div>
+                        )}
+                        {activeTab === 'graph' && (
+                            <div className="h-full">
+                                <GraphPage
+                                    datasetId={datasetId}
+                                    datasetName={dataset?.name}
+                                />
+                            </div>
+                        )}
+                        {activeTab === 'notes' && (
+                            <div className="h-full">
+                                <DatasetNotesPanel
+                                    datasetId={datasetId}
+                                    showCollapseButton={false}
+                                />
+                            </div>
                         )}
                     </div>
                 </div>

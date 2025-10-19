@@ -1,8 +1,10 @@
 export interface LLMProviderConfig {
   baseUrl: string;
   apiKeyEnv: string;
-  defaultModel: string;
+  defaultModel: string | undefined;
   supportsJsonSchema: boolean;
+  supportsStructuredOutput: boolean; // New: Support for structured output format
+  structuredOutputFormat?: 'openai' | 'ollama' | 'custom'; // New: Format type for structured output
   streamingFormat: 'sse' | 'json' | 'custom';
   customHeaders?: Record<string, string>;
   requestPath?: string; // For providers with different endpoints

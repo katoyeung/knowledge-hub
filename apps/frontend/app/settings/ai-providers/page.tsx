@@ -289,6 +289,7 @@ function AiProvidersContent() {
         { value: 'openrouter', label: 'OpenRouter' },
         { value: 'dashscope', label: 'DashScope' },
         { value: 'perplexity', label: 'Perplexity' },
+        { value: 'ollama', label: 'Ollama' },
         { value: 'custom', label: 'Custom' },
     ]
 

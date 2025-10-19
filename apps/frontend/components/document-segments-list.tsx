@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { documentSegmentApi, datasetApi, DocumentSegment, Document } from "@/lib/api";
+import { documentSegmentApi, datasetApi, graphApi, DocumentSegment, Document } from "@/lib/api";
 import { Toggle } from "@/components/ui/toggle";
-import { Edit3, Trash2, AlertCircle, ChevronUp, Square, CheckSquare, Eye, EyeOff } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Edit3, Trash2, AlertCircle, ChevronUp, Square, CheckSquare, Eye, EyeOff, Network, RefreshCw } from "lucide-react";
 import SegmentEditDrawer from "./segment-edit-drawer";
 import SearchInput from "./search-input";
+import { SegmentGraphDetailModal } from "./segment-graph-detail-modal";
 
 // Simple date formatter
 const formatDate = (dateString?: string) => {
@@ -77,7 +79,7 @@ export default function DocumentSegmentsList({
     const [error, setError] = useState<string | null>(null);
     const [expandedSegments, setExpandedSegments] = useState<Set<string>>(new Set());
     const [togglingSegments, setTogglingSegments] = useState<Set<string>>(new Set());
-    
+
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
@@ -111,6 +113,10 @@ export default function DocumentSegmentsList({
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [pendingEditSegment, setPendingEditSegment] = useState<DocumentSegment | null>(null);
     const [showUnsavedWarning, setShowUnsavedWarning] = useState(false);
+
+    // Graph detail modal state
+    const [selectedSegment, setSelectedSegment] = useState<DocumentSegment | null>(null);
+    const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
     const [triggerSave, setTriggerSave] = useState(false);
 
     // Ref to track if fetch is in progress to prevent duplicate calls
@@ -281,13 +287,35 @@ export default function DocumentSegmentsList({
                 limit,
             });
 
+            // Enhance segments with graph data
+            const enhancedSegments = await Promise.all(
+                response.data.map(async (segment) => {
+                    try {
+                        // Get graph data for this segment (if any)
+                        const graphData = await graphApi.getSegmentGraphData(segment.id);
+                        return {
+                            ...segment,
+                            graphNodes: graphData?.nodes || [],
+                            graphEdges: graphData?.edges || [],
+                        };
+                    } catch (err) {
+                        console.error('Failed to get graph data for segment:', segment.id, err);
+                        return {
+                            ...segment,
+                            graphNodes: [],
+                            graphEdges: [],
+                        };
+                    }
+                })
+            );
+
             if (resetPagination || page === 1) {
-                setSegments(response.data);
+                setSegments(enhancedSegments);
             } else {
                 // Append to existing segments for infinite scroll
-                setSegments(prev => [...prev, ...response.data]);
+                setSegments(prev => [...prev, ...enhancedSegments]);
             }
-            
+
             setTotalSegments(response.total);
             setTotalPages(response.pageCount);
             setCurrentPage(page);
@@ -497,6 +525,40 @@ export default function DocumentSegmentsList({
     const handleCancelUnsavedWarning = () => {
         setShowUnsavedWarning(false);
         setPendingEditSegment(null);
+    };
+
+    // Handle opening detail modal
+    const handleOpenDetailModal = (segment: DocumentSegment) => {
+        setSelectedSegment(segment);
+        setIsDetailModalOpen(true);
+    };
+
+    // Handle closing detail modal
+    const handleCloseDetailModal = () => {
+        setIsDetailModalOpen(false);
+        setSelectedSegment(null);
+    };
+
+    // Refresh graph data for a specific segment
+    const refreshSegmentGraphData = async (segmentId: string) => {
+        try {
+            const graphData = await graphApi.getSegmentGraphData(segmentId);
+            if (graphData) {
+                setSegments(prev =>
+                    prev.map(s =>
+                        s.id === segmentId
+                            ? {
+                                ...s,
+                                graphNodes: graphData.nodes,
+                                graphEdges: graphData.edges,
+                            }
+                            : s
+                    )
+                );
+            }
+        } catch (err) {
+            console.error('Failed to refresh segment graph data:', err);
+        }
     };
 
     // Search functionality - background search that doesn't interrupt typing
@@ -1046,6 +1108,105 @@ export default function DocumentSegmentsList({
 
                                     {/* Keywords Tags */}
                                     <KeywordTags keywords={item.segment.keywords} />
+
+                                    {/* Graph Data Display */}
+                                    {(item.segment.graphNodes?.length > 0 || item.segment.graphEdges?.length > 0) && (
+                                        <div className="mt-3 space-y-2">
+                                            <div className="flex items-center space-x-4 text-xs text-gray-600">
+                                                <div className="flex items-center space-x-1">
+                                                    <Network className="h-3 w-3" />
+                                                    <span>{item.segment.graphNodes?.length || 0} nodes</span>
+                                                </div>
+                                                <div className="flex items-center space-x-1">
+                                                    <Network className="h-3 w-3" />
+                                                    <span>{item.segment.graphEdges?.length || 0} edges</span>
+                                                </div>
+                                            </div>
+
+                                            {/* Detailed Graph Data */}
+                                            <div className="bg-gray-50 rounded-md p-3 space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="text-xs font-medium text-gray-700">Extracted Graph Data:</div>
+                                                    <div className="flex items-center space-x-2">
+                                                        <Button
+                                                            onClick={() => refreshSegmentGraphData(item.segment.id)}
+                                                            size="sm"
+                                                            variant="ghost"
+                                                            className="h-6 px-2 text-xs"
+                                                        >
+                                                            <RefreshCw className="h-3 w-3 mr-1" />
+                                                            Refresh
+                                                        </Button>
+                                                        <Button
+                                                            onClick={() => handleOpenDetailModal(item.segment)}
+                                                            size="sm"
+                                                            variant="outline"
+                                                            className="h-6 px-2 text-xs"
+                                                        >
+                                                            <Eye className="h-3 w-3 mr-1" />
+                                                            View Details
+                                                        </Button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Nodes */}
+                                                {item.segment.graphNodes && item.segment.graphNodes.length > 0 && (
+                                                    <div>
+                                                        <div className="text-xs font-medium text-gray-600 mb-1">Nodes:</div>
+                                                        <div className="space-y-1">
+                                                            {item.segment.graphNodes.slice(0, 3).map((node, index) => (
+                                                                <div key={index} className="flex items-center space-x-2 text-xs">
+                                                                    <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-0.5 rounded">
+                                                                        {node.type}
+                                                                    </span>
+                                                                    <span className="font-medium">{node.label}</span>
+                                                                    {node.properties?.confidence && typeof node.properties.confidence === 'number' && (
+                                                                        <span className="text-gray-500">
+                                                                            ({(node.properties.confidence * 100).toFixed(0)}%)
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                            {item.segment.graphNodes.length > 3 && (
+                                                                <div className="text-xs text-gray-500">
+                                                                    ... and {item.segment.graphNodes.length - 3} more nodes
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Edges */}
+                                                {item.segment.graphEdges && item.segment.graphEdges.length > 0 && (
+                                                    <div>
+                                                        <div className="text-xs font-medium text-gray-600 mb-1">Relationships:</div>
+                                                        <div className="space-y-1">
+                                                            {item.segment.graphEdges.slice(0, 2).map((edge, index) => (
+                                                                <div key={index} className="flex items-center space-x-2 text-xs">
+                                                                    <span className="font-medium">{edge.from}</span>
+                                                                    <span className="text-gray-400">→</span>
+                                                                    <span className="bg-green-100 text-green-800 text-xs font-medium px-2 py-0.5 rounded">
+                                                                        {edge.type}
+                                                                    </span>
+                                                                    <span className="font-medium">{edge.to}</span>
+                                                                    {edge.properties?.confidence && typeof edge.properties.confidence === 'number' && (
+                                                                        <span className="text-gray-500">
+                                                                            ({(edge.properties.confidence * 100).toFixed(0)}%)
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                            {item.segment.graphEdges.length > 2 && (
+                                                                <div className="text-xs text-gray-500">
+                                                                    ... and {item.segment.graphEdges.length - 2} more relationships
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {item.segment.completedAt && (
@@ -1087,7 +1248,7 @@ export default function DocumentSegmentsList({
                                 </select>
                             </div>
                         </div>
-                        
+
                         {currentPage < totalPages && (
                             <button
                                 onClick={handleLoadMore}
@@ -1203,7 +1364,7 @@ export default function DocumentSegmentsList({
             )}
 
             {/* Back to Top Button - Hide when modals/drawers are open */}
-            {showBackToTop && !isEditDrawerOpen && !deleteConfirmSegment && !showUnsavedWarning && (
+            {showBackToTop && !isEditDrawerOpen && !deleteConfirmSegment && !showUnsavedWarning && !isDetailModalOpen && (
                 <button
                     onClick={scrollToTop}
                     className="fixed bottom-6 right-6 p-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all duration-300 hover:scale-110 z-30"
@@ -1212,6 +1373,20 @@ export default function DocumentSegmentsList({
                 >
                     <ChevronUp className="h-5 w-5" />
                 </button>
+            )}
+
+            {/* Graph Detail Modal */}
+            {selectedSegment && (
+                <SegmentGraphDetailModal
+                    isOpen={isDetailModalOpen}
+                    onClose={handleCloseDetailModal}
+                    segmentId={selectedSegment.id}
+                    segmentContent={selectedSegment.content}
+                    nodes={selectedSegment.graphNodes || []}
+                    edges={selectedSegment.graphEdges || []}
+                    extractionStatus="completed"
+                    lastExtracted={selectedSegment.completedAt ? new Date(selectedSegment.completedAt) : undefined}
+                />
             )}
         </div>
     );

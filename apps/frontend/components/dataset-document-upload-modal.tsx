@@ -1,9 +1,9 @@
 'use client'
 
-import React, { useState, useCallback, useRef } from 'react'
-import { X, Upload, FileText, AlertCircle, CheckCircle, Loader2, Plus } from 'lucide-react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
+import { X, Upload, FileText, AlertCircle, CheckCircle, Loader2, Plus, Settings, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { datasetApi, type Dataset, type Document } from '@/lib/api'
+import { datasetApi, documentApi, type Dataset, type Document, type CsvConnectorTemplate, type CsvUploadConfig, CsvConnectorType } from '@/lib/api'
 
 interface DatasetDocumentUploadModalProps {
     isOpen: boolean
@@ -29,13 +29,46 @@ export function DatasetDocumentUploadModal({
     const [currentStep, setCurrentStep] = useState<'upload' | 'processing'>('upload')
     const [uploadedDocuments, setUploadedDocuments] = useState<Document[]>([])
 
+    // CSV-related state
+    const [csvTemplates, setCsvTemplates] = useState<CsvConnectorTemplate[]>([])
+    const [csvConfig, setCsvConfig] = useState<CsvUploadConfig | null>(null)
+    const [showCsvConfig, setShowCsvConfig] = useState(false)
+    const [csvValidation, setCsvValidation] = useState<{
+        isValid: boolean
+        missingColumns: string[]
+        extraColumns: string[]
+    } | null>(null)
+
     const fileInputRef = useRef<HTMLInputElement>(null)
+
+    // Load CSV templates on component mount
+    useEffect(() => {
+        const loadCsvTemplates = async () => {
+            try {
+                const templates = await documentApi.getCsvTemplates()
+                setCsvTemplates(templates)
+            } catch (error) {
+                console.error('Failed to load CSV templates:', error)
+            }
+        }
+        loadCsvTemplates()
+    }, [])
+
+    // Check if any selected files are CSV
+    const hasCsvFiles = selectedFiles.some(file =>
+        file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv')
+    )
 
     // Handle file selection
     const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files || [])
         setSelectedFiles(files)
         setError(null)
+
+        // Reset CSV config when files change
+        setCsvConfig(null)
+        setShowCsvConfig(false)
+        setCsvValidation(null)
     }, [])
 
     // Handle drag events
@@ -67,6 +100,38 @@ export function DatasetDocumentUploadModal({
         setSelectedFiles(prev => prev.filter((_, i) => i !== index))
     }, [])
 
+    // Handle CSV connector selection
+    const handleCsvConnectorSelect = useCallback((connectorType: CsvConnectorType) => {
+        setCsvConfig({
+            connectorType,
+            fieldMappings: {},
+            searchableColumns: [],
+        })
+        setShowCsvConfig(true)
+    }, [])
+
+    // Handle CSV configuration change
+    const handleCsvConfigChange = useCallback((config: CsvUploadConfig) => {
+        setCsvConfig(config)
+    }, [])
+
+    // Validate CSV file against template
+    const validateCsvFile = useCallback(async (file: File, templateName: string) => {
+        try {
+            const validation = await documentApi.validateCsvHeaders(file, templateName)
+            setCsvValidation(validation)
+            return validation.isValid
+        } catch (error) {
+            console.error('CSV validation failed:', error)
+            setCsvValidation({
+                isValid: false,
+                missingColumns: [],
+                extraColumns: [],
+            })
+            return false
+        }
+    }, [])
+
     // Format file size
     const formatFileSize = (bytes: number) => {
         if (bytes === 0) return '0 Bytes'
@@ -89,7 +154,7 @@ export function DatasetDocumentUploadModal({
         try {
             // Step 1: Upload documents
             setCurrentStep('processing')
-            const uploadResult = await datasetApi.uploadDocuments(dataset.id, selectedFiles)
+            const uploadResult = await datasetApi.uploadDocuments(dataset.id, selectedFiles, csvConfig || undefined)
             setUploadedDocuments(uploadResult.data.documents)
 
             // Small delay to show the processing step
@@ -106,7 +171,7 @@ export function DatasetDocumentUploadModal({
                 textSplitter: effectiveConfig.effectiveConfiguration.textSplitter,
                 chunkSize: effectiveConfig.effectiveConfiguration.chunkSize,
                 chunkOverlap: effectiveConfig.effectiveConfiguration.chunkOverlap,
-                embeddingProvider: 'local', // Default to local
+                embeddingModelProvider: 'local', // Default to local
             })
 
             setUploadResult({
@@ -140,6 +205,9 @@ export function DatasetDocumentUploadModal({
         setUploadResult(null)
         setCurrentStep('upload')
         setUploadedDocuments([])
+        setCsvConfig(null)
+        setShowCsvConfig(false)
+        setCsvValidation(null)
         onClose()
     }
 
@@ -195,10 +263,10 @@ export function DatasetDocumentUploadModal({
                                     multiple
                                     onChange={handleFileSelect}
                                     className="hidden"
-                                    accept=".pdf,.txt,.doc,.docx,.md"
+                                    accept=".pdf,.txt,.doc,.docx,.md,.csv"
                                 />
                                 <p className="text-sm text-gray-500">
-                                    Supported formats: PDF, TXT, DOC, DOCX, MD
+                                    Supported formats: PDF, TXT, DOC, DOCX, MD, CSV
                                 </p>
                             </div>
 
@@ -218,6 +286,11 @@ export function DatasetDocumentUploadModal({
                                                     <span className="text-xs text-gray-500">
                                                         ({formatFileSize(file.size)})
                                                     </span>
+                                                    {file.type === 'text/csv' && (
+                                                        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                                            CSV
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <button
                                                     onClick={() => removeFile(index)}
@@ -228,6 +301,83 @@ export function DatasetDocumentUploadModal({
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+                            )}
+
+                            {/* CSV Configuration */}
+                            {hasCsvFiles && !csvConfig && (
+                                <div className="space-y-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                                    <div className="flex items-center space-x-2">
+                                        <Settings className="h-5 w-5 text-blue-600" />
+                                        <h4 className="text-sm font-medium text-blue-900">
+                                            CSV Files Detected
+                                        </h4>
+                                    </div>
+                                    <p className="text-sm text-blue-700">
+                                        Select a connector template to configure how your CSV data should be processed.
+                                    </p>
+                                    <div className="space-y-2">
+                                        <h5 className="text-xs font-medium text-blue-800">Available Connectors:</h5>
+                                        <div className="grid grid-cols-1 gap-2">
+                                            {csvTemplates.map((template) => (
+                                                <button
+                                                    key={template.name}
+                                                    onClick={() => handleCsvConnectorSelect(template.name as CsvConnectorType)}
+                                                    className="text-left p-3 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+                                                >
+                                                    <div className="font-medium text-sm text-gray-900">
+                                                        {template.displayName}
+                                                    </div>
+                                                    <div className="text-xs text-gray-600 mt-1">
+                                                        {template.description}
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* CSV Configuration Details */}
+                            {csvConfig && (
+                                <div className="space-y-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center space-x-2">
+                                            <CheckCircle className="h-5 w-5 text-green-600" />
+                                            <h4 className="text-sm font-medium text-green-900">
+                                                CSV Configuration
+                                            </h4>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                setCsvConfig(null)
+                                                setShowCsvConfig(false)
+                                            }}
+                                            className="text-xs text-green-700 hover:text-green-900"
+                                        >
+                                            Change
+                                        </button>
+                                    </div>
+                                    <div className="text-sm text-green-700">
+                                        <strong>Connector:</strong> {csvTemplates.find(t => t.name === csvConfig.connectorType)?.displayName}
+                                    </div>
+                                    {csvValidation && (
+                                        <div className="text-xs">
+                                            {csvValidation.isValid ? (
+                                                <span className="text-green-700">✓ CSV structure is valid</span>
+                                            ) : (
+                                                <div className="text-red-700">
+                                                    <div>⚠ CSV validation issues:</div>
+                                                    {csvValidation.missingColumns.length > 0 && (
+                                                        <div>Missing columns: {csvValidation.missingColumns.join(', ')}</div>
+                                                    )}
+                                                    {csvValidation.extraColumns.length > 0 && (
+                                                        <div>Extra columns: {csvValidation.extraColumns.join(', ')}</div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -246,7 +396,11 @@ export function DatasetDocumentUploadModal({
                                 </Button>
                                 <Button
                                     onClick={handleUpload}
-                                    disabled={selectedFiles.length === 0 || uploading}
+                                    disabled={
+                                        selectedFiles.length === 0 ||
+                                        uploading ||
+                                        (hasCsvFiles && !csvConfig)
+                                    }
                                 >
                                     {uploading ? (
                                         <>
@@ -261,6 +415,11 @@ export function DatasetDocumentUploadModal({
                                     )}
                                 </Button>
                             </div>
+                            {hasCsvFiles && !csvConfig && (
+                                <p className="text-sm text-amber-600 text-center">
+                                    Please configure CSV connector before uploading
+                                </p>
+                            )}
                         </div>
                     )}
 

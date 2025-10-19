@@ -5,8 +5,6 @@ import { Role } from '@modules/access/entities/role.entity';
 import { Dataset } from '@modules/dataset/entities/dataset.entity';
 import { Document } from '@modules/dataset/entities/document.entity';
 import { DocumentSegment } from '@modules/dataset/entities/document-segment.entity';
-import { AiProvider } from '@modules/ai-provider/entities/ai-provider.entity';
-import { Prompt } from '@modules/prompts/entities/prompt.entity';
 
 @Entity('users')
 export class User extends BaseEntity {
@@ -35,14 +33,29 @@ export class User extends BaseEntity {
   createdSegments: DocumentSegment[];
 
   // AI Provider relationships
-  @OneToMany(() => AiProvider, (aiProvider) => aiProvider.user)
-  aiProviders: AiProvider[];
+  @OneToMany('AiProvider', 'user')
+  aiProviders: any[];
 
   // Prompt relationships
-  @OneToMany(() => Prompt, (prompt) => prompt.user)
-  prompts: Prompt[];
+  @OneToMany('Prompt', 'user')
+  prompts: any[];
+
+  // Graph relationships
+  @OneToMany('GraphNode', 'user')
+  graphNodes: any[];
+
+  @OneToMany('GraphEdge', 'user')
+  graphEdges: any[];
 
   // User settings
   @Column('jsonb', { nullable: true, default: {} })
-  settings: object;
+  settings: {
+    graph_settings?: {
+      aiProviderId?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
+    };
+    [key: string]: any;
+  };
 }

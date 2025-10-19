@@ -34,7 +34,7 @@ export abstract class BaseLLMClient extends BaseApiClient implements LLMClient {
       {
         baseUrl: config.baseUrl,
         apiKey: configService.get<string>(config.apiKeyEnv),
-        timeout: config.timeout || 30000,
+        timeout: config.timeout || 300000,
         cacheTTL: config.cacheTTL || 0, // Set to 0 for never expire
       },
       httpService,

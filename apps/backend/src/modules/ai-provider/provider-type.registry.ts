@@ -42,10 +42,16 @@ export const PROVIDER_TYPE_REGISTRY: Record<string, ProviderTypeConfig> = {
     requiresApiKey: true,
     supportsCustomBaseUrl: false,
   },
-  custom: {
+  ollama: {
     clientClass: 'OllamaApiClient',
     defaultModel: 'llama3.1:8b',
     requiresApiKey: false,
+    supportsCustomBaseUrl: true,
+  },
+  custom: {
+    clientClass: 'OpenAIApiClient',
+    defaultModel: 'gpt-4',
+    requiresApiKey: true,
     supportsCustomBaseUrl: true,
   },
 };

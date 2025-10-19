@@ -34,24 +34,41 @@ export class LLMClientFactory {
    */
   createClient(aiProvider: AiProvider): LLMClient {
     this.logger.log(`🔧 Creating LLM client for provider: ${aiProvider.type}`);
+    this.logger.log(`🔧 Provider baseUrl: ${aiProvider.baseUrl}`);
+    this.logger.log(
+      `🔧 Provider apiKey: ${aiProvider.apiKey ? 'present' : 'missing'}`,
+    );
 
     const providerConfig = getProviderConfig(aiProvider.type);
     if (!providerConfig) {
       throw new Error(`Unsupported provider type: ${aiProvider.type}`);
     }
 
+    this.logger.log(
+      `🔧 Provider config supportsCustomBaseUrl: ${providerConfig.supportsCustomBaseUrl}`,
+    );
+
     // Build client configuration
     const clientConfig: ClientConfig = {
       apiKey: aiProvider.apiKey,
       baseUrl: aiProvider.baseUrl,
-      timeout: 30000,
+      timeout: 300000, // Increased to 5 minutes for complex graph extraction tasks
       cacheTTL: 0, // Disable caching by default
     };
 
     // Use provider's baseUrl if available and supported
     if (aiProvider.baseUrl && providerConfig.supportsCustomBaseUrl) {
       clientConfig.baseUrl = aiProvider.baseUrl;
+      this.logger.log(`🔧 Using custom baseUrl: ${clientConfig.baseUrl}`);
+    } else {
+      this.logger.warn(
+        `🔧 NOT using custom baseUrl. aiProvider.baseUrl: ${aiProvider.baseUrl}, supportsCustomBaseUrl: ${providerConfig.supportsCustomBaseUrl}`,
+      );
     }
+
+    this.logger.log(
+      `🔧 Final client config: ${JSON.stringify(clientConfig, null, 2)}`,
+    );
 
     // Create client instance
     return this.getClientForType(aiProvider.type, clientConfig);
@@ -74,6 +91,9 @@ export class LLMClientFactory {
 
       case 'perplexity':
         return this.createPerplexityClient(config);
+
+      case 'ollama':
+        return this.createOllamaClient(config);
 
       case 'custom':
         return this.createOllamaClient(config);
@@ -105,7 +125,6 @@ export class LLMClientFactory {
       customConfigService,
       this.httpService,
       this.cacheManager,
-      config.baseUrl, // Pass the custom base URL
     );
   }
 

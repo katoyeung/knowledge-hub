@@ -12,6 +12,8 @@ import {
 import { SimplePdfParserService } from '../../document-parser/services/simple-pdf-parser.service';
 import { ChineseTextPreprocessorService } from '../../document-parser/services/chinese-text-preprocessor.service';
 import { DetectorService } from '../../../common/services/detector.service';
+import { CsvParserService } from '../../csv-connector/services/csv-parser.service';
+import { CsvConnectorTemplateService } from '../../csv-connector/services/csv-connector-template.service';
 import {
   EmbeddingModel,
   getEffectiveChunkSize,
@@ -44,6 +46,8 @@ export class ChunkingService {
     private readonly simplePdfParserService: SimplePdfParserService,
     private readonly chineseTextPreprocessorService: ChineseTextPreprocessorService,
     private readonly detectorService: DetectorService,
+    private readonly csvParserService: CsvParserService,
+    private readonly csvTemplateService: CsvConnectorTemplateService,
   ) {}
 
   async createSegments(
@@ -54,7 +58,15 @@ export class ChunkingService {
   ): Promise<DocumentSegment[]> {
     this.logger.log(`[CHUNKING] Creating segments for document ${document.id}`);
 
-    // Extract text from file
+    // Handle CSV files differently
+    if (document.docType === 'csv') {
+      this.logger.log(
+        `[CHUNKING] Processing CSV file for document ${document.id}`,
+      );
+      return this.processCsvDocument(document, datasetId, userId);
+    }
+
+    // Extract text from file for non-CSV documents
     const content = await this.extractTextFromFile(document);
 
     // Choose chunking strategy based on configuration
@@ -143,6 +155,89 @@ export class ChunkingService {
     } catch (error) {
       this.logger.error(
         `[CHUNKING] Failed to extract text from ${filePath}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Process CSV document by creating one segment per row
+   */
+  private async processCsvDocument(
+    document: Document,
+    datasetId: string,
+    userId: string,
+  ): Promise<DocumentSegment[]> {
+    const filePath = join(
+      process.cwd(),
+      'uploads',
+      'documents',
+      document.fileId,
+    );
+
+    try {
+      // Get CSV configuration from document metadata
+      const csvConfig = (document.docMetadata as any)?.csvConfig;
+      if (!csvConfig) {
+        throw new Error('CSV configuration not found in document metadata');
+      }
+
+      this.logger.log(
+        `[CHUNKING] Processing CSV with connector: ${csvConfig.connectorType}`,
+      );
+
+      // Parse CSV file
+      const parseResult = await this.csvParserService.parseCsvFile(filePath);
+      if (!parseResult.success) {
+        throw new Error(
+          `CSV parsing failed: ${parseResult.errors?.join(', ')}`,
+        );
+      }
+
+      // Generate segment data from CSV rows
+      const segmentData = this.csvParserService.generateSegmentData(
+        parseResult.rows,
+        csvConfig,
+      );
+
+      // Create document segments
+      const segments: DocumentSegment[] = [];
+      for (const data of segmentData) {
+        const segment = this.segmentRepository.create({
+          datasetId,
+          documentId: document.id,
+          position: data.position,
+          content: data.content,
+          wordCount: this.countWords(data.content),
+          tokens: this.estimateTokens(data.content),
+          segmentType: 'csv_row',
+          hierarchyLevel: 1,
+          childCount: 0,
+          hierarchyMetadata: {
+            csvRow: data.csvRow,
+            connectorType: csvConfig.connectorType,
+            fieldMappings: csvConfig.fieldMappings,
+          },
+          status: 'waiting',
+          enabled: true,
+          userId,
+        });
+
+        segments.push(segment);
+      }
+
+      // Save all segments
+      const savedSegments = await this.segmentRepository.save(segments);
+
+      this.logger.log(
+        `[CHUNKING] Created ${savedSegments.length} CSV segments for document ${document.id}`,
+      );
+
+      return savedSegments;
+    } catch (error) {
+      this.logger.error(
+        `[CHUNKING] Failed to process CSV document ${document.id}:`,
         error,
       );
       throw error;
@@ -995,5 +1090,27 @@ export class ChunkingService {
     }
 
     return fixed;
+  }
+
+  /**
+   * Count words in text
+   */
+  private countWords(text: string): number {
+    if (!text || typeof text !== 'string') return 0;
+    return text
+      .trim()
+      .split(/\s+/)
+      .filter((word) => word.length > 0).length;
+  }
+
+  /**
+   * Estimate token count (rough approximation)
+   */
+  private estimateTokens(text: string): number {
+    if (!text || typeof text !== 'string') return 0;
+    // Rough approximation: 1 token ≈ 4 characters for English, 1.5 for Chinese
+    const chineseChars = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+    const otherChars = text.length - chineseChars;
+    return Math.ceil(chineseChars / 1.5 + otherChars / 4);
   }
 }

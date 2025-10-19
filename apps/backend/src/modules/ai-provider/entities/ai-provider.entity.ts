@@ -1,6 +1,5 @@
 import { Entity, Column, ManyToOne, RelationId } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
-import { User } from '../../user/user.entity';
 import { Exclude } from 'class-transformer';
 
 @Entity({ name: 'ai_providers' })
@@ -16,6 +15,7 @@ export class AiProvider extends BaseEntity {
       'openrouter',
       'dashscope',
       'perplexity',
+      'ollama',
       'custom',
     ],
     default: 'openai',
@@ -26,6 +26,7 @@ export class AiProvider extends BaseEntity {
     | 'openrouter'
     | 'dashscope'
     | 'perplexity'
+    | 'ollama'
     | 'custom';
 
   @Column({ length: 500, nullable: true })
@@ -57,6 +58,6 @@ export class AiProvider extends BaseEntity {
   userId: string;
 
   // Relationships
-  @ManyToOne(() => User, (user) => user.aiProviders)
-  user: User;
+  @ManyToOne('User', 'aiProviders')
+  user: any;
 }

@@ -9,8 +9,8 @@ import {
     DialogTitle,
     DialogDescription,
 } from '@/components/ui/dialog'
-import { FileText, Loader2, Calendar, File, ChevronDown, ChevronUp, Eye, EyeOff, Search } from 'lucide-react'
-import { documentSegmentApi, type Document, type DocumentSegment } from '@/lib/api'
+import { FileText, Loader2, Calendar, File, ChevronDown, ChevronUp, Eye, EyeOff, Search, Network } from 'lucide-react'
+import { documentSegmentApi, graphApi, type Document, type DocumentSegment } from '@/lib/api'
 import { NerResultsDisplay } from './ner-results-display'
 import { DocumentSearch } from './document-search'
 
@@ -55,21 +55,43 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                 limit: SEGMENTS_PER_PAGE
             })
 
+            // Enhance segments with graph data
+            const enhancedSegments = await Promise.all(
+                response.data.map(async (segment) => {
+                    try {
+                        // Get graph data for this segment (if any)
+                        const graphData = await graphApi.getSegmentGraphData(segment.id);
+                        return {
+                            ...segment,
+                            graphNodes: graphData?.nodes || [],
+                            graphEdges: graphData?.edges || [],
+                        };
+                    } catch (err) {
+                        console.error('Failed to get graph data for segment:', segment.id, err);
+                        return {
+                            ...segment,
+                            graphNodes: [],
+                            graphEdges: [],
+                        };
+                    }
+                })
+            );
+
             if (reset) {
-                setSegments(response.data)
+                setSegments(enhancedSegments)
                 setTotalSegments(response.total)
-                setHasMore(response.data.length === SEGMENTS_PER_PAGE && response.data.length < response.total)
+                setHasMore(enhancedSegments.length === SEGMENTS_PER_PAGE && enhancedSegments.length < response.total)
 
                 // Calculate segment status counts for reset
-                const statusCounts = response.data.reduce((acc, segment) => {
+                const statusCounts = enhancedSegments.reduce((acc, segment) => {
                     acc[segment.status] = (acc[segment.status] || 0) + 1
                     return acc
                 }, {} as Record<string, number>)
                 setSegmentStatusCounts(statusCounts)
             } else {
                 setSegments(prev => {
-                    const newSegments = [...prev, ...response.data]
-                    setHasMore(response.data.length === SEGMENTS_PER_PAGE && newSegments.length < response.total)
+                    const newSegments = [...prev, ...enhancedSegments]
+                    setHasMore(enhancedSegments.length === SEGMENTS_PER_PAGE && newSegments.length < response.total)
 
                     // Calculate segment status counts for append
                     const statusCounts = newSegments.reduce((acc, segment) => {
@@ -465,6 +487,83 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                                                         compact={false}
                                                         showHeader={true}
                                                     />
+                                                )}
+
+                                                {/* Graph Data Display */}
+                                                {((segment.graphNodes?.length || 0) > 0 || (segment.graphEdges?.length || 0) > 0) && (
+                                                    <div className="mt-3 space-y-2">
+                                                        <div className="flex items-center space-x-4 text-xs text-gray-600">
+                                                            <div className="flex items-center space-x-1">
+                                                                <Network className="h-3 w-3" />
+                                                                <span>{segment.graphNodes?.length || 0} nodes</span>
+                                                            </div>
+                                                            <div className="flex items-center space-x-1">
+                                                                <Network className="h-3 w-3" />
+                                                                <span>{segment.graphEdges?.length || 0} edges</span>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Detailed Graph Data */}
+                                                        <div className="bg-gray-50 rounded-md p-3 space-y-2">
+                                                            <div className="text-xs font-medium text-gray-700">Extracted Graph Data:</div>
+
+                                                            {/* Nodes */}
+                                                            {segment.graphNodes && segment.graphNodes.length > 0 && (
+                                                                <div>
+                                                                    <div className="text-xs font-medium text-gray-600 mb-1">Nodes:</div>
+                                                                    <div className="space-y-1">
+                                                                        {segment.graphNodes.slice(0, 3).map((node, index) => (
+                                                                            <div key={index} className="flex items-center space-x-2 text-xs">
+                                                                                <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-0.5 rounded">
+                                                                                    {node.type}
+                                                                                </span>
+                                                                                <span className="font-medium">{node.label}</span>
+                                                                                {node.properties?.confidence && typeof node.properties.confidence === 'number' && (
+                                                                                    <span className="text-gray-500">
+                                                                                        ({(node.properties.confidence * 100).toFixed(0)}%)
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                        ))}
+                                                                        {segment.graphNodes.length > 3 && (
+                                                                            <div className="text-xs text-gray-500">
+                                                                                ... and {segment.graphNodes.length - 3} more nodes
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Edges */}
+                                                            {segment.graphEdges && segment.graphEdges.length > 0 && (
+                                                                <div>
+                                                                    <div className="text-xs font-medium text-gray-600 mb-1">Relationships:</div>
+                                                                    <div className="space-y-1">
+                                                                        {segment.graphEdges.slice(0, 2).map((edge, index) => (
+                                                                            <div key={index} className="flex items-center space-x-2 text-xs">
+                                                                                <span className="font-medium">{edge.from}</span>
+                                                                                <span className="text-gray-400">→</span>
+                                                                                <span className="bg-green-100 text-green-800 text-xs font-medium px-2 py-0.5 rounded">
+                                                                                    {edge.type}
+                                                                                </span>
+                                                                                <span className="font-medium">{edge.to}</span>
+                                                                                {edge.properties?.confidence && typeof edge.properties.confidence === 'number' && (
+                                                                                    <span className="text-gray-500">
+                                                                                        ({(edge.properties.confidence * 100).toFixed(0)}%)
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                        ))}
+                                                                        {segment.graphEdges.length > 2 && (
+                                                                            <div className="text-xs text-gray-500">
+                                                                                ... and {segment.graphEdges.length - 2} more relationships
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
                                                 )}
                                             </div>
                                         ))}

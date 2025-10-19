@@ -39,6 +39,7 @@ import { ModelMappingService } from '../../common/services/model-mapping.service
 import { DetectorService } from '../../common/services/detector.service';
 // 🆕 Import for Parent-Child Chunking support
 import { DocumentParserModule } from '../document-parser/document-parser.module';
+import { CsvConnectorModule } from '../csv-connector/csv-connector.module';
 import { QueueModule } from '../queue/queue.module';
 import { BullModule } from '@nestjs/bull';
 // 🆕 Import new processing services
@@ -49,6 +50,11 @@ import { JobDispatcherService } from '../queue/services/job-dispatcher.service';
 import { QueueManagerService } from '../queue/services/queue-manager.service';
 import { EventBusService } from '../event/services/event-bus.service';
 import { WorkerPoolService } from '../queue/jobs/document/worker-pool.service';
+import { UserModule } from '../user/user.module';
+import { GraphNode } from '../graph/entities/graph-node.entity';
+import { GraphEdge } from '../graph/entities/graph-edge.entity';
+import { Prompt } from '../prompts/entities/prompt.entity';
+import { AiProvider } from '../ai-provider/entities/ai-provider.entity';
 
 @Module({
   imports: [
@@ -60,6 +66,10 @@ import { WorkerPoolService } from '../queue/jobs/document/worker-pool.service';
       Embedding,
       ChatConversation,
       ChatMessage,
+      GraphNode,
+      GraphEdge,
+      Prompt,
+      AiProvider,
     ]),
     HttpModule,
     ConfigModule,
@@ -68,7 +78,9 @@ import { WorkerPoolService } from '../queue/jobs/document/worker-pool.service';
     NotificationModule,
     // 🆕 Import DocumentParserModule for Parent-Child Chunking
     DocumentParserModule,
+    CsvConnectorModule,
     QueueModule,
+    UserModule,
     BullModule.registerQueue({
       name: 'default',
     }),
@@ -115,6 +127,7 @@ import { WorkerPoolService } from '../queue/jobs/document/worker-pool.service';
     HybridSearchService,
     EntityExtractionService,
     ModelMappingService,
+    EmbeddingConfigProcessorService,
   ],
   controllers: [
     DatasetController,

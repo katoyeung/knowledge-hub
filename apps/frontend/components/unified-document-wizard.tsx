@@ -13,7 +13,7 @@ import {
     CheckCircle,
     Database
 } from 'lucide-react'
-import { datasetApi, type Dataset, type Document } from '@/lib/api'
+import { datasetApi, documentApi, type Dataset, type Document, type CsvConnectorTemplate, type CsvUploadConfig, CsvConnectorType } from '@/lib/api'
 import { EmbeddingConfigStep, EmbeddingConfigData } from './embedding-config/embedding-config-step'
 import { EmbeddingConfigService } from '@/lib/services/embedding-config.service'
 
@@ -54,6 +54,11 @@ export function UnifiedDocumentWizard({
     const [selectedFiles, setSelectedFiles] = useState<File[]>([])
     const [uploadedDocuments, setUploadedDocuments] = useState<Document[]>([])
 
+    // CSV-related state
+    const [csvTemplates, setCsvTemplates] = useState<CsvConnectorTemplate[]>([])
+    const [csvConfig, setCsvConfig] = useState<CsvUploadConfig | null>(null)
+    const [showCsvConfig, setShowCsvConfig] = useState(false)
+
     // Step 2: Embedding Configuration
     const [embeddingConfig, setEmbeddingConfig] = useState<EmbeddingConfigData>(() => {
         const recommended = EmbeddingConfigService.getRecommendedConfig('general')
@@ -84,6 +89,34 @@ export function UnifiedDocumentWizard({
 
     const handleDragOver = useCallback((e: React.DragEvent) => {
         e.preventDefault()
+    }, [])
+
+    // CSV detection and configuration
+    const hasCsvFiles = selectedFiles.some(file =>
+        file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv')
+    )
+
+    // Load CSV templates when component mounts
+    React.useEffect(() => {
+        const loadCsvTemplates = async () => {
+            try {
+                const templates = await documentApi.getCsvTemplates()
+                setCsvTemplates(templates)
+            } catch (error) {
+                console.error('Failed to load CSV templates:', error)
+            }
+        }
+        loadCsvTemplates()
+    }, [])
+
+    // Handle CSV connector selection
+    const handleCsvConnectorSelect = useCallback((connectorType: CsvConnectorType) => {
+        setCsvConfig({
+            connectorType,
+            fieldMappings: {},
+            searchableColumns: [],
+        })
+        setShowCsvConfig(true)
     }, [])
 
     // Step 1: Create Dataset (only for create-dataset mode)
@@ -124,7 +157,7 @@ export function UnifiedDocumentWizard({
         setError(null)
 
         try {
-            const result = await datasetApi.uploadDocuments(targetDataset.id, selectedFiles)
+            const result = await datasetApi.uploadDocuments(targetDataset.id, selectedFiles, csvConfig || undefined)
             setUploadedDocuments(result.data.documents)
             setCurrentStep('embedding-config')
         } catch (err: unknown) {
@@ -191,8 +224,12 @@ export function UnifiedDocumentWizard({
     const handleBack = () => {
         if (currentStep === 'embedding-config') {
             setCurrentStep('dataset-and-upload')
+        } else if (currentStep === 'dataset-and-upload') {
+            // For the first step, close the wizard
+            if (onClose) {
+                onClose()
+            }
         }
-        // For dataset-and-upload step, there's no previous step
     }
 
     const getStepNumber = () => {
@@ -332,13 +369,13 @@ export function UnifiedDocumentWizard({
                                     Drop files here or click to browse
                                 </p>
                                 <p className="text-sm text-gray-500">
-                                    Supports PDF, TXT, MD, and other text documents
+                                    Supports PDF, TXT, MD, DOC, DOCX, and CSV files
                                 </p>
                             </div>
                             <input
                                 type="file"
                                 multiple
-                                accept=".pdf,.txt,.md,.doc,.docx"
+                                accept=".pdf,.txt,.md,.doc,.docx,.csv"
                                 onChange={handleFileSelect}
                                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                             />
@@ -359,6 +396,11 @@ export function UnifiedDocumentWizard({
                                                 <span className="text-xs text-gray-500">
                                                     ({(file.size / 1024 / 1024).toFixed(2)} MB)
                                                 </span>
+                                                {file.type === 'text/csv' && (
+                                                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                                        CSV
+                                                    </span>
+                                                )}
                                             </div>
                                             <Button
                                                 variant="ghost"
@@ -370,6 +412,66 @@ export function UnifiedDocumentWizard({
                                             </Button>
                                         </div>
                                     ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* CSV Configuration */}
+                        {hasCsvFiles && !csvConfig && (
+                            <div className="space-y-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                                <div className="flex items-center space-x-2">
+                                    <Database className="h-5 w-5 text-blue-600" />
+                                    <h4 className="text-sm font-medium text-blue-900">
+                                        CSV Files Detected
+                                    </h4>
+                                </div>
+                                <p className="text-sm text-blue-700">
+                                    Select a connector template to configure how your CSV data should be processed.
+                                </p>
+                                <div className="space-y-2">
+                                    <h5 className="text-xs font-medium text-blue-800">Available Connectors:</h5>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {csvTemplates.map((template) => (
+                                            <button
+                                                key={template.name}
+                                                onClick={() => handleCsvConnectorSelect(template.name as CsvConnectorType)}
+                                                className="text-left p-3 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+                                            >
+                                                <div className="font-medium text-sm text-gray-900">
+                                                    {template.displayName}
+                                                </div>
+                                                <div className="text-xs text-gray-600 mt-1">
+                                                    {template.description}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* CSV Configuration Details */}
+                        {csvConfig && (
+                            <div className="space-y-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center space-x-2">
+                                        <CheckCircle className="h-5 w-5 text-green-600" />
+                                        <h4 className="text-sm font-medium text-green-900">
+                                            CSV Configuration
+                                        </h4>
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            setCsvConfig(null)
+                                            setShowCsvConfig(false)
+                                        }}
+                                        className="text-xs text-green-700 hover:text-green-900"
+                                    >
+                                        Change
+                                    </button>
+                                </div>
+                                <div className="text-sm text-green-700">
+                                    <strong>Connector:</strong> {csvTemplates.find(t => t.name === csvConfig.connectorType)?.displayName}
                                 </div>
                             </div>
                         )}
@@ -421,7 +523,7 @@ export function UnifiedDocumentWizard({
                 <Button
                     variant="outline"
                     onClick={handleBack}
-                    disabled={currentStep === getInitialStep() || loading}
+                    disabled={loading}
                 >
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back

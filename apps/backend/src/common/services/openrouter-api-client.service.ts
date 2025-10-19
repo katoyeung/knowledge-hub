@@ -64,7 +64,11 @@ export class OpenRouterApiClient extends BaseLLMClient {
     if (jsonSchema) {
       payload.response_format = {
         type: 'json_schema',
-        json_schema: jsonSchema,
+        json_schema: {
+          name: 'graph_extraction',
+          strict: true,
+          schema: jsonSchema,
+        },
       };
     }
 
@@ -118,7 +122,11 @@ export class OpenRouterApiClient extends BaseLLMClient {
     if (jsonSchema) {
       payload.response_format = {
         type: 'json_schema',
-        json_schema: jsonSchema,
+        json_schema: {
+          name: 'graph_extraction',
+          strict: true,
+          schema: jsonSchema,
+        },
       };
     }
 

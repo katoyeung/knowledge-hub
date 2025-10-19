@@ -3,6 +3,7 @@ import { BaseEntity } from '../../../common/entities/base.entity';
 import { User } from '../../user/user.entity';
 import { Dataset } from './dataset.entity';
 import { DocumentSegment } from './document-segment.entity';
+import { GraphNode } from '../../graph/entities/graph-node.entity';
 
 @Entity({ name: 'documents' })
 export class Document extends BaseEntity {
@@ -180,4 +181,7 @@ export class Document extends BaseEntity {
     onDelete: 'CASCADE',
   })
   segments: DocumentSegment[];
+
+  @OneToMany(() => GraphNode, (node) => node.document)
+  graphNodes: GraphNode[];
 }

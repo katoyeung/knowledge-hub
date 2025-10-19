@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, IsNull, In } from 'typeorm';
+import { Repository, Not, IsNull, In, Like } from 'typeorm';
 import { TypeOrmCrudService } from '@dataui/crud-typeorm';
 import { DocumentSegment } from './entities/document-segment.entity';
 import { Document } from './entities/document.entity';
@@ -54,6 +54,99 @@ export class DocumentSegmentService extends TypeOrmCrudService<DocumentSegment> 
       take: limit,
     });
 
+    const pageCount = Math.ceil(total / limit);
+
+    return {
+      data,
+      count: data.length,
+      total,
+      page,
+      pageCount,
+    };
+  }
+
+  async findByDocumentIdWithFilters(
+    documentId: string,
+    page: number = 1,
+    limit: number = 20,
+    search?: string,
+    hasGraphData?: 'true' | 'false' | 'all',
+  ): Promise<{
+    data: DocumentSegment[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> {
+    // Build where conditions
+    const whereConditions: any = { documentId };
+
+    // Add search condition if provided
+    if (search && search.trim()) {
+      whereConditions.content = Like(`%${search.trim()}%`);
+    }
+
+    // First, get all segments that match the basic criteria
+    const [allSegments, totalBasic] = await this.segmentRepository.findAndCount(
+      {
+        where: whereConditions,
+        order: { position: 'ASC' },
+      },
+    );
+
+    // If no graph data filtering is needed, return paginated results
+    if (!hasGraphData || hasGraphData === 'all') {
+      const startIndex = (page - 1) * limit;
+      const endIndex = startIndex + limit;
+      const data = allSegments.slice(startIndex, endIndex);
+      const pageCount = Math.ceil(totalBasic / limit);
+
+      return {
+        data,
+        count: data.length,
+        total: totalBasic,
+        page,
+        pageCount,
+      };
+    }
+
+    // Filter by graph data
+    const segmentsWithGraphData = [];
+    const segmentsWithoutGraphData = [];
+
+    for (const segment of allSegments) {
+      // Check if segment has graph data by querying the graph tables
+      const nodeCount = await this.segmentRepository.query(
+        'SELECT COUNT(*) as count FROM graph_nodes WHERE segment_id = $1',
+        [segment.id],
+      );
+      const edgeCount = await this.segmentRepository.query(
+        'SELECT COUNT(*) as count FROM graph_edges WHERE source_node_id IN (SELECT id FROM graph_nodes WHERE segment_id = $1) OR target_node_id IN (SELECT id FROM graph_nodes WHERE segment_id = $1)',
+        [segment.id],
+      );
+
+      const hasNodes = parseInt(nodeCount[0]?.count || '0') > 0;
+      const hasEdges = parseInt(edgeCount[0]?.count || '0') > 0;
+      const hasGraph = hasNodes || hasEdges;
+
+      if (hasGraphData === 'true' && hasGraph) {
+        segmentsWithGraphData.push(segment);
+      } else if (hasGraphData === 'false' && !hasGraph) {
+        segmentsWithoutGraphData.push(segment);
+      }
+    }
+
+    // Use the appropriate filtered segments
+    const filteredSegments =
+      hasGraphData === 'true'
+        ? segmentsWithGraphData
+        : segmentsWithoutGraphData;
+    const total = filteredSegments.length;
+
+    // Apply pagination
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
+    const data = filteredSegments.slice(startIndex, endIndex);
     const pageCount = Math.ceil(total / limit);
 
     return {

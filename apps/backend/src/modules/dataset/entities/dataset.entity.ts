@@ -11,6 +11,8 @@ import { User } from '../../user/user.entity';
 import { Document } from './document.entity';
 import { DocumentSegment } from './document-segment.entity';
 import { DatasetKeywordTable } from './dataset-keyword-table.entity';
+import { GraphNode } from '../../graph/entities/graph-node.entity';
+import { GraphEdge } from '../../graph/entities/graph-edge.entity';
 import { Exclude } from 'class-transformer';
 
 @Entity({ name: 'datasets' })
@@ -50,7 +52,25 @@ export class Dataset extends BaseEntity {
 
   // 🆕 Settings Configuration
   @Column('jsonb', { nullable: true })
-  settings: object;
+  settings: {
+    graph_settings?: {
+      aiProviderId?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
+    };
+    graphExtractionEnabled?: boolean;
+    graphExtractionConfig?: {
+      promptId?: string;
+      aiProviderId?: string;
+      model?: string;
+      temperature?: number;
+      enableDeduplication?: boolean;
+      batchSize?: number;
+      confidenceThreshold?: number;
+    };
+    [key: string]: any;
+  };
 
   // Foreign key column
   @Exclude({ toPlainOnly: true })
@@ -70,4 +90,10 @@ export class Dataset extends BaseEntity {
 
   @OneToOne(() => DatasetKeywordTable, (keywordTable) => keywordTable.dataset)
   keywordTable: DatasetKeywordTable;
+
+  @OneToMany(() => GraphNode, (node) => node.dataset)
+  graphNodes: GraphNode[];
+
+  @OneToMany(() => GraphEdge, (edge) => edge.dataset)
+  graphEdges: GraphEdge[];
 }

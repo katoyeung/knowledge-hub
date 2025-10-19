@@ -37,6 +37,7 @@ import {
   QueueManagerService,
   JobDetails,
 } from '../../queue/services/queue-manager.service';
+import { GraphExtractionJob } from '../../queue/jobs/graph/graph-extraction.job';
 
 interface EmbeddingConfig {
   model: string;
@@ -741,6 +742,75 @@ export class DocumentProcessingService {
     this.logger.log(
       `Document processing completed: ${documentId}, ${segments.length} segments created with ${embeddingDimensions} dimensions`,
     );
+
+    // Check if graph extraction is enabled for this dataset
+    await this.triggerGraphExtractionIfEnabled(documentId, datasetId, userId);
+  }
+
+  private async triggerGraphExtractionIfEnabled(
+    documentId: string,
+    datasetId: string,
+    userId: string,
+  ): Promise<void> {
+    try {
+      // Get dataset to check if graph extraction is enabled
+      const dataset = await this.datasetRepository.findOne({
+        where: { id: datasetId },
+        select: ['id', 'settings', 'dataSourceType'],
+      });
+
+      if (!dataset) {
+        this.logger.warn(
+          `Dataset ${datasetId} not found for graph extraction check`,
+        );
+        return;
+      }
+
+      // Check if graph extraction is enabled
+      const settings = dataset.settings as any;
+      if (!settings?.graphExtractionEnabled) {
+        this.logger.log(
+          `Graph extraction not enabled for dataset ${datasetId}`,
+        );
+        return;
+      }
+
+      // Check if this is a social media dataset
+      if (
+        dataset.dataSourceType !== 'csv' &&
+        dataset.dataSourceType !== 'social_media'
+      ) {
+        this.logger.log(
+          `Graph extraction only supported for social media datasets, got: ${dataset.dataSourceType}`,
+        );
+        return;
+      }
+
+      // Get extraction config from dataset settings
+      const extractionConfig = settings.graphExtractionConfig || {};
+
+      this.logger.log(
+        `Triggering graph extraction for document ${documentId} in dataset ${datasetId}`,
+      );
+
+      // Dispatch graph extraction job
+      await GraphExtractionJob.dispatch({
+        documentId,
+        datasetId,
+        extractionConfig,
+        userId,
+      }).dispatch();
+
+      this.logger.log(
+        `Graph extraction job dispatched for document ${documentId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to trigger graph extraction for document ${documentId}:`,
+        error,
+      );
+      // Don't throw error to avoid breaking the main processing flow
+    }
   }
 
   private async extractTextFromFile(
@@ -2517,7 +2587,14 @@ export class DocumentProcessingService {
       });
 
       if (!document) {
-        throw new Error(`Document ${documentId} not found`);
+        this.logger.warn(
+          `Document ${documentId} not found - may have been already deleted`,
+        );
+        return {
+          success: true,
+          message: `Document ${documentId} not found - no jobs to cancel`,
+          cancelledCount: 0,
+        };
       }
 
       // Cancel all jobs for this document

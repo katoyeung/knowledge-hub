@@ -2,8 +2,10 @@
 
 import React, { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Upload, Plus } from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Upload, Plus, Network, FileText, Settings } from 'lucide-react'
 import { DocumentUploadWizard } from './document-upload-wizard'
+import { GraphPage } from './graph-page'
 import { type Dataset, type Document } from '@/lib/api'
 
 interface DatasetDetailPageProps {
@@ -72,52 +74,83 @@ export function DatasetDetailPage({ dataset }: DatasetDetailPageProps) {
                 </div>
             </div>
 
-            {/* Documents List */}
-            <div className="bg-white border border-gray-200 rounded-lg">
-                <div className="px-6 py-4 border-b border-gray-200">
-                    <h2 className="text-lg font-semibold text-gray-900">Documents</h2>
-                </div>
+            {/* Tabs */}
+            <Tabs defaultValue="graph" className="space-y-6">
+                <TabsList>
+                    <TabsTrigger value="documents" className="flex items-center space-x-2">
+                        <FileText className="h-4 w-4" />
+                        <span>Documents</span>
+                    </TabsTrigger>
+                    <TabsTrigger value="graph" className="flex items-center space-x-2">
+                        <Network className="h-4 w-4" />
+                        <span>Graph</span>
+                    </TabsTrigger>
+                    <TabsTrigger value="settings" className="flex items-center space-x-2">
+                        <Settings className="h-4 w-4" />
+                        <span>Settings</span>
+                    </TabsTrigger>
+                </TabsList>
 
-                {documents.length === 0 ? (
-                    <div className="p-8 text-center">
-                        <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                        <h3 className="text-lg font-medium text-gray-900 mb-2">No documents yet</h3>
-                        <p className="text-gray-600 mb-4">
-                            Upload your first documents to get started with this dataset.
-                        </p>
-                        <Button
-                            onClick={() => setShowUploadWizard(true)}
-                            className="flex items-center space-x-2"
-                        >
-                            <Plus className="h-4 w-4" />
-                            <span>Upload Documents</span>
-                        </Button>
-                    </div>
-                ) : (
-                    <div className="divide-y divide-gray-200">
-                        {documents.map((doc, index) => (
-                            <div key={doc.id || index} className="px-6 py-4 flex items-center justify-between">
-                                <div>
-                                    <h3 className="text-sm font-medium text-gray-900">{doc.name}</h3>
-                                    <p className="text-xs text-gray-500">
-                                        Uploaded • {doc.docType} • {doc.wordCount || 0} words
-                                    </p>
-                                </div>
-                                <div className="flex items-center space-x-2">
-                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${doc.indexingStatus === 'completed'
-                                        ? 'bg-green-100 text-green-800'
-                                        : doc.indexingStatus === 'processing'
-                                            ? 'bg-yellow-100 text-yellow-800'
-                                            : 'bg-gray-100 text-gray-800'
-                                        }`}>
-                                        {doc.indexingStatus || 'waiting'}
-                                    </span>
-                                </div>
+                <TabsContent value="documents">
+                    {/* Documents List */}
+                    <div className="bg-white border border-gray-200 rounded-lg">
+                        <div className="px-6 py-4 border-b border-gray-200">
+                            <h2 className="text-lg font-semibold text-gray-900">Documents</h2>
+                        </div>
+
+                        {documents.length === 0 ? (
+                            <div className="p-8 text-center">
+                                <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                                <h3 className="text-lg font-medium text-gray-900 mb-2">No documents yet</h3>
+                                <p className="text-gray-600 mb-4">
+                                    Upload your first documents to get started with this dataset.
+                                </p>
+                                <Button
+                                    onClick={() => setShowUploadWizard(true)}
+                                    className="flex items-center space-x-2"
+                                >
+                                    <Plus className="h-4 w-4" />
+                                    <span>Upload Documents</span>
+                                </Button>
                             </div>
-                        ))}
+                        ) : (
+                            <div className="divide-y divide-gray-200">
+                                {documents.map((doc, index) => (
+                                    <div key={doc.id || index} className="px-6 py-4 flex items-center justify-between">
+                                        <div>
+                                            <h3 className="text-sm font-medium text-gray-900">{doc.name}</h3>
+                                            <p className="text-xs text-gray-500">
+                                                Uploaded • {doc.docType} • {doc.wordCount || 0} words
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${doc.indexingStatus === 'completed'
+                                                ? 'bg-green-100 text-green-800'
+                                                : doc.indexingStatus === 'processing'
+                                                    ? 'bg-yellow-100 text-yellow-800'
+                                                    : 'bg-gray-100 text-gray-800'
+                                                }`}>
+                                                {doc.indexingStatus || 'waiting'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
-                )}
-            </div>
+                </TabsContent>
+
+                <TabsContent value="graph">
+                    <GraphPage datasetId={dataset.id} datasetName={dataset.name} />
+                </TabsContent>
+
+                <TabsContent value="settings">
+                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                        <h2 className="text-lg font-semibold text-gray-900 mb-4">Dataset Settings</h2>
+                        <p className="text-gray-600">Settings configuration coming soon...</p>
+                    </div>
+                </TabsContent>
+            </Tabs>
         </div>
     )
 } 

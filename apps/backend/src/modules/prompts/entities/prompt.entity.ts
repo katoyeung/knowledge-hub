@@ -1,6 +1,5 @@
 import { Entity, Column, ManyToOne, RelationId } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
-import { User } from '../../user/user.entity';
 import { Exclude } from 'class-transformer';
 
 @Entity({ name: 'prompts' })
@@ -36,6 +35,6 @@ export class Prompt extends BaseEntity {
   userId: string;
 
   // Relationships
-  @ManyToOne(() => User, (user) => user.prompts)
-  user: User;
+  @ManyToOne('User', 'prompts')
+  user: any;
 }

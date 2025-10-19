@@ -11,6 +11,7 @@ import {
   Param,
   Get,
   Put,
+  Query,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
@@ -30,6 +31,11 @@ import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
 import { CreateDatasetDto } from './dto/create-dataset.dto';
 import { UpdateDatasetDto } from './dto/update-dataset.dto';
 import { UpdateChatSettingsDto } from './dto/update-chat-settings.dto';
+import { UpdateGraphSettingsDto } from './dto/update-graph-settings.dto';
+import { UploadDocumentDto } from './dto/upload-document.dto';
+import { ParseJsonStringsPipe } from '../../common/pipes/parse-json-strings.pipe';
+import { CreateGraphExtractionConfigDto } from '../graph/dto/create-graph-extraction-config.dto';
+import { GraphExtractionJob } from '../queue/jobs/graph/graph-extraction.job';
 import {
   getEffectiveChunkSize,
   getEffectiveChunkOverlap,
@@ -46,6 +52,7 @@ import {
 import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
 import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id.interceptor';
+import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { DocumentSegmentService } from './document-segment.service';
@@ -105,6 +112,7 @@ import { Logger } from '@nestjs/common';
   },
 })
 @Controller('datasets')
+@ApiTags('Datasets')
 //@UseGuards(JwtAuthGuard, PermsGuard)
 @UseGuards(JwtAuthGuard)
 @UseInterceptors(PopulateUserIdInterceptor)
@@ -216,6 +224,7 @@ export class DatasetController implements CrudController<Dataset> {
   async uploadDocuments(
     @Param('id') datasetId: string,
     @UploadedFiles() files: Express.Multer.File[],
+    @Body() uploadDto: UploadDocumentDto,
     @Request() req: any,
   ) {
     if (!files || files.length === 0) {
@@ -232,6 +241,7 @@ export class DatasetController implements CrudController<Dataset> {
       datasetId,
       files,
       userId,
+      uploadDto,
     );
 
     return {
@@ -294,6 +304,31 @@ export class DatasetController implements CrudController<Dataset> {
       message: 'Dataset setup completed successfully',
       data: result,
     };
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Search datasets with pagination' })
+  @ApiQuery({ name: 'q', required: false, description: 'Search query' })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    description: 'Page number',
+    type: Number,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Items per page',
+    type: Number,
+  })
+  @ApiQuery({ name: 'sort', required: false, description: 'Sort field' })
+  async searchDatasets(
+    @Query('q') searchQuery?: string,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('sort') sort: string = 'createdAt,DESC',
+  ) {
+    return this.service.searchDatasets(searchQuery, page, limit, sort);
   }
 
   @Post('search-documents')
@@ -402,6 +437,90 @@ export class DatasetController implements CrudController<Dataset> {
     } catch (error) {
       throw new BadRequestException(
         `Failed to update chat settings: ${error.message}`,
+      );
+    }
+  }
+
+  @Put('/:id/graph-settings')
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async updateGraphSettings(
+    @Param('id') datasetId: string,
+    @Body() updateGraphSettingsDto: UpdateGraphSettingsDto,
+    @Request() req: any,
+  ) {
+    try {
+      const userId = req.user?.id || req.user?.sub;
+      if (!userId) {
+        throw new BadRequestException('User not authenticated');
+      }
+
+      const updatedDataset = await this.service.updateGraphSettings(
+        datasetId,
+        updateGraphSettingsDto,
+        userId,
+      );
+
+      return {
+        success: true,
+        dataset: updatedDataset,
+        message: 'Graph settings updated successfully',
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to update graph settings: ${error.message}`,
+      );
+    }
+  }
+
+  @Get('/:id/graph-settings')
+  async getGraphSettings(@Param('id') datasetId: string, @Request() req: any) {
+    try {
+      const userId = req.user?.id || req.user?.sub;
+      if (!userId) {
+        throw new BadRequestException('User not authenticated');
+      }
+
+      const graphSettings = await this.service.getGraphSettings(
+        datasetId,
+        userId,
+      );
+
+      return {
+        success: true,
+        graphSettings,
+        message: 'Graph settings retrieved successfully',
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to get graph settings: ${error.message}`,
+      );
+    }
+  }
+
+  @Get('/:id/resolved-graph-settings')
+  async getResolvedGraphSettings(
+    @Param('id') datasetId: string,
+    @Request() req: any,
+  ) {
+    try {
+      const userId = req.user?.id || req.user?.sub;
+      if (!userId) {
+        throw new BadRequestException('User not authenticated');
+      }
+
+      const resolvedSettings = await this.service.resolveGraphSettings(
+        datasetId,
+        userId,
+      );
+
+      return {
+        success: true,
+        graphSettings: resolvedSettings,
+        message: 'Resolved graph settings retrieved successfully',
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to get resolved graph settings: ${error.message}`,
       );
     }
   }
@@ -625,6 +744,34 @@ export class DatasetController implements CrudController<Dataset> {
     } catch (error) {
       throw new BadRequestException(
         `Failed to cleanup orphaned embeddings: ${error.message}`,
+      );
+    }
+  }
+
+  @Get(':id/graph/status')
+  async getGraphExtractionStatus(@Param('id') id: string, @Request() req: any) {
+    try {
+      // Get documents with their processing status
+      const documents = await this.documentService.findByDatasetId(id);
+
+      const graphStatus = documents.map((doc: any) => ({
+        documentId: doc.id,
+        documentName: doc.name,
+        status: doc.indexingStatus,
+        graphExtraction: doc.processingMetadata?.graphExtraction || null,
+      }));
+
+      return {
+        success: true,
+        data: {
+          datasetId: id,
+          totalDocuments: documents.length,
+          documents: graphStatus,
+        },
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to get graph extraction status: ${error.message}`,
       );
     }
   }

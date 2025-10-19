@@ -31,11 +31,35 @@ export interface DatasetNotification {
   data: any;
 }
 
+export interface GraphExtractionNotification {
+  datasetId: string;
+  documentId: string;
+  stage:
+    | "started"
+    | "processing_segment"
+    | "llm_call"
+    | "creating_nodes"
+    | "creating_edges"
+    | "completed"
+    | "error";
+  segmentIndex?: number;
+  totalSegments?: number;
+  nodesCreated?: number;
+  edgesCreated?: number;
+  message?: string;
+  error?: string;
+}
+
 export interface NotificationMessage {
-  type: "DOCUMENT_PROCESSING_UPDATE" | "DATASET_UPDATE" | "CONNECTED";
+  type:
+    | "DOCUMENT_PROCESSING_UPDATE"
+    | "DATASET_UPDATE"
+    | "GRAPH_EXTRACTION_UPDATE"
+    | "CONNECTED";
   data:
     | DocumentProcessingNotification
     | DatasetNotification
+    | GraphExtractionNotification
     | { clientId: string };
   timestamp: number;
 }
@@ -136,6 +160,12 @@ class NotificationService extends EventEmitter {
       case "DATASET_UPDATE":
         this.emit("datasetUpdate", message.data as DatasetNotification);
         break;
+      case "GRAPH_EXTRACTION_UPDATE":
+        this.emit(
+          "graphExtractionUpdate",
+          message.data as GraphExtractionNotification
+        );
+        break;
       default:
         console.log("Unknown notification type:", message.type);
     }
@@ -162,6 +192,12 @@ class NotificationService extends EventEmitter {
 
   onDatasetUpdate(callback: (notification: DatasetNotification) => void): void {
     this.on("datasetUpdate", callback);
+  }
+
+  onGraphExtractionUpdate(
+    callback: (notification: GraphExtractionNotification) => void
+  ): void {
+    this.on("graphExtractionUpdate", callback);
   }
 
   onConnected(callback: () => void): void {

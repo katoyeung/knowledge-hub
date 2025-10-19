@@ -18,9 +18,18 @@ export class QueueProcessorService {
   async handleJob(job: Job<any>): Promise<void> {
     this.logger.log(`[QUEUE] Processing job ${job.id} of type: ${job.name}`);
     try {
+      // Debug: Log all registered jobs
+      const allJobs = this.jobRegistry.getAllJobs();
+      this.logger.debug(
+        `[QUEUE] Available jobs: ${allJobs.map((j) => j.jobType || j.name).join(', ')}`,
+      );
+
       const handler = this.jobRegistry.getJob(job.name);
       if (!handler) {
         this.logger.error(`No handler registered for job type: ${job.name}`);
+        this.logger.error(
+          `Available job types: ${allJobs.map((j) => j.jobType || j.name).join(', ')}`,
+        );
         throw new Error(`No handler registered for job type: ${job.name}`);
       }
 
