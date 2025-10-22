@@ -102,43 +102,20 @@ export function GraphVisualization({
     const [containerWidth, setContainerWidth] = useState(width)
     const [spreadShape, setSpreadShape] = useState<'left' | 'right' | 'follow' | 'circle'>('left')
 
-    // Handle container resize - use ResizeObserver to get actual container width
+    // Use container width but limit to 90% to prevent expansion
     useEffect(() => {
         const container = document.querySelector('[data-graph-container]')
-        if (!container) {
-            // Fallback: use the parent container or calculate based on viewport
-            const parentContainer = document.querySelector('.col-span-8')
-            if (parentContainer) {
-                const resizeObserver = new ResizeObserver(entries => {
-                    for (const entry of entries) {
-                        // Use full width of the 8-column container
-                        const newWidth = Math.floor(entry.contentRect.width)
-                        setContainerWidth(newWidth)
-                    }
-                })
-                resizeObserver.observe(parentContainer)
-                return () => resizeObserver.disconnect()
-            } else {
-                // Final fallback: use the passed width prop
-                setContainerWidth(width)
-            }
-            return
+        if (container) {
+            const containerWidth = Math.floor(container.getBoundingClientRect().width)
+            const maxWidth = Math.floor(containerWidth * 0.9) // 90% of container width
+            setContainerWidth(maxWidth)
+        } else {
+            setContainerWidth(width)
         }
-
-        const resizeObserver = new ResizeObserver(entries => {
-            for (const entry of entries) {
-                // Use full width of the container
-                const newWidth = Math.floor(entry.contentRect.width)
-                setContainerWidth(newWidth)
-            }
-        })
-
-        resizeObserver.observe(container)
-        return () => resizeObserver.disconnect()
     }, [width])
 
-    // Use container width for canvas with maximum constraint
-    const currentCanvasWidth = Math.min(containerWidth, 1200) // Max width of 1200px
+    // Use calculated container width (90% of available space)
+    const currentCanvasWidth = containerWidth
 
     // Get unique node and edge types
     const nodeTypes = Array.from(new Set(data.nodes.map(n => n.nodeType)))
@@ -228,23 +205,23 @@ export function GraphVisualization({
             // Check if this node is isolated (no connections)
             const isIsolated = !connectedNodeIds.has(node.id)
 
-            // Different positioning strategy for isolated vs connected nodes
+            // Dynamic positioning - let the force simulation handle most positioning
             let x, y
             if (isIsolated) {
-                // Isolated nodes: very close together in a tight cluster at top-left
+                // Isolated nodes: spread them out more to avoid stacking
                 const isolatedNodes = filteredData.nodes.filter(n => !connectedNodeIds.has(n.id))
                 const isolatedIndex = isolatedNodes.findIndex(n => n.id === node.id)
                 const angle = (isolatedIndex / Math.max(1, isolatedNodes.length)) * 2 * Math.PI
-                const radius = 8 // Very small radius for tight clustering
-                x = -150 + Math.cos(angle) * radius // Position at left side
-                y = -100 + Math.sin(angle) * radius // Position at top
+                const radius = 50 + (isolatedIndex * 20) // Larger radius, more spread
+                x = Math.cos(angle) * radius
+                y = Math.sin(angle) * radius
             } else {
-                // Connected nodes: spread out in the center area
+                // Connected nodes: initial circular arrangement, let force simulation take over
                 const connectedNodes = filteredData.nodes.filter(n => connectedNodeIds.has(n.id))
                 const connectedIndex = connectedNodes.findIndex(n => n.id === node.id)
                 const angle = (connectedIndex / Math.max(1, connectedNodes.length)) * 2 * Math.PI
-                const radius = Math.min(150, Math.sqrt(connectedNodes.length) * 30)
-                x = Math.cos(angle) * radius // Position at center
+                const radius = Math.min(200, Math.sqrt(connectedNodes.length) * 40)
+                x = Math.cos(angle) * radius
                 y = Math.sin(angle) * radius
             }
 
@@ -356,8 +333,7 @@ export function GraphVisualization({
     const handleReset = useCallback(() => {
         fgRef.current?.zoomToFit(1000)
         // Restart the force simulation to redistribute nodes
-        // Let the natural force simulation handle the positioning
-        // No need to manually restart the simulation
+        fgRef.current?.d3Reheat()
     }, [])
 
     const handleSpreadNodes = useCallback(() => {
@@ -368,30 +344,30 @@ export function GraphVisualization({
                 const nodes = graphData.nodes
                 const centerX = currentCanvasWidth / 2
                 const centerY = canvasHeight / 2
-                const spreadRadius = Math.min(currentCanvasWidth, canvasHeight) * 0.15
+                const spreadRadius = Math.min(currentCanvasWidth, canvasHeight) * 0.2
 
-                // Reposition nodes with different strategies for isolated vs connected
+                // Reposition nodes with better spacing
                 const isolatedNodes = nodes.filter((node: NodeData) => node.isIsolated)
                 const connectedNodes = nodes.filter((node: NodeData) => !node.isIsolated)
 
-                // Isolated nodes: very tight cluster at top-left
+                // Isolated nodes: spread them out more
                 isolatedNodes.forEach((node: NodeData, index: number) => {
                     const angle = (index / Math.max(1, isolatedNodes.length)) * 2 * Math.PI
-                    const radius = 10 // Very small radius for tight clustering
-                    node.x = centerX - 200 + Math.cos(angle) * radius
-                    node.y = centerY - 150 + Math.sin(angle) * radius
+                    const radius = 80 + (index * 15) // Larger radius for better spread
+                    node.x = centerX + Math.cos(angle) * radius
+                    node.y = centerY + Math.sin(angle) * radius
                 })
 
                 // Connected nodes: spread out in center area
                 connectedNodes.forEach((node: NodeData, index: number) => {
                     const angle = (index / Math.max(1, connectedNodes.length)) * 2 * Math.PI
-                    const radius = spreadRadius * 0.5
+                    const radius = spreadRadius * 0.6
                     node.x = centerX + Math.cos(angle) * radius
                     node.y = centerY + Math.sin(angle) * radius
                 })
 
-                // Let the natural force simulation handle the positioning
-                // No need to manually restart the simulation
+                // Restart the force simulation to apply new positions
+                fgRef.current.d3Reheat()
 
                 // Zoom out to see the full spread
                 setTimeout(() => {
@@ -409,7 +385,7 @@ export function GraphVisualization({
             // Wait for the graph to be ready, then spread nodes
             const timer = setTimeout(() => {
                 handleSpreadNodes()
-            }, 1000)
+            }, 1500) // Increased delay to let force simulation stabilize
 
             return () => clearTimeout(timer)
         }
@@ -617,189 +593,194 @@ export function GraphVisualization({
             {/* Graph Visualization */}
             <Card>
                 <CardContent className="p-0">
-                    <div className="relative overflow-hidden">
+                    <div className="relative overflow-hidden" style={{ maxWidth: '100%', width: '100%' }}>
                         {ForceGraph2D && (
-                            <ForceGraph2D
-                                key={`${currentCanvasWidth}-${canvasHeight}`}
-                                ref={fgRef}
-                                graphData={graphData}
-                                height={canvasHeight}
-                                width={currentCanvasWidth}
-                                nodeLabel={showLabels ? (node: any) => `${node.label} (${node.nodeType})` : undefined}
-                                nodeColor={(node: any) => node.color}
-                                nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-                                    const label = node.label
-                                    const nodeSize = node.size || 5
-                                    const x = node.x || 0
-                                    const y = node.y || 0
-                                    const opacity = node.opacity || 1.0
+                            <div style={{ width: '90%', maxWidth: '90%', margin: '0 auto' }}>
+                                <ForceGraph2D
+                                    key={`${currentCanvasWidth}-${canvasHeight}`}
+                                    ref={fgRef}
+                                    graphData={graphData}
+                                    height={canvasHeight}
+                                    width={currentCanvasWidth}
+                                    nodeLabel={showLabels ? (node: any) => `${node.label} (${node.nodeType})` : undefined}
+                                    nodeColor={(node: any) => node.color}
+                                    nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                                        const label = node.label
+                                        const nodeSize = node.size || 5
+                                        const x = node.x || 0
+                                        const y = node.y || 0
+                                        const opacity = node.opacity || 1.0
 
-                                    // Draw glow effect for important nodes
-                                    if (nodeSize > 15) {
-                                        ctx.shadowColor = node.color || NODE_TYPE_COLORS.default
-                                        ctx.shadowBlur = 10
-                                    }
+                                        // Draw glow effect for important nodes
+                                        if (nodeSize > 15) {
+                                            ctx.shadowColor = node.color || NODE_TYPE_COLORS.default
+                                            ctx.shadowBlur = 10
+                                        }
 
-                                    // Draw node circle
-                                    ctx.beginPath()
-                                    ctx.arc(x, y, nodeSize, 0, 2 * Math.PI)
-                                    ctx.fillStyle = node.color || NODE_TYPE_COLORS.default
-                                    ctx.globalAlpha = opacity
-                                    ctx.fill()
-
-                                    // Reset shadow and alpha
-                                    ctx.shadowBlur = 0
-                                    ctx.globalAlpha = 1.0
-
-                                    // Draw node border with different thickness based on importance
-                                    const borderWidth = nodeSize > 15 ? 3 : 2
-                                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
-                                    ctx.lineWidth = borderWidth / globalScale
-                                    ctx.stroke()
-
-                                    // Add inner highlight for important nodes
-                                    if (nodeSize > 12) {
+                                        // Draw node circle
                                         ctx.beginPath()
-                                        ctx.arc(x, y, nodeSize * 0.6, 0, 2 * Math.PI)
-                                        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'
+                                        ctx.arc(x, y, nodeSize, 0, 2 * Math.PI)
+                                        ctx.fillStyle = node.color || NODE_TYPE_COLORS.default
+                                        ctx.globalAlpha = opacity
                                         ctx.fill()
-                                    }
 
-                                    // Draw label if showLabels is true and scale is appropriate
-                                    if (showLabels && globalScale > 0.3) {
-                                        const fontSize = Math.max(8, 10 / globalScale)
-                                        ctx.font = `bold ${fontSize}px Sans-Serif`
-                                        ctx.textAlign = 'center'
-                                        ctx.textBaseline = 'middle'
+                                        // Reset shadow and alpha
+                                        ctx.shadowBlur = 0
+                                        ctx.globalAlpha = 1.0
 
-                                        // Draw text background for better readability
-                                        const textMetrics = ctx.measureText(label)
-                                        const textWidth = textMetrics.width
-                                        const textHeight = fontSize
-                                        const padding = 3
-                                        const labelY = y + nodeSize + 8
-
-                                        // Draw rounded rectangle background
-                                        const bgX = x - textWidth / 2 - padding
-                                        const bgY = labelY - textHeight / 2 - padding
-                                        const bgWidth = textWidth + padding * 2
-                                        const bgHeight = textHeight + padding * 2
-
-                                        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
-                                        ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)'
-                                        ctx.lineWidth = 1
-
-                                        // Draw rounded rectangle
-                                        ctx.beginPath()
-                                        ctx.roundRect(bgX, bgY, bgWidth, bgHeight, 4)
-                                        ctx.fill()
+                                        // Draw node border with different thickness based on importance
+                                        const borderWidth = nodeSize > 15 ? 3 : 2
+                                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
+                                        ctx.lineWidth = borderWidth / globalScale
                                         ctx.stroke()
 
-                                        // Draw text
-                                        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)'
-                                        ctx.fillText(label, x, labelY)
-                                    }
-                                }}
-                                linkLabel={(edge: any) => `${edge.edgeType} (${edge.weight})`}
-                                linkColor={(edge: any) => edge.color}
-                                linkWidth={(edge: any) => edge.width}
-                                linkCanvasObject={(link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-                                    // Draw custom link with much better visibility
-                                    const source = link.source as NodeData
-                                    const target = link.target as NodeData
+                                        // Add inner highlight for important nodes
+                                        if (nodeSize > 12) {
+                                            ctx.beginPath()
+                                            ctx.arc(x, y, nodeSize * 0.6, 0, 2 * Math.PI)
+                                            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'
+                                            ctx.fill()
+                                        }
 
-                                    if (!source || !target) return
+                                        // Draw label if showLabels is true and scale is appropriate
+                                        if (showLabels && globalScale > 0.3) {
+                                            const fontSize = Math.max(8, 10 / globalScale)
+                                            ctx.font = `bold ${fontSize}px Sans-Serif`
+                                            ctx.textAlign = 'center'
+                                            ctx.textBaseline = 'middle'
 
-                                    const sourceX = source.x || 0
-                                    const sourceY = source.y || 0
-                                    const targetX = target.x || 0
-                                    const targetY = target.y || 0
+                                            // Draw text background for better readability
+                                            const textMetrics = ctx.measureText(label)
+                                            const textWidth = textMetrics.width
+                                            const textHeight = fontSize
+                                            const padding = 3
+                                            const labelY = y + nodeSize + 8
 
-                                    // Calculate line properties - make lines much thinner
-                                    const lineWidth = Math.max(1, (link.width || 1) * 0.5 / globalScale)
-                                    const color = link.color || EDGE_TYPE_COLORS.default
+                                            // Draw rounded rectangle background
+                                            const bgX = x - textWidth / 2 - padding
+                                            const bgY = labelY - textHeight / 2 - padding
+                                            const bgWidth = textWidth + padding * 2
+                                            const bgHeight = textHeight + padding * 2
 
-                                    // Draw thin background line for visibility
-                                    ctx.beginPath()
-                                    ctx.moveTo(sourceX, sourceY)
-                                    ctx.lineTo(targetX, targetY)
-                                    ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)'
-                                    ctx.lineWidth = lineWidth + 1
-                                    ctx.stroke()
+                                            ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
+                                            ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)'
+                                            ctx.lineWidth = 1
 
-                                    // Draw main link line
-                                    ctx.beginPath()
-                                    ctx.moveTo(sourceX, sourceY)
-                                    ctx.lineTo(targetX, targetY)
-                                    ctx.strokeStyle = color
-                                    ctx.lineWidth = lineWidth
-                                    ctx.stroke()
+                                            // Draw rounded rectangle
+                                            ctx.beginPath()
+                                            ctx.roundRect(bgX, bgY, bgWidth, bgHeight, 4)
+                                            ctx.fill()
+                                            ctx.stroke()
 
-                                    // Draw arrow head with better visibility
-                                    const angle = Math.atan2(targetY - sourceY, targetX - sourceX)
-                                    const arrowLength = Math.max(12, 15 / globalScale)
-                                    const arrowAngle = Math.PI / 5
+                                            // Draw text
+                                            ctx.fillStyle = 'rgba(0, 0, 0, 0.9)'
+                                            ctx.fillText(label, x, labelY)
+                                        }
+                                    }}
+                                    linkLabel={(edge: any) => `${edge.edgeType} (${edge.weight})`}
+                                    linkColor={(edge: any) => edge.color}
+                                    linkWidth={(edge: any) => edge.width}
+                                    linkCanvasObject={(link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                                        // Draw custom link with much better visibility
+                                        const source = link.source as NodeData
+                                        const target = link.target as NodeData
 
-                                    // Draw arrow background
-                                    ctx.beginPath()
-                                    ctx.moveTo(targetX, targetY)
-                                    ctx.lineTo(
-                                        targetX - arrowLength * Math.cos(angle - arrowAngle),
-                                        targetY - arrowLength * Math.sin(angle - arrowAngle)
-                                    )
-                                    ctx.moveTo(targetX, targetY)
-                                    ctx.lineTo(
-                                        targetX - arrowLength * Math.cos(angle + arrowAngle),
-                                        targetY - arrowLength * Math.sin(angle + arrowAngle)
-                                    )
-                                    ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)'
-                                    ctx.lineWidth = lineWidth + 0.5
-                                    ctx.stroke()
+                                        if (!source || !target) return
 
-                                    // Draw arrow foreground
-                                    ctx.beginPath()
-                                    ctx.moveTo(targetX, targetY)
-                                    ctx.lineTo(
-                                        targetX - arrowLength * Math.cos(angle - arrowAngle),
-                                        targetY - arrowLength * Math.sin(angle - arrowAngle)
-                                    )
-                                    ctx.moveTo(targetX, targetY)
-                                    ctx.lineTo(
-                                        targetX - arrowLength * Math.cos(angle + arrowAngle),
-                                        targetY - arrowLength * Math.sin(angle + arrowAngle)
-                                    )
-                                    ctx.strokeStyle = color
-                                    ctx.lineWidth = lineWidth
-                                    ctx.stroke()
-                                }}
-                                onNodeClick={(node: any) => handleNodeClick(node as NodeData)}
-                                onLinkClick={(edge: any) => handleEdgeClick(edge as EdgeData)}
-                                onNodeHover={(node: any) => {
-                                    if (node) {
-                                        // Could add tooltip or highlight effect here
-                                        console.log('Hovering over node:', node.label, 'Type:', node.nodeType)
-                                    }
-                                }}
-                                cooldownTicks={300}
-                                d3AlphaDecay={0.01}
-                                d3VelocityDecay={0.2}
-                                d3AlphaMin={0.1}
-                                enableZoomInteraction={true}
-                                enablePanInteraction={true}
-                                enableNodeDrag={true}
-                                linkDirectionalArrowLength={6}
-                                linkDirectionalArrowRelPos={1}
-                                linkCurvature={0.1}
-                                linkDirectionalArrowColor={(link: any) => link.color}
-                                nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
-                                    // This ensures the clickable area matches the visual node
-                                    const nodeSize = node.size || 5
-                                    ctx.fillStyle = color
-                                    ctx.beginPath()
-                                    ctx.arc(node.x || 0, node.y || 0, nodeSize, 0, 2 * Math.PI)
-                                    ctx.fill()
-                                }}
-                            />
+                                        const sourceX = source.x || 0
+                                        const sourceY = source.y || 0
+                                        const targetX = target.x || 0
+                                        const targetY = target.y || 0
+
+                                        // Calculate line properties - make lines much thinner
+                                        const lineWidth = Math.max(1, (link.width || 1) * 0.5 / globalScale)
+                                        const color = link.color || EDGE_TYPE_COLORS.default
+
+                                        // Draw thin background line for visibility
+                                        ctx.beginPath()
+                                        ctx.moveTo(sourceX, sourceY)
+                                        ctx.lineTo(targetX, targetY)
+                                        ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)'
+                                        ctx.lineWidth = lineWidth + 1
+                                        ctx.stroke()
+
+                                        // Draw main link line
+                                        ctx.beginPath()
+                                        ctx.moveTo(sourceX, sourceY)
+                                        ctx.lineTo(targetX, targetY)
+                                        ctx.strokeStyle = color
+                                        ctx.lineWidth = lineWidth
+                                        ctx.stroke()
+
+                                        // Draw arrow head with better visibility
+                                        const angle = Math.atan2(targetY - sourceY, targetX - sourceX)
+                                        const arrowLength = Math.max(12, 15 / globalScale)
+                                        const arrowAngle = Math.PI / 5
+
+                                        // Draw arrow background
+                                        ctx.beginPath()
+                                        ctx.moveTo(targetX, targetY)
+                                        ctx.lineTo(
+                                            targetX - arrowLength * Math.cos(angle - arrowAngle),
+                                            targetY - arrowLength * Math.sin(angle - arrowAngle)
+                                        )
+                                        ctx.moveTo(targetX, targetY)
+                                        ctx.lineTo(
+                                            targetX - arrowLength * Math.cos(angle + arrowAngle),
+                                            targetY - arrowLength * Math.sin(angle + arrowAngle)
+                                        )
+                                        ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)'
+                                        ctx.lineWidth = lineWidth + 0.5
+                                        ctx.stroke()
+
+                                        // Draw arrow foreground
+                                        ctx.beginPath()
+                                        ctx.moveTo(targetX, targetY)
+                                        ctx.lineTo(
+                                            targetX - arrowLength * Math.cos(angle - arrowAngle),
+                                            targetY - arrowLength * Math.sin(angle - arrowAngle)
+                                        )
+                                        ctx.moveTo(targetX, targetY)
+                                        ctx.lineTo(
+                                            targetX - arrowLength * Math.cos(angle + arrowAngle),
+                                            targetY - arrowLength * Math.sin(angle + arrowAngle)
+                                        )
+                                        ctx.strokeStyle = color
+                                        ctx.lineWidth = lineWidth
+                                        ctx.stroke()
+                                    }}
+                                    onNodeClick={(node: any) => handleNodeClick(node as NodeData)}
+                                    onLinkClick={(edge: any) => handleEdgeClick(edge as EdgeData)}
+                                    onNodeHover={(node: any) => {
+                                        if (node) {
+                                            // Could add tooltip or highlight effect here
+                                            console.log('Hovering over node:', node.label, 'Type:', node.nodeType)
+                                        }
+                                    }}
+                                    cooldownTicks={100}
+                                    d3AlphaDecay={0.0228}
+                                    d3VelocityDecay={0.4}
+                                    d3AlphaMin={0.01}
+                                    d3Alpha={0.3}
+                                    d3Reheat={true}
+                                    enableZoomInteraction={true}
+                                    enablePanInteraction={true}
+                                    enableNodeDrag={true}
+                                    warmupTicks={100}
+                                    linkDirectionalArrowLength={6}
+                                    linkDirectionalArrowRelPos={1}
+                                    linkCurvature={0.1}
+                                    linkDirectionalArrowColor={(link: any) => link.color}
+                                    nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
+                                        // This ensures the clickable area matches the visual node
+                                        const nodeSize = node.size || 5
+                                        ctx.fillStyle = color
+                                        ctx.beginPath()
+                                        ctx.arc(node.x || 0, node.y || 0, nodeSize, 0, 2 * Math.PI)
+                                        ctx.fill()
+                                    }}
+                                />
+                            </div>
                         )}
                     </div>
                 </CardContent>

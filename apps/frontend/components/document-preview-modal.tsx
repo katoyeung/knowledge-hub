@@ -50,13 +50,17 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
         }
 
         try {
-            const response = await documentSegmentApi.getByDocumentPaginated(document.id, {
-                page,
-                limit: SEGMENTS_PER_PAGE
-            })
+            // Fetch segments and total status counts in parallel
+            const [response, statusCountsResponse] = await Promise.all([
+                documentSegmentApi.getByDocumentPaginated(document.id, {
+                    page,
+                    limit: SEGMENTS_PER_PAGE
+                }),
+                documentSegmentApi.getDocumentStatusCounts(document.id)
+            ])
 
-            // Enhance segments with graph data
-            const enhancedSegments = await Promise.all(
+            // Enhance segments with graph data (with better error handling)
+            const enhancedSegments = await Promise.allSettled(
                 response.data.map(async (segment) => {
                     try {
                         // Get graph data for this segment (if any)
@@ -66,8 +70,8 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                             graphNodes: graphData?.nodes || [],
                             graphEdges: graphData?.edges || [],
                         };
-                    } catch (err) {
-                        console.error('Failed to get graph data for segment:', segment.id, err);
+                    } catch {
+                        // Silently handle graph data errors - segments without embeddings won't have graph data
                         return {
                             ...segment,
                             graphNodes: [],
@@ -75,6 +79,10 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                         };
                     }
                 })
+            ).then(results =>
+                results.map(result =>
+                    result.status === 'fulfilled' ? result.value : result.reason
+                )
             );
 
             if (reset) {
@@ -82,23 +90,15 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                 setTotalSegments(response.total)
                 setHasMore(enhancedSegments.length === SEGMENTS_PER_PAGE && enhancedSegments.length < response.total)
 
-                // Calculate segment status counts for reset
-                const statusCounts = enhancedSegments.reduce((acc, segment) => {
-                    acc[segment.status] = (acc[segment.status] || 0) + 1
-                    return acc
-                }, {} as Record<string, number>)
-                setSegmentStatusCounts(statusCounts)
+                // Use the total status counts from the API instead of calculating from loaded segments
+                setSegmentStatusCounts(statusCountsResponse.statusCounts)
             } else {
                 setSegments(prev => {
                     const newSegments = [...prev, ...enhancedSegments]
                     setHasMore(enhancedSegments.length === SEGMENTS_PER_PAGE && newSegments.length < response.total)
 
-                    // Calculate segment status counts for append
-                    const statusCounts = newSegments.reduce((acc, segment) => {
-                        acc[segment.status] = (acc[segment.status] || 0) + 1
-                        return acc
-                    }, {} as Record<string, number>)
-                    setSegmentStatusCounts(statusCounts)
+                    // Use the total status counts from the API instead of calculating from loaded segments
+                    setSegmentStatusCounts(statusCountsResponse.statusCounts)
 
                     return newSegments
                 })
@@ -121,20 +121,45 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
         }
     }, [isOpen, document, fetchSegments])
 
-    // Auto-refresh segments when document is processing
+    // Auto-refresh segments when document is processing or when segments are still being processed
     useEffect(() => {
         if (!isOpen || !document) return
 
-        const isProcessing = ['embedding', 'ner', 'processing', 'parsing', 'splitting', 'indexing'].includes(document.indexingStatus)
+        const isDocumentProcessing = ['embedding', 'ner', 'processing', 'parsing', 'splitting', 'indexing'].includes(document.indexingStatus)
 
-        if (isProcessing) {
+        // Check if there are still segments being processed
+        const hasProcessingSegments = segmentStatusCounts && (
+            segmentStatusCounts.embedding > 0 ||
+            segmentStatusCounts.ner > 0 ||
+            segmentStatusCounts.processing > 0 ||
+            segmentStatusCounts.parsing > 0 ||
+            segmentStatusCounts.splitting > 0 ||
+            segmentStatusCounts.indexing > 0
+        )
+
+        // Only refresh if document is processing OR if there are processing segments AND document is not completed
+        const shouldRefresh = isDocumentProcessing || (hasProcessingSegments && document.indexingStatus !== 'completed')
+
+        if (shouldRefresh) {
+            let refreshCount = 0
+            const maxRefreshes = 20 // Maximum 20 refreshes (1 minute)
+
             const interval = setInterval(() => {
+                refreshCount++
+
+                // Stop refreshing after max attempts or if document is completed and no processing segments
+                if (refreshCount >= maxRefreshes ||
+                    (document.indexingStatus === 'completed' && !hasProcessingSegments)) {
+                    clearInterval(interval)
+                    return
+                }
+
                 fetchSegments(1, true)
             }, 3000) // Refresh every 3 seconds
 
             return () => clearInterval(interval)
         }
-    }, [isOpen, document, document?.indexingStatus, fetchSegments])
+    }, [isOpen, document, document?.indexingStatus, segmentStatusCounts, fetchSegments])
 
     const loadMoreSegments = () => {
         if (!loadingMore && hasMore) {
@@ -209,17 +234,58 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
         const embedding = segmentStatusCounts.embedding || 0
         const chunked = segmentStatusCounts.chunked || 0
         const nerProcessed = segmentStatusCounts.ner_processed || 0
+        const parsing = segmentStatusCounts.parsing || 0
+        const splitting = segmentStatusCounts.splitting || 0
+        const indexing = segmentStatusCounts.indexing || 0
 
-        if (document?.indexingStatus === 'embedding') {
+        // Determine current stage and progress
+        if (document?.indexingStatus === 'parsing') {
+            const completed = total - parsing
+            const remaining = parsing
+            const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
+            return {
+                stage: 'Parsing Document',
+                completed,
+                remaining,
+                total,
+                percentage,
+                details: `Parsing document content into segments`
+            }
+        } else if (document?.indexingStatus === 'splitting') {
+            const completed = total - splitting
+            const remaining = splitting
+            const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
+            return {
+                stage: 'Splitting Content',
+                completed,
+                remaining,
+                total,
+                percentage,
+                details: `Splitting content into manageable chunks`
+            }
+        } else if (document?.indexingStatus === 'indexing') {
+            const completed = total - indexing
+            const remaining = indexing
+            const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
+            return {
+                stage: 'Indexing Segments',
+                completed,
+                remaining,
+                total,
+                percentage,
+                details: `Creating searchable index for segments`
+            }
+        } else if (document?.indexingStatus === 'embedding') {
             const remaining = chunked + embedding
             const completed = embedded
             const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
             return {
-                stage: 'Embedding',
+                stage: 'Generating Embeddings',
                 completed,
                 remaining,
                 total,
-                percentage
+                percentage,
+                details: `Creating vector embeddings for semantic search`
             }
         } else if (document?.indexingStatus === 'ner') {
             const remaining = total - nerProcessed
@@ -230,7 +296,21 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                 completed,
                 remaining,
                 total,
-                percentage
+                percentage,
+                details: `Extracting named entities and relationships`
+            }
+        } else if (document?.indexingStatus === 'processing') {
+            // Generic processing status - show overall progress
+            const completed = embedded + nerProcessed
+            const remaining = total - completed
+            const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
+            return {
+                stage: 'Processing Document',
+                completed,
+                remaining,
+                total,
+                percentage,
+                details: `Processing document through multiple stages`
             }
         }
 
@@ -313,8 +393,15 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                                 }`}>
                                 {document.indexingStatus === 'completed' ? `Processing completed - ${totalSegments} segments processed` :
                                     document.indexingStatus === 'error' ? `Processing failed - Unknown error` :
-                                        document.indexingStatus === 'processing' || document.indexingStatus === 'parsing' || document.indexingStatus === 'splitting' || document.indexingStatus === 'indexing' ? `Processing in progress... (${segments.length}/${totalSegments || '?'} segments loaded)` :
-                                            document.indexingStatus === 'waiting' ? 'Waiting to start processing...' :
+                                        document.indexingStatus === 'waiting' ? 'Waiting to start processing...' :
+                                            document.indexingStatus === 'processing' || document.indexingStatus === 'parsing' || document.indexingStatus === 'splitting' || document.indexingStatus === 'indexing' || document.indexingStatus === 'embedding' || document.indexingStatus === 'ner' ?
+                                                (() => {
+                                                    const progress = getProcessingProgress()
+                                                    if (progress) {
+                                                        return `${progress.stage} - ${progress.completed}/${progress.total} segments (${progress.percentage}%)`
+                                                    }
+                                                    return `Processing in progress... (${segments.length}/${totalSegments || '?'} segments loaded)`
+                                                })() :
                                                 `Status: ${document.indexingStatus}`}
                             </span>
                         </div>
@@ -325,14 +412,14 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                         )}
                     </div>
 
-                    {/* Detailed Progress Bar for Embedding/NER */}
+                    {/* Detailed Progress Bar for All Processing Stages */}
                     {(() => {
                         const progress = getProcessingProgress()
                         if (progress) {
                             return (
                                 <div className="mt-2">
                                     <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
-                                        <span>{progress.stage} in progress</span>
+                                        <span className="font-medium">{progress.stage}</span>
                                         <span>{progress.completed}/{progress.total} ({progress.percentage}%)</span>
                                     </div>
                                     <div className="w-full bg-gray-200 rounded-full h-2">
@@ -345,11 +432,79 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                                         <span>Completed: {progress.completed}</span>
                                         <span>Remaining: {progress.remaining}</span>
                                     </div>
+                                    {progress.details && (
+                                        <div className="text-xs text-gray-500 mt-1 italic">
+                                            {progress.details}
+                                        </div>
+                                    )}
                                 </div>
                             )
                         }
                         return null
                     })()}
+
+                    {/* Segment Status Breakdown - Only show if document is not completed or has non-embedded segments */}
+                    {totalSegments > 0 && Object.keys(segmentStatusCounts).length > 0 &&
+                        (document?.indexingStatus !== 'completed' ||
+                            (segmentStatusCounts.embedded !== totalSegments)) && (
+                            <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                                <div className="flex items-center justify-between mb-2">
+                                    <div className="text-xs font-medium text-gray-700">
+                                        Segment Status Breakdown (Total: {totalSegments}):
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {(() => {
+                                            const hasProcessingSegments = segmentStatusCounts && (
+                                                segmentStatusCounts.embedding > 0 ||
+                                                segmentStatusCounts.ner > 0 ||
+                                                segmentStatusCounts.processing > 0 ||
+                                                segmentStatusCounts.parsing > 0 ||
+                                                segmentStatusCounts.splitting > 0 ||
+                                                segmentStatusCounts.indexing > 0
+                                            )
+
+                                            if (hasProcessingSegments) {
+                                                return (
+                                                    <div className="flex items-center text-xs text-blue-600">
+                                                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600 mr-1"></div>
+                                                        Processing...
+                                                    </div>
+                                                )
+                                            }
+                                            return null
+                                        })()}
+
+                                        {segmentStatusCounts?.embedding > 0 && document?.indexingStatus === 'completed' && (
+                                            <button
+                                                onClick={async () => {
+                                                    try {
+                                                        const result = await documentSegmentApi.fixStuckSegments(document.id)
+                                                        if (result.fixedSegments > 0) {
+                                                            // Refresh the segments to show updated status
+                                                            fetchSegments(1, true)
+                                                        }
+                                                    } catch (error) {
+                                                        console.error('Failed to fix stuck segments:', error)
+                                                    }
+                                                }}
+                                                className="text-xs px-2 py-1 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 transition-colors"
+                                                title="Fix stuck segments that have been in embedding status for too long"
+                                            >
+                                                Fix Stuck Segments
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                    {Object.entries(segmentStatusCounts).map(([status, count]) => (
+                                        <div key={status} className="flex justify-between">
+                                            <span className="capitalize text-gray-600">{status.replace('_', ' ')}:</span>
+                                            <span className="font-medium text-gray-800">{count}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                 </div>
 
                 {/* Content area */}
@@ -480,7 +635,7 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                                                     </div>
                                                 </div>
 
-                                                {showNerResults && (
+                                                {showNerResults && segment.keywords && segment.keywords.extracted && segment.keywords.extracted.length > 0 && (
                                                     <NerResultsDisplay
                                                         keywords={segment.keywords}
                                                         status={segment.status}

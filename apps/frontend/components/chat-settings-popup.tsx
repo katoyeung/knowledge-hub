@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Settings, Eye, EyeOff, Save, X } from 'lucide-react'
+import { Settings, Eye, EyeOff, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -15,7 +15,7 @@ import {
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog'
-import { chatApi, promptApi, aiProviderApi, userApi, type Prompt, type AiProvider } from '@/lib/api'
+import { promptApi, aiProviderApi, userApi, type Prompt, type AiProvider } from '@/lib/api'
 import { authUtil } from '@/lib/auth'
 import { useToast } from '@/components/ui/simple-toast'
 
@@ -33,14 +33,12 @@ interface ChatSettings {
 }
 
 interface ChatSettingsPopupProps {
-    datasetId: string
     currentSettings?: ChatSettings
     onSettingsChange: (settings: ChatSettings) => void
     onSaveSettings: (settings: ChatSettings) => Promise<void>
 }
 
 export function ChatSettingsPopup({
-    datasetId,
     currentSettings,
     onSettingsChange,
     onSaveSettings
@@ -86,7 +84,7 @@ export function ChatSettingsPopup({
     // Auto-fill settings when currentSettings change
     useEffect(() => {
         if (currentSettings && Object.keys(currentSettings).length > 0) {
-            setSettings(prev => ({
+            setSettings(() => ({
                 temperature: 0.7,
                 maxChunks: 5,
                 ...currentSettings
@@ -181,7 +179,7 @@ export function ChatSettingsPopup({
                         }
                     }
 
-                    setSettings(prev => ({
+                    setSettings(() => ({
                         temperature: 0.7,
                         maxChunks: 5,
                         ...userChatSettings,
@@ -202,7 +200,7 @@ export function ChatSettingsPopup({
                     await loadModels(settings.provider)
                 }
             }
-        } catch (err) {
+        } catch {
             error('Failed to Load Data', 'Could not load providers and prompts')
         } finally {
             setLoading(false)
@@ -255,7 +253,7 @@ export function ChatSettingsPopup({
                     setSettings(prev => ({ ...prev, model: provider.models[0].id }))
                 }
             }
-        } catch (err) {
+        } catch {
             setModels([])
         }
     }
@@ -264,7 +262,7 @@ export function ChatSettingsPopup({
         try {
             const prompt = await promptApi.getById(promptId)
             setSelectedPrompt(prompt)
-        } catch (err) {
+        } catch {
             setSelectedPrompt(null)
         }
     }
@@ -276,7 +274,7 @@ export function ChatSettingsPopup({
             onSettingsChange(settings)
             setOpen(false)
             success('Settings Saved', 'Chat settings have been saved successfully')
-        } catch (err) {
+        } catch {
             error('Failed to Save', 'Could not save chat settings')
         } finally {
             setSaving(false)

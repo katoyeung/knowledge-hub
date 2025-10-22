@@ -1,11 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import { Navbar } from '@/components/navbar'
 import { AuthGuard } from '@/components/auth-guard'
-import { Plus, Edit, Trash2, Bot, Settings, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react'
-import { authUtil } from '@/lib/auth'
+import { Plus, Edit, Trash2, Bot, ChevronDown, ChevronRight } from 'lucide-react'
 import { aiProviderApi, type AiProvider, type AiProviderModel } from '@/lib/api'
 
 interface CreateAiProviderDto {
@@ -54,7 +52,6 @@ function AiProvidersContent() {
             output: 0
         }
     })
-    const router = useRouter()
     const hasFetched = useRef(false)
 
     const fetchProviders = useCallback(async () => {

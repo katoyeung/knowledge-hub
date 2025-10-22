@@ -147,6 +147,8 @@ export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
           useWorkerPool: true,
           batchSize: 5,
         },
+        documentId,
+        datasetId,
       );
 
       const embeddingDimensions = result.embeddingDimensions;
@@ -268,7 +270,42 @@ export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
         `[EMBEDDING] Dispatched NER job for document ${documentId}`,
       );
     } else {
-      // Mark document as completed
+      // Check if all segments are properly embedded before marking as completed
+      const remainingSegments = await this.segmentRepository.find({
+        where: {
+          documentId,
+          status: In(['embedding', 'waiting', 'chunked']),
+        },
+      });
+
+      if (remainingSegments.length > 0) {
+        this.logger.warn(
+          `[EMBEDDING] Document ${documentId} has ${remainingSegments.length} segments still processing. Not marking as completed.`,
+        );
+
+        // Mark document as embedding_failed due to incomplete segments
+        await this.documentRepository.update(documentId, {
+          indexingStatus: 'embedding_failed',
+          error: `${remainingSegments.length} segments failed to embed properly`,
+          stoppedAt: new Date(),
+        });
+
+        // Send notification that embedding failed
+        this.notificationService.sendDocumentProcessingUpdate(
+          documentId,
+          datasetId,
+          {
+            status: 'embedding_failed',
+            message: `${remainingSegments.length} segments failed to embed properly`,
+          },
+        );
+
+        throw new Error(
+          `Document processing failed: ${remainingSegments.length} segments did not complete embedding`,
+        );
+      }
+
+      // All segments are embedded, mark document as completed
       await this.documentRepository.update(documentId, {
         indexingStatus: 'completed',
         completedAt: new Date(),

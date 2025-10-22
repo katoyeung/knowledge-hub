@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, IsNull, In, Like } from 'typeorm';
+import { Repository, Not, IsNull, In, Like, LessThan } from 'typeorm';
 import { TypeOrmCrudService } from '@dataui/crud-typeorm';
 import { DocumentSegment } from './entities/document-segment.entity';
 import { Document } from './entities/document.entity';
@@ -719,6 +719,79 @@ export class DocumentSegmentService extends TypeOrmCrudService<DocumentSegment> 
       return { updated: updateResult.affected || 0 };
     } catch (error) {
       this.logger.error(`💥 Bulk status update failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getDocumentSegmentStatusCounts(documentId: string) {
+    try {
+      const segments = await this.segmentRepository.find({
+        where: { documentId },
+        select: ['status'],
+      });
+
+      const totalSegments = segments.length;
+      const statusCounts = segments.reduce(
+        (acc, segment) => {
+          acc[segment.status] = (acc[segment.status] || 0) + 1;
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
+
+      return {
+        documentId,
+        totalSegments,
+        statusCounts,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to get segment status counts: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  async fixStuckSegments(documentId: string) {
+    try {
+      // Find segments that have been in 'embedding' status for more than 5 minutes
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+
+      const stuckSegments = await this.segmentRepository.find({
+        where: {
+          documentId,
+          status: 'embedding',
+          indexingAt: LessThan(fiveMinutesAgo),
+        },
+      });
+
+      this.logger.log(
+        `Found ${stuckSegments.length} stuck segments in document ${documentId}`,
+      );
+
+      if (stuckSegments.length > 0) {
+        // Reset stuck segments to 'waiting' status so they can be reprocessed
+        await this.segmentRepository.update(
+          { id: In(stuckSegments.map((s) => s.id)) },
+          {
+            status: 'waiting',
+            error: 'Segment was stuck in embedding status and has been reset',
+          },
+        );
+
+        this.logger.log(
+          `Reset ${stuckSegments.length} stuck segments to 'waiting' status`,
+        );
+      }
+
+      return {
+        documentId,
+        stuckSegmentsFound: stuckSegments.length,
+        fixedSegments: stuckSegments.length,
+        message: `Fixed ${stuckSegments.length} stuck segments`,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fix stuck segments: ${error.message}`);
       throw error;
     }
   }

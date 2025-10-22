@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2, RotateCcw, Network } from 'lucide-react'
+import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2, RotateCcw, Network, Play } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { documentApi, datasetApi, type Document, type Dataset } from '@/lib/api'
+import { documentApi, datasetApi, queueApi, type Document, type Dataset } from '@/lib/api'
 import { DocumentPreviewModal } from './document-preview-modal'
 import { DatasetDocumentUploadModal } from './dataset-document-upload-modal'
 import { useDocumentProcessingNotifications, useGraphExtractionNotifications } from '@/lib/hooks/use-notifications'
+import { useToast } from './ui/simple-toast'
 
 interface DatasetDocumentsPanelProps {
     datasetId: string
@@ -41,9 +42,11 @@ export function DatasetDocumentsPanel({
     const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
     const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set())
     const [extractingGraphs, setExtractingGraphs] = useState<Set<string>>(new Set())
+    const [resumingJobs, setResumingJobs] = useState(false)
     const previousDocumentStatuses = useRef<Map<string, string>>(new Map())
     const hasUserInteracted = useRef<boolean>(false)
     const lastNotifiedSelectedDocs = useRef<Set<string>>(new Set())
+    const toast = useToast()
 
     // Helper function to get status display information
     const getStatusInfo = (status: string) => {
@@ -348,6 +351,37 @@ export function DatasetDocumentsPanel({
         }
     }
 
+    const handleResumeJobs = async () => {
+        if (!dataset) return
+
+        // Show confirmation dialog
+        const confirmed = await toast.confirm({
+            title: 'Resume Jobs',
+            description: `This will clear all existing jobs in the queue and restart processing for all unprocessed documents in "${dataset.name}". Continue?`,
+            confirmText: 'Resume Jobs',
+            cancelText: 'Cancel'
+        })
+
+        if (!confirmed) return
+
+        setResumingJobs(true)
+        try {
+            const result = await queueApi.resumeJobs(datasetId)
+
+            // Show success message
+            toast.success('Jobs resumed successfully', `Queued ${result.queuedJobs} jobs for ${result.documents.length} documents.`)
+
+            // Refresh documents to show updated status
+            await loadDocuments()
+            closeDropdown()
+        } catch (error) {
+            console.error('Failed to resume jobs:', error)
+            toast.error('Failed to resume jobs', 'Please try again or contact support if the issue persists.')
+        } finally {
+            setResumingJobs(false)
+        }
+    }
+
     const handleExtractGraph = async (documentId: string) => {
         try {
             setExtractingGraphs(prev => new Set(prev).add(documentId))
@@ -385,7 +419,7 @@ export function DatasetDocumentsPanel({
             {/* Header */}
             <div className="px-4 border-b border-gray-200">
                 <div className="h-12 flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-gray-900">Documents</h2>
+                    <h2 className="text-lg font-semibold text-gray-900">Sources</h2>
                     <div className="flex items-center gap-2">
                         <Button
                             size="sm"
@@ -584,6 +618,21 @@ export function DatasetDocumentsPanel({
                                                         >
                                                             <Edit2 className="h-3 w-3 text-gray-500" />
                                                             Edit name
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                handleResumeJobs()
+                                                            }}
+                                                            disabled={resumingJobs}
+                                                            className="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        >
+                                                            {resumingJobs ? (
+                                                                <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />
+                                                            ) : (
+                                                                <Play className="h-3 w-3 text-blue-500" />
+                                                            )}
+                                                            {resumingJobs ? 'Resuming...' : 'Resume Jobs'}
                                                         </button>
                                                         <button
                                                             onClick={(e) => {

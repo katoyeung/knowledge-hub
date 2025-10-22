@@ -13,16 +13,12 @@ interface ChatMessageProps {
     message: ChatMessageType
     isLast?: boolean
     onRegenerate?: () => void
-    onViewDocument?: (documentId: string) => void
-    loadingDocument?: boolean
 }
 
 export function ChatMessage({
     message,
     isLast = false,
     onRegenerate,
-    onViewDocument,
-    loadingDocument = false
 }: ChatMessageProps) {
     const [copied, setCopied] = useState(false)
 
@@ -71,7 +67,7 @@ export function ChatMessage({
                             <ReactMarkdown
                                 remarkPlugins={[remarkGfm]}
                                 components={{
-                                    code({ node, inline, className, children, ...props }) {
+                                    code({ inline, className, children, ...props }) {
                                         const match = /language-(\w+)/.exec(className || '')
                                         return !inline && match ? (
                                             <SyntaxHighlighter

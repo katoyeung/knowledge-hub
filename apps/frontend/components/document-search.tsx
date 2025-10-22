@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { Search, Loader2, AlertCircle, FileText, ChevronLeft, ChevronRight, X, Settings, ChevronDown } from 'lucide-react'
+import React, { useState } from 'react'
+import { Search, Loader2, AlertCircle, FileText, ChevronLeft, ChevronRight, X, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'

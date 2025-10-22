@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Edit2, Trash2, Check, X } from 'lucide-react'
 // import { Button } from '@/components/ui/simple-button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 // import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import type { Dataset } from '@/lib/api'
 

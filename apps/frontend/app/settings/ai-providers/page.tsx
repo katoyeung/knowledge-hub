@@ -279,9 +279,6 @@ function AiProvidersContent() {
         setExpandedProviders(newExpanded)
     }
 
-    const handleLogout = () => {
-        // The navbar handles the actual logout logic
-    }
 
     const providerTypes = [
         { value: 'openai', label: 'OpenAI' },

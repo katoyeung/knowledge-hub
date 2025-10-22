@@ -28,6 +28,8 @@ import { DocumentSegment } from './modules/dataset/entities/document-segment.ent
 import { QueueSharedModule } from './modules/queue/queue-shared.module';
 import { DocumentJobsModule } from './modules/queue/jobs/document/document-jobs.module';
 import { GraphJobsModule } from './modules/queue/jobs/graph/graph-jobs.module';
+import { CPUThrottlingService } from './common/services/cpu-throttling.service';
+import { CPUThrottlingInterceptor } from './common/interceptors/cpu-throttling.interceptor';
 
 @Module({
   imports: [
@@ -69,6 +71,6 @@ import { GraphJobsModule } from './modules/queue/jobs/graph/graph-jobs.module';
     TypeOrmModule.forFeature([Document, DocumentSegment]),
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, CPUThrottlingService, CPUThrottlingInterceptor],
 })
 export class AppModule {}

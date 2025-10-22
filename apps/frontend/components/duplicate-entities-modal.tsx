@@ -10,17 +10,12 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import {
-    CheckCircle,
-    XCircle,
     AlertTriangle,
     Loader2,
-    Eye,
     Merge,
     X,
-    RefreshCw,
     Search,
-    Target,
-    BarChart3
+    Target
 } from 'lucide-react';
 import { graphApi } from '@/lib/api';
 

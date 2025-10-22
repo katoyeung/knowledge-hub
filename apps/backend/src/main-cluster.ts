@@ -44,6 +44,8 @@ async function bootstrap() {
   await app.listen(configService.get<number>('PORT') || 3001);
 }
 
+// For now, just run the bootstrap function directly
+// TODO: Implement proper cluster mode when needed
 bootstrap().catch((err) => {
   console.error('Error during bootstrap:', err);
   process.exit(1);

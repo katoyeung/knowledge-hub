@@ -96,21 +96,31 @@ export class DocumentProcessingService {
     );
 
     try {
-      await this.processDocument(
-        event.documentId,
-        event.datasetId,
-        event.embeddingConfig,
-        event.userId,
+      // Dispatch chunking job instead of processing directly
+      await this.queueManager.addJob({
+        type: 'chunking',
+        data: {
+          documentId: event.documentId,
+          datasetId: event.datasetId,
+          userId: event.userId,
+          embeddingConfig: event.embeddingConfig,
+          nerEnabled: false,
+        },
+      });
+
+      this.logger.log(
+        `Successfully dispatched chunking job for document ${event.documentId}`,
       );
     } catch (error) {
       this.logger.error(
-        `Document processing failed: ${error.message}`,
+        `Failed to dispatch chunking job for document ${event.documentId}: ${error.message}`,
         error.stack,
       );
 
       // Update document status to failed
       await this.documentRepository.update(event.documentId, {
         indexingStatus: 'error',
+        error: error.message,
       });
 
       // Send notification that document processing failed
@@ -119,7 +129,7 @@ export class DocumentProcessingService {
         event.datasetId,
         {
           status: 'error',
-          message: error.message,
+          message: 'Failed to start document processing',
           error: error.message,
         },
       );

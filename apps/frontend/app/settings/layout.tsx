@@ -36,7 +36,6 @@ const menuItems = [
 
 export default function SettingsLayout({ children }: SettingsLayoutProps) {
     const pathname = usePathname()
-    const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false)
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
 
     const handleLogout = () => {

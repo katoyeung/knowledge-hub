@@ -848,6 +848,29 @@ export const documentSegmentApi = {
       .patch(`/document-segments/${id}/toggle-status`)
       .then((res) => res.data),
 
+  getDocumentStatusCounts: (
+    documentId: string
+  ): Promise<{
+    documentId: string;
+    totalSegments: number;
+    statusCounts: Record<string, number>;
+  }> =>
+    apiClient
+      .get(`/document-segments/document/${documentId}/status-counts`)
+      .then((res) => res.data),
+
+  fixStuckSegments: (
+    documentId: string
+  ): Promise<{
+    documentId: string;
+    stuckSegmentsFound: number;
+    fixedSegments: number;
+    message: string;
+  }> =>
+    apiClient
+      .post(`/document-segments/document/${documentId}/fix-stuck-segments`)
+      .then((res) => res.data),
+
   // Bulk operations
   bulkDelete: (segmentIds: string[]): Promise<{ deleted: number }> =>
     apiClient
@@ -2363,6 +2386,69 @@ export const brandComparisonApi = {
       request
     );
     return response.data.data;
+  },
+};
+
+// Queue API functions
+export const queueApi = {
+  getStatus: async (): Promise<{
+    status: string;
+    timestamp: string;
+    jobCounts: {
+      waiting: number;
+      active: number;
+      completed: number;
+      failed: number;
+      delayed: number;
+      paused: number;
+    };
+    details: {
+      waiting: number;
+      active: number;
+      completed: number;
+      failed: number;
+    };
+    waitingJobs: Array<{
+      id: string;
+      name: string;
+      data: any;
+      createdAt: number;
+    }>;
+    activeJobs: Array<{
+      id: string;
+      name: string;
+      data: any;
+      createdAt: number;
+    }>;
+  }> => {
+    const response = await apiClient.get("/queue-status");
+    return response.data;
+  },
+
+  retryFailedJobs: async (): Promise<{
+    status: string;
+    message: string;
+    retriedJobs: Array<{ id: string; name: string }>;
+    timestamp: string;
+  }> => {
+    const response = await apiClient.get("/queue-status/retry-failed");
+    return response.data;
+  },
+
+  resumeJobs: async (
+    datasetId: string
+  ): Promise<{
+    status: string;
+    message: string;
+    datasetId: string;
+    queuedJobs: number;
+    documents: string[];
+    timestamp: string;
+  }> => {
+    const response = await apiClient.post("/queue-status/resume-jobs", {
+      datasetId,
+    });
+    return response.data;
   },
 };
 

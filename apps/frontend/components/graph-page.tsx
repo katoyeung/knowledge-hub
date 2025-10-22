@@ -8,16 +8,12 @@ import { Badge } from '@/components/ui/badge'
 import {
     RefreshCw,
     Play,
-    Download,
     AlertCircle,
-    CheckCircle,
     Loader2,
-    Trash2,
     Settings
 } from 'lucide-react'
 import { GraphVisualization } from './graph-visualization'
 import { GraphStats } from './graph-stats'
-import { GraphSettingsPopup } from './graph-settings-popup'
 import { DocumentSegmentExplorer } from './document-segment-explorer'
 import { EntityDictionaryManager } from './entity-dictionary-manager'
 import { EntitySuggestionsPanel } from './entity-suggestions-panel'
@@ -26,7 +22,7 @@ import { EntityNormalizationPanel } from './entity-normalization-panel'
 import { EntityDictionaryImportModal } from './entity-dictionary-import-modal'
 import { DuplicateEntitiesModal } from './duplicate-entities-modal'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
-import { graphApi, datasetApi, type GraphData, type GraphExtractionConfig, type GraphNode, type GraphEdge } from '@/lib/api'
+import { graphApi, datasetApi, type GraphData, type GraphExtractionConfig } from '@/lib/api'
 import { useToast } from '@/components/ui/simple-toast'
 
 interface GraphPageProps {
@@ -45,13 +41,11 @@ interface GraphSettings {
     continuousLearning?: boolean
 }
 
-export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
+export function GraphPage({ datasetId }: GraphPageProps) {
     const [graphData, setGraphData] = useState<GraphData | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [isExtracting, setIsExtracting] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-    const [extractionStatus, setExtractionStatus] = useState<'idle' | 'extracting' | 'completed' | 'error'>('idle')
     const [graphSettings, setGraphSettings] = useState<GraphSettings>({})
     const [showClearDialog, setShowClearDialog] = useState(false)
     const [isClearing, setIsClearing] = useState(false)
@@ -69,7 +63,6 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
             setError(null)
             const data = await graphApi.getGraphData(datasetId)
             setGraphData(data)
-            setLastUpdated(new Date())
         } catch (err) {
             console.error('Failed to load graph data:', err)
             setError(err instanceof Error ? err.message : 'Failed to load graph data')
@@ -173,7 +166,6 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
 
                 if (hasNewData) {
                     setGraphData(data)
-                    setLastUpdated(new Date())
                     setExtractionStatus('completed')
                     success(
                         'Extraction Complete',
@@ -271,7 +263,6 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
 
             // Clear local state
             setGraphData(null)
-            setLastUpdated(null)
             setExtractionStatus('idle')
 
             success('Graph Data Cleared', 'All graph data has been successfully removed')
@@ -318,32 +309,6 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
 
     return (
         <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold text-gray-900">
-                        {datasetName ? `${datasetName} - Graph` : 'Graph Visualization'}
-                    </h1>
-                    {lastUpdated && (
-                        <p className="text-sm text-gray-500 mt-1">
-                            Last updated: {lastUpdated.toLocaleString()}
-                        </p>
-                    )}
-                </div>
-                <div className="flex items-center space-x-2">
-                    <Badge
-                        variant={extractionStatus === 'completed' ? 'default' :
-                            extractionStatus === 'extracting' ? 'secondary' :
-                                extractionStatus === 'error' ? 'destructive' : 'outline'}
-                        className="flex items-center space-x-1"
-                    >
-                        {extractionStatus === 'completed' && <CheckCircle className="h-3 w-3" />}
-                        {extractionStatus === 'extracting' && <Loader2 className="h-3 w-3 animate-spin" />}
-                        {extractionStatus === 'error' && <AlertCircle className="h-3 w-3" />}
-                        <span className="capitalize">{extractionStatus}</span>
-                    </Badge>
-                </div>
-            </div>
 
             {/* Graph Data */}
             <Tabs defaultValue="visualization" className="space-y-4">
@@ -360,185 +325,185 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
 
                 <TabsContent value="visualization">
                     {graphData ? (
-                        <div className="grid grid-cols-10 gap-4">
-                            {/* Left side - Canvas (8 columns) */}
-                            <div className="col-span-8" data-graph-container>
-                                <GraphVisualization
-                                    data={graphData}
-                                    onNodeClick={handleNodeClick}
-                                    onEdgeClick={handleEdgeClick}
-                                    onNodeSelect={handleNodeSelect}
-                                    onEdgeSelect={handleEdgeSelect}
-                                    height={800}
-                                    width={1200}
-                                />
+                        <div className="space-y-4">
+                            {/* Graph Visualization - Full width container */}
+                            <div data-graph-container className="w-full overflow-hidden">
+                                <div className="w-full">
+                                    <GraphVisualization
+                                        data={graphData}
+                                        onNodeClick={handleNodeClick}
+                                        onEdgeClick={handleEdgeClick}
+                                        onNodeSelect={handleNodeSelect}
+                                        onEdgeSelect={handleEdgeSelect}
+                                        height={800}
+                                        width={800}
+                                    />
+                                </div>
                             </div>
 
-                            {/* Right side - Node Types & Sizes (2 columns) */}
-                            <div className="col-span-2">
+                            {/* Node/Edge Details */}
+                            {(selectedNode || selectedEdge) && (
                                 <Card>
                                     <CardHeader>
-                                        <CardTitle className="text-lg">Node Types & Sizes</CardTitle>
+                                        <CardTitle className="text-lg">
+                                            {selectedNode ? 'Node Details' : 'Edge Details'}
+                                        </CardTitle>
                                     </CardHeader>
                                     <CardContent>
-                                        <div className="space-y-4">
-                                            {/* Node Types */}
-                                            <div>
-                                                <h4 className="text-sm font-medium mb-2">Node Types</h4>
-                                                <div className="space-y-2">
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                                                        <span className="text-xs">Author</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                                                        <span className="text-xs">Brand</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                                                        <span className="text-xs">Topic</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-3 h-3 rounded-full bg-purple-500"></div>
-                                                        <span className="text-xs">Hashtag</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                                                        <span className="text-xs">Influencer</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-3 h-3 rounded-full bg-cyan-500"></div>
-                                                        <span className="text-xs">Location</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-3 h-3 rounded-full bg-lime-500"></div>
-                                                        <span className="text-xs">Organization</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-3 h-3 rounded-full bg-orange-500"></div>
-                                                        <span className="text-xs">Product</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-3 h-3 rounded-full bg-pink-500"></div>
-                                                        <span className="text-xs">Event</span>
+                                        {selectedNode && (
+                                            <div className="space-y-3">
+                                                <div className="flex items-center space-x-2">
+                                                    <Badge variant="outline" className="capitalize">
+                                                        {selectedNode.nodeType}
+                                                    </Badge>
+                                                    <span className="font-medium text-sm">{selectedNode.label}</span>
+                                                    <div className="flex items-center space-x-1">
+                                                        <div
+                                                            className="w-3 h-3 rounded-full"
+                                                            style={{ backgroundColor: selectedNode.color }}
+                                                        />
+                                                        <span className="text-xs text-gray-500">
+                                                            Size: {Math.round(selectedNode.size || 5)}px
+                                                        </span>
                                                     </div>
                                                 </div>
-                                            </div>
 
-                                            {/* Node Sizes */}
-                                            <div>
-                                                <h4 className="text-sm font-medium mb-2">Node Sizes</h4>
-                                                <div className="space-y-2">
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-2 h-2 rounded-full bg-gray-400"></div>
-                                                        <span className="text-xs">Small (Low importance)</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-4 h-4 rounded-full bg-gray-400"></div>
-                                                        <span className="text-xs">Medium (Normal)</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-6 h-6 rounded-full bg-gray-400"></div>
-                                                        <span className="text-xs">Large (High importance)</span>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="w-8 h-8 rounded-full bg-gray-400"></div>
-                                                        <span className="text-xs">Extra Large (Very important)</span>
-                                                    </div>
+                                                {/* Importance indicators */}
+                                                <div className="flex flex-wrap gap-1">
+                                                    {selectedNode.properties?.verified && (
+                                                        <Badge variant="secondary" className="text-xs">✓ Verified</Badge>
+                                                    )}
+                                                    {selectedNode.properties?.confidence && selectedNode.properties.confidence > 0.8 && (
+                                                        <Badge variant="secondary" className="text-xs">High Confidence</Badge>
+                                                    )}
+                                                    {selectedNode.properties?.engagement_rate && selectedNode.properties.engagement_rate > 0.1 && (
+                                                        <Badge variant="secondary" className="text-xs">High Engagement</Badge>
+                                                    )}
+                                                    {selectedNode.properties?.follower_count && selectedNode.properties.follower_count > 10000 && (
+                                                        <Badge variant="secondary" className="text-xs">Large Following</Badge>
+                                                    )}
                                                 </div>
-                                                <p className="text-xs text-gray-500 mt-2">
-                                                    Size based on confidence, engagement, verification, and mention frequency
-                                                </p>
+
+                                                {selectedNode.properties && Object.keys(selectedNode.properties).length > 0 && (
+                                                    <div className="text-xs text-gray-600">
+                                                        <div className="font-medium mb-1">Properties:</div>
+                                                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                                                            {Object.entries(selectedNode.properties).map(([key, value]) => (
+                                                                <div key={key} className="flex justify-between text-xs">
+                                                                    <span className="capitalize truncate">{key.replace('_', ' ')}:</span>
+                                                                    <span className="truncate ml-2">{String(value)}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
-                                        </div>
+                                        )}
+                                        {selectedEdge && (
+                                            <div className="space-y-3">
+                                                <div className="flex items-center space-x-2">
+                                                    <Badge variant="outline" className="capitalize">
+                                                        {selectedEdge.edgeType}
+                                                    </Badge>
+                                                    <span className="font-medium text-sm">Weight: {selectedEdge.weight}</span>
+                                                </div>
+                                                {selectedEdge.properties && Object.keys(selectedEdge.properties).length > 0 && (
+                                                    <div className="text-xs text-gray-600">
+                                                        <div className="font-medium mb-1">Properties:</div>
+                                                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                                                            {Object.entries(selectedEdge.properties).map(([key, value]) => (
+                                                                <div key={key} className="flex justify-between text-xs">
+                                                                    <span className="capitalize truncate">{key.replace('_', ' ')}:</span>
+                                                                    <span className="truncate ml-2">{String(value)}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </CardContent>
                                 </Card>
+                            )}
 
-                                {/* Node/Edge Details */}
-                                {(selectedNode || selectedEdge) && (
-                                    <Card className="mt-4">
-                                        <CardHeader>
-                                            <CardTitle className="text-lg">
-                                                {selectedNode ? 'Node Details' : 'Edge Details'}
-                                            </CardTitle>
-                                        </CardHeader>
-                                        <CardContent>
-                                            {selectedNode && (
-                                                <div className="space-y-3">
-                                                    <div className="flex items-center space-x-2">
-                                                        <Badge variant="outline" className="capitalize">
-                                                            {selectedNode.nodeType}
-                                                        </Badge>
-                                                        <span className="font-medium text-sm">{selectedNode.label}</span>
-                                                        <div className="flex items-center space-x-1">
-                                                            <div
-                                                                className="w-3 h-3 rounded-full"
-                                                                style={{ backgroundColor: selectedNode.color }}
-                                                            />
-                                                            <span className="text-xs text-gray-500">
-                                                                Size: {Math.round(selectedNode.size || 5)}px
-                                                            </span>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Importance indicators */}
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {selectedNode.properties?.verified && (
-                                                            <Badge variant="secondary" className="text-xs">✓ Verified</Badge>
-                                                        )}
-                                                        {selectedNode.properties?.confidence && selectedNode.properties.confidence > 0.8 && (
-                                                            <Badge variant="secondary" className="text-xs">High Confidence</Badge>
-                                                        )}
-                                                        {selectedNode.properties?.engagement_rate && selectedNode.properties.engagement_rate > 0.1 && (
-                                                            <Badge variant="secondary" className="text-xs">High Engagement</Badge>
-                                                        )}
-                                                        {selectedNode.properties?.follower_count && selectedNode.properties.follower_count > 10000 && (
-                                                            <Badge variant="secondary" className="text-xs">Large Following</Badge>
-                                                        )}
-                                                    </div>
-
-                                                    {selectedNode.properties && Object.keys(selectedNode.properties).length > 0 && (
-                                                        <div className="text-xs text-gray-600">
-                                                            <div className="font-medium mb-1">Properties:</div>
-                                                            <div className="space-y-1 max-h-32 overflow-y-auto">
-                                                                {Object.entries(selectedNode.properties).map(([key, value]) => (
-                                                                    <div key={key} className="flex justify-between text-xs">
-                                                                        <span className="capitalize truncate">{key.replace('_', ' ')}:</span>
-                                                                        <span className="truncate ml-2">{String(value)}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
+                            {/* Node Types & Sizes - Moved to bottom */}
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle className="text-lg">Node Types & Sizes</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="grid grid-cols-2 gap-6">
+                                        {/* Node Types */}
+                                        <div>
+                                            <h4 className="text-sm font-medium mb-2">Node Types</h4>
+                                            <div className="space-y-2">
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                                                    <span className="text-xs">Author</span>
                                                 </div>
-                                            )}
-                                            {selectedEdge && (
-                                                <div className="space-y-3">
-                                                    <div className="flex items-center space-x-2">
-                                                        <Badge variant="outline" className="capitalize">
-                                                            {selectedEdge.edgeType}
-                                                        </Badge>
-                                                        <span className="font-medium text-sm">Weight: {selectedEdge.weight}</span>
-                                                    </div>
-                                                    {selectedEdge.properties && Object.keys(selectedEdge.properties).length > 0 && (
-                                                        <div className="text-xs text-gray-600">
-                                                            <div className="font-medium mb-1">Properties:</div>
-                                                            <div className="space-y-1 max-h-32 overflow-y-auto">
-                                                                {Object.entries(selectedEdge.properties).map(([key, value]) => (
-                                                                    <div key={key} className="flex justify-between text-xs">
-                                                                        <span className="capitalize truncate">{key.replace('_', ' ')}:</span>
-                                                                        <span className="truncate ml-2">{String(value)}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                                                    <span className="text-xs">Brand</span>
                                                 </div>
-                                            )}
-                                        </CardContent>
-                                    </Card>
-                                )}
-                            </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                                    <span className="text-xs">Topic</span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-3 h-3 rounded-full bg-purple-500"></div>
+                                                    <span className="text-xs">Hashtag</span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                                    <span className="text-xs">Influencer</span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-3 h-3 rounded-full bg-cyan-500"></div>
+                                                    <span className="text-xs">Location</span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-3 h-3 rounded-full bg-lime-500"></div>
+                                                    <span className="text-xs">Organization</span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-3 h-3 rounded-full bg-orange-500"></div>
+                                                    <span className="text-xs">Product</span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-3 h-3 rounded-full bg-pink-500"></div>
+                                                    <span className="text-xs">Event</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Node Sizes */}
+                                        <div>
+                                            <h4 className="text-sm font-medium mb-2">Node Sizes</h4>
+                                            <div className="space-y-2">
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-2 h-2 rounded-full bg-gray-400"></div>
+                                                    <span className="text-xs">Small (Low importance)</span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-4 h-4 rounded-full bg-gray-400"></div>
+                                                    <span className="text-xs">Medium (Normal)</span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-6 h-6 rounded-full bg-gray-400"></div>
+                                                    <span className="text-xs">Large (High importance)</span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="w-8 h-8 rounded-full bg-gray-400"></div>
+                                                    <span className="text-xs">Extra Large (Very important)</span>
+                                                </div>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-2">
+                                                Size based on confidence, engagement, verification, and mention frequency
+                                            </p>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
                         </div>
                     ) : (
                         <Card>

@@ -86,11 +86,6 @@ export function DatasetChatPanel({
     const isLoadingUserSettingsRef = useRef(false)
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-    const scrollToBottom = useCallback(() => {
-        if (messagesEndRef.current) {
-            messagesEndRef.current.scrollIntoView({ behavior: 'auto' })
-        }
-    }, [])
 
     const scrollToBottomButton = useCallback(() => {
         if (messagesEndRef.current) {
@@ -747,7 +742,7 @@ export function DatasetChatPanel({
                                     <ReactMarkdown
                                         remarkPlugins={[remarkGfm]}
                                         components={{
-                                            code({ node, inline, className, children, ...props }) {
+                                            code({ inline, className, children, ...props }) {
                                                 const match = /language-(\w+)/.exec(className || '')
                                                 return !inline && match ? (
                                                     <SyntaxHighlighter
@@ -801,7 +796,7 @@ export function DatasetChatPanel({
 
             {/* Scroll to bottom button */}
             {showScrollButton && (
-                <div className="absolute bottom-24 right-6 z-20">
+                <div className="absolute bottom-20 right-6 z-20">
                     <button
                         onClick={scrollToBottomButton}
                         className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-2 shadow-lg transition-colors backdrop-blur-sm"
@@ -813,10 +808,7 @@ export function DatasetChatPanel({
             )}
 
             {/* Input */}
-            <div className={`p-4 border-t border-gray-200 flex-shrink-0 ${!requireDocumentSelection
-                ? 'fixed bottom-0 left-0 right-0 bg-white z-10'
-                : ''
-                }`}>
+            <div className="p-4 border-t border-gray-200 flex-shrink-0">
                 <div className="flex gap-2">
                     <Input
                         value={inputValue}

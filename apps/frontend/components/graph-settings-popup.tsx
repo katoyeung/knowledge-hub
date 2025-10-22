@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react'
 import { Settings, Save, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
     Dialog,
@@ -168,7 +167,6 @@ export function GraphSettingsPopup({
     }
 
     const selectedPrompt = prompts.find(p => p.id === settings.promptId)
-    const selectedProvider = aiProviders.find(p => p.id === settings.aiProviderId)
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>

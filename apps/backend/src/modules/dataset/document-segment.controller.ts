@@ -181,4 +181,16 @@ export class DocumentSegmentController
   async bulkUpdateStatus(@Body() dto: BulkUpdateStatusDto) {
     return await this.service.bulkUpdateStatus(dto.segmentIds, dto.enabled);
   }
+
+  @Get('document/:documentId/status-counts')
+  async getDocumentSegmentStatusCounts(
+    @Param('documentId') documentId: string,
+  ) {
+    return await this.service.getDocumentSegmentStatusCounts(documentId);
+  }
+
+  @Post('document/:documentId/fix-stuck-segments')
+  async fixStuckSegments(@Param('documentId') documentId: string) {
+    return await this.service.fixStuckSegments(documentId);
+  }
 }

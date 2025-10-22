@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import { X, Upload, FileText, AlertCircle, CheckCircle, Loader2, Plus, Settings, ChevronDown } from 'lucide-react'
+import { X, Upload, FileText, AlertCircle, CheckCircle, Loader2, Plus, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { datasetApi, documentApi, type Dataset, type Document, type CsvConnectorTemplate, type CsvUploadConfig, CsvConnectorType } from '@/lib/api'
 
@@ -32,7 +32,6 @@ export function DatasetDocumentUploadModal({
     // CSV-related state
     const [csvTemplates, setCsvTemplates] = useState<CsvConnectorTemplate[]>([])
     const [csvConfig, setCsvConfig] = useState<CsvUploadConfig | null>(null)
-    const [showCsvConfig, setShowCsvConfig] = useState(false)
     const [csvValidation, setCsvValidation] = useState<{
         isValid: boolean
         missingColumns: string[]
@@ -110,27 +109,6 @@ export function DatasetDocumentUploadModal({
         setShowCsvConfig(true)
     }, [])
 
-    // Handle CSV configuration change
-    const handleCsvConfigChange = useCallback((config: CsvUploadConfig) => {
-        setCsvConfig(config)
-    }, [])
-
-    // Validate CSV file against template
-    const validateCsvFile = useCallback(async (file: File, templateName: string) => {
-        try {
-            const validation = await documentApi.validateCsvHeaders(file, templateName)
-            setCsvValidation(validation)
-            return validation.isValid
-        } catch (error) {
-            console.error('CSV validation failed:', error)
-            setCsvValidation({
-                isValid: false,
-                missingColumns: [],
-                extraColumns: [],
-            })
-            return false
-        }
-    }, [])
 
     // Format file size
     const formatFileSize = (bytes: number) => {

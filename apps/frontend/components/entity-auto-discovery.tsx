@@ -10,25 +10,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
     Search,
-    CheckCircle,
-    XCircle,
     AlertTriangle,
     Loader2,
-    Eye,
-    Trash2,
-    Plus,
-    X,
     RefreshCw,
     Filter,
-    Download,
-    Upload,
     Wand2,
     Target,
     BarChart3,
-    Settings
+    Settings,
+    Upload,
+    CheckCircle
 } from 'lucide-react';
 import { graphApi } from '@/lib/api';
 
@@ -108,7 +101,6 @@ export const EntityAutoDiscovery: React.FC<{
         minConfidence: 0,
         searchTerm: '',
     });
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
     const [progress, setProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
@@ -250,7 +242,7 @@ export const EntityAutoDiscovery: React.FC<{
                 },
             }));
 
-            const result = await graphApi.entityDictionary.bulkImport(datasetId, {
+            await graphApi.entityDictionary.bulkImport(datasetId, {
                 entities: importData,
                 source: 'auto_discovered',
                 options: {

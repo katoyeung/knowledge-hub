@@ -10,6 +10,7 @@ import {
   EmbeddingTask,
   EmbeddingResult,
 } from '../../queue/jobs/document/worker-pool.service';
+import { NotificationService } from '../../notification/notification.service';
 import * as crypto from 'crypto';
 
 export interface EmbeddingConfig {
@@ -42,17 +43,20 @@ export class EmbeddingProcessingService {
     private readonly embeddingService: EmbeddingV2Service,
     private readonly modelMappingService: ModelMappingService,
     private readonly workerPoolService: WorkerPoolService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async processSegments(
     segments: DocumentSegment[],
     config: EmbeddingConfig,
     options: EmbeddingProcessingOptions = {},
+    documentId?: string,
+    datasetId?: string,
   ): Promise<{ processedCount: number; embeddingDimensions?: number }> {
     const {
       useWorkerPool = true,
-      batchSize = 5,
-      maxConcurrency = 10,
+      batchSize = 2, // Reduced batch size to prevent blocking
+      maxConcurrency = 5, // Reduced concurrency
     } = options;
 
     this.logger.log(
@@ -87,6 +91,8 @@ export class EmbeddingProcessingService {
         incompleteSegments,
         config,
         batchSize,
+        documentId,
+        datasetId,
       );
       embeddingDimensions = result.embeddingDimensions;
       processedCount = result.processedCount;
@@ -209,6 +215,8 @@ export class EmbeddingProcessingService {
     segments: DocumentSegment[],
     config: EmbeddingConfig,
     batchSize: number,
+    documentId?: string,
+    datasetId?: string,
   ): Promise<{ processedCount: number; embeddingDimensions?: number }> {
     this.logger.log(
       `[EMBEDDING] Using traditional batching for ${segments.length} segments`,
@@ -229,7 +237,7 @@ export class EmbeddingProcessingService {
         `[EMBEDDING] Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} segments)`,
       );
 
-      await this.processBatchIndividually(batch, config);
+      await this.processBatchIndividually(batch, config, documentId, datasetId);
       processedCount += batch.length;
 
       this.logger.log(
@@ -243,53 +251,94 @@ export class EmbeddingProcessingService {
   private async processBatchIndividually(
     segments: DocumentSegment[],
     config: EmbeddingConfig,
+    documentId?: string,
+    datasetId?: string,
   ): Promise<void> {
-    // Process segments in parallel within each batch
-    const batchPromises = segments.map(async (segment) => {
-      // Update segment status to embedding
-      await this.segmentRepository.update(segment.id, {
-        status: 'embedding',
-        indexingAt: new Date(),
-      });
+    // Process segments sequentially to prevent blocking HTTP requests
+    for (const segment of segments) {
+      try {
+        // Add small delay to allow HTTP requests to be processed
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
-      // Generate embedding
-      const embeddingResult = await this.generateEmbedding(
-        segment.content,
-        config,
-      );
+        // Update segment status to embedding
+        await this.segmentRepository.update(segment.id, {
+          status: 'embedding',
+          indexingAt: new Date(),
+        });
 
-      // Create embedding entity
-      const embeddingHash = this.generateEmbeddingHash(
-        segment.content,
-        config.model,
-      );
-      const correctModelName = this.modelMappingService.getModelName(
-        config.model as any,
-        config.provider as any,
-      );
+        // Generate embedding
+        const embeddingResult = await this.generateEmbedding(
+          segment.content,
+          config,
+        );
 
-      const embedding = this.embeddingRepository.create({
-        modelName: correctModelName,
-        hash: embeddingHash,
-        embedding: embeddingResult.embedding,
-        providerName: config.provider,
-      });
+        // Create embedding entity
+        const embeddingHash = this.generateEmbeddingHash(
+          segment.content,
+          config.model,
+        );
+        const correctModelName = this.modelMappingService.getModelName(
+          config.model as any,
+          config.provider as any,
+        );
 
-      const savedEmbedding = await this.embeddingRepository.save(embedding);
+        const embedding = this.embeddingRepository.create({
+          modelName: correctModelName,
+          hash: embeddingHash,
+          embedding: embeddingResult.embedding,
+          providerName: config.provider,
+        });
 
-      // Update segment with embedding reference
-      await this.segmentRepository.update(segment.id, {
-        status: 'embedded',
-        embeddingId: savedEmbedding.id,
-        completedAt: new Date(),
-      });
+        const savedEmbedding = await this.embeddingRepository.save(embedding);
 
-      this.logger.debug(`[EMBEDDING] Completed segment ${segment.id}`);
-      return { segment, embedding: savedEmbedding };
-    });
+        // Update segment with embedding reference
+        await this.segmentRepository.update(segment.id, {
+          status: 'embedded',
+          embeddingId: savedEmbedding.id,
+          completedAt: new Date(),
+        });
 
-    // Wait for all segments in this batch to complete
-    await Promise.all(batchPromises);
+        this.logger.debug(`[EMBEDDING] Completed segment ${segment.id}`);
+
+        // Send progress notification if documentId and datasetId are provided
+        if (documentId && datasetId) {
+          const completedSegments = await this.segmentRepository.count({
+            where: { documentId, status: 'embedded' },
+          });
+          const totalSegments = await this.segmentRepository.count({
+            where: { documentId },
+          });
+
+          this.notificationService.sendDocumentProcessingUpdate(
+            documentId,
+            datasetId,
+            {
+              status: 'embedding',
+              stage: 'embedding',
+              message: `Generating Embeddings - ${completedSegments}/${totalSegments} segments (${Math.round((completedSegments / totalSegments) * 100)}%)`,
+              progress: {
+                current: completedSegments,
+                total: totalSegments,
+                percentage: Math.round(
+                  (completedSegments / totalSegments) * 100,
+                ),
+              },
+            },
+          );
+        }
+      } catch (error) {
+        this.logger.error(
+          `[EMBEDDING] Failed to process segment ${segment.id}:`,
+          error,
+        );
+
+        // Update segment status to error
+        await this.segmentRepository.update(segment.id, {
+          status: 'error',
+          error: error.message,
+        });
+      }
+    }
   }
 
   private async generateEmbedding(
