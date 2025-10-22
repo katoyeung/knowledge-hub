@@ -112,11 +112,11 @@ export class AiProviderConfigResolver {
    * Extract chat settings from dataset
    */
   private extractDatasetChatSettings(dataset: any): any | null {
-    if (!dataset.settings || !(dataset.settings as any).chat_settings) {
+    if (!dataset.settings || !dataset.settings.chat_settings) {
       return null;
     }
 
-    const chatSettings = (dataset.settings as any).chat_settings;
+    const chatSettings = dataset.settings.chat_settings;
 
     // Check if chat settings are effectively null/empty
     const hasValidSettings = this.hasValidSettings(chatSettings);

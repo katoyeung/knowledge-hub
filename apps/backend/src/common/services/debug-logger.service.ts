@@ -84,7 +84,6 @@ export class DebugLogger {
    */
   private writeToFile(method: string, data: Record<string, any>): void {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const fs = require('fs');
       const filename = `/tmp/debug-${method}.log`;
       const logEntry = JSON.stringify(data, null, 2) + '\n';

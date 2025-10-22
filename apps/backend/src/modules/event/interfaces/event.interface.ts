@@ -85,9 +85,38 @@ export interface DocumentEvent extends BaseEvent {
   };
 }
 
+export interface EntityLearningEvent extends BaseEvent {
+  type:
+    | EventTypes.ENTITY_LEARNING_STARTED
+    | EventTypes.ENTITY_LEARNING_COMPLETED
+    | EventTypes.ENTITY_LEARNING_FAILED;
+  payload: {
+    datasetId: string;
+    learningType: string;
+    result?: any;
+    error?: string;
+    userId: string;
+  };
+}
+
+export interface EntityNormalizationEvent extends BaseEvent {
+  type:
+    | EventTypes.ENTITY_NORMALIZATION_STARTED
+    | EventTypes.ENTITY_NORMALIZATION_COMPLETED
+    | EventTypes.ENTITY_NORMALIZATION_FAILED;
+  payload: {
+    datasetId: string;
+    result?: any;
+    error?: string;
+    userId: string;
+  };
+}
+
 export type Event =
   | InstrumentEvent
   | MarketDataEvent
   | QueueEvent
   | SystemEvent
-  | DocumentEvent;
+  | DocumentEvent
+  | EntityLearningEvent
+  | EntityNormalizationEvent;

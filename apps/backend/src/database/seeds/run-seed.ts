@@ -5,6 +5,7 @@ import { InitialAdminSeed } from './initial-admin.seed';
 import { InitialAiProvidersSeed } from './initial-ai-providers.seed';
 import { seedPrompts } from './initial-prompts.seed';
 import { seedSocialMediaGraphExtractionPrompt } from './social-media-graph-extraction-prompt.seed';
+import { seedDocumentGraphExtractionPrompt } from './document-graph-extraction-prompt.seed';
 import Keyv from 'keyv';
 
 export class SeedRunner {
@@ -44,6 +45,10 @@ export class SeedRunner {
       console.log(
         '✅ Social Media Graph Extraction prompt seeded successfully',
       );
+
+      // Create document graph extraction prompt
+      await seedDocumentGraphExtractionPrompt(this.dataSource);
+      console.log('✅ Document Graph Extraction prompt seeded successfully');
 
       // Create graph extraction prompts
       // TODO: Re-enable when TypeScript can resolve the dynamic import

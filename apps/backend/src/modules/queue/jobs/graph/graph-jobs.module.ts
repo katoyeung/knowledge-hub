@@ -15,8 +15,16 @@ import { Dataset } from '../../../dataset/entities/dataset.entity';
 import { Embedding } from '../../../dataset/entities/embedding.entity';
 import { ChatConversation } from '../../../chat/entities/chat-conversation.entity';
 import { ChatMessage } from '../../../chat/entities/chat-message.entity';
+import { PredefinedEntity } from '../../../graph/entities/predefined-entity.entity';
+import { EntityAlias } from '../../../graph/entities/entity-alias.entity';
+import { EntityNormalizationLog } from '../../../graph/entities/entity-normalization-log.entity';
 import { GraphExtractionJob } from './graph-extraction.job';
 import { GraphExtractionService } from '../../../graph/services/graph-extraction.service';
+import { GraphPromptSelectorService } from '../../../graph/services/graph-prompt-selector.service';
+import { HybridExtractionService } from '../../../graph/services/hybrid-extraction.service';
+import { EntityNormalizationService } from '../../../graph/services/entity-normalization.service';
+import { EntityLearningService } from '../../../graph/services/entity-learning.service';
+import { EntityDictionaryService } from '../../../graph/services/entity-dictionary.service';
 import { AiProviderService } from '../../../ai-provider/services/ai-provider.service';
 import { PromptService } from '../../../prompts/services/prompt.service';
 import { LLMClientFactory } from '../../../ai-provider/services/llm-client-factory.service';
@@ -40,6 +48,9 @@ import { QueueManagerService } from '../../services/queue-manager.service';
       Embedding,
       ChatConversation,
       ChatMessage,
+      PredefinedEntity,
+      EntityAlias,
+      EntityNormalizationLog,
     ]),
     CacheModule.register(),
     HttpModule,
@@ -51,6 +62,11 @@ import { QueueManagerService } from '../../services/queue-manager.service';
   providers: [
     GraphExtractionJob,
     GraphExtractionService,
+    GraphPromptSelectorService,
+    HybridExtractionService,
+    EntityNormalizationService,
+    EntityLearningService,
+    EntityDictionaryService,
     AiProviderService,
     PromptService,
     LLMClientFactory,

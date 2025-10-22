@@ -35,7 +35,7 @@ import { BadRequestException } from '@nestjs/common';
 @ApiTags('Graph')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('api/graph')
+@Controller('graph')
 export class GraphController {
   private readonly logger = new Logger(GraphController.name);
 
@@ -114,7 +114,7 @@ export class GraphController {
     @Query() query: GraphQueryDto,
     @Request() req: any,
   ) {
-    const stats = await this.graphService.getGraphStats(datasetId, query);
+    const stats = await this.graphService.getGraphStats(datasetId);
     return {
       success: true,
       data: stats,

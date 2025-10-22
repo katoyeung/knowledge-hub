@@ -12,14 +12,21 @@ import {
     AlertCircle,
     CheckCircle,
     Loader2,
-    Trash2
+    Trash2,
+    Settings
 } from 'lucide-react'
 import { GraphVisualization } from './graph-visualization'
 import { GraphStats } from './graph-stats'
 import { GraphSettingsPopup } from './graph-settings-popup'
 import { DocumentSegmentExplorer } from './document-segment-explorer'
+import { EntityDictionaryManager } from './entity-dictionary-manager'
+import { EntitySuggestionsPanel } from './entity-suggestions-panel'
+import { EntityAutoDiscovery } from './entity-auto-discovery'
+import { EntityNormalizationPanel } from './entity-normalization-panel'
+import { EntityDictionaryImportModal } from './entity-dictionary-import-modal'
+import { DuplicateEntitiesModal } from './duplicate-entities-modal'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
-import { graphApi, datasetApi, type GraphData, type GraphExtractionConfig } from '@/lib/api'
+import { graphApi, datasetApi, type GraphData, type GraphExtractionConfig, type GraphNode, type GraphEdge } from '@/lib/api'
 import { useToast } from '@/components/ui/simple-toast'
 
 interface GraphPageProps {
@@ -32,6 +39,10 @@ interface GraphSettings {
     model?: string
     promptId?: string
     temperature?: number
+    useHybridExtraction?: boolean
+    entityMatchingThreshold?: number
+    autoNormalization?: boolean
+    continuousLearning?: boolean
 }
 
 export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
@@ -44,6 +55,10 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
     const [graphSettings, setGraphSettings] = useState<GraphSettings>({})
     const [showClearDialog, setShowClearDialog] = useState(false)
     const [isClearing, setIsClearing] = useState(false)
+    const [selectedNode, setSelectedNode] = useState<any>(null)
+    const [selectedEdge, setSelectedEdge] = useState<any>(null)
+    const [showImportModal, setShowImportModal] = useState(false)
+    const [showDuplicatesModal, setShowDuplicatesModal] = useState(false)
     const { success, error: showError, warning } = useToast()
 
 
@@ -221,6 +236,18 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
         // You can add more detailed edge inspection here
     }
 
+    // Handle node selection for right panel
+    const handleNodeSelect = (node: any) => {
+        setSelectedNode(node)
+        setSelectedEdge(null) // Clear edge selection when node is selected
+    }
+
+    // Handle edge selection for right panel
+    const handleEdgeSelect = (edge: any) => {
+        setSelectedEdge(edge)
+        setSelectedNode(null) // Clear node selection when edge is selected
+    }
+
 
     // Download graph data
     const handleDownload = () => {
@@ -324,6 +351,10 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
                     <TabsTrigger value="visualization">Visualization</TabsTrigger>
                     <TabsTrigger value="statistics">Statistics</TabsTrigger>
                     <TabsTrigger value="explorer">Document Explorer</TabsTrigger>
+                    <TabsTrigger value="entities">Entity Dictionary</TabsTrigger>
+                    <TabsTrigger value="suggestions">Suggestions</TabsTrigger>
+                    <TabsTrigger value="discovery">Auto-Discovery</TabsTrigger>
+                    <TabsTrigger value="normalization">Normalization</TabsTrigger>
                     <TabsTrigger value="raw-data">Raw Data</TabsTrigger>
                 </TabsList>
 
@@ -331,11 +362,13 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
                     {graphData ? (
                         <div className="grid grid-cols-10 gap-4">
                             {/* Left side - Canvas (8 columns) */}
-                            <div className="col-span-8">
+                            <div className="col-span-8" data-graph-container>
                                 <GraphVisualization
                                     data={graphData}
                                     onNodeClick={handleNodeClick}
                                     onEdgeClick={handleEdgeClick}
+                                    onNodeSelect={handleNodeSelect}
+                                    onEdgeSelect={handleEdgeSelect}
                                     height={800}
                                     width={1200}
                                 />
@@ -420,6 +453,91 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
                                         </div>
                                     </CardContent>
                                 </Card>
+
+                                {/* Node/Edge Details */}
+                                {(selectedNode || selectedEdge) && (
+                                    <Card className="mt-4">
+                                        <CardHeader>
+                                            <CardTitle className="text-lg">
+                                                {selectedNode ? 'Node Details' : 'Edge Details'}
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent>
+                                            {selectedNode && (
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center space-x-2">
+                                                        <Badge variant="outline" className="capitalize">
+                                                            {selectedNode.nodeType}
+                                                        </Badge>
+                                                        <span className="font-medium text-sm">{selectedNode.label}</span>
+                                                        <div className="flex items-center space-x-1">
+                                                            <div
+                                                                className="w-3 h-3 rounded-full"
+                                                                style={{ backgroundColor: selectedNode.color }}
+                                                            />
+                                                            <span className="text-xs text-gray-500">
+                                                                Size: {Math.round(selectedNode.size || 5)}px
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Importance indicators */}
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {selectedNode.properties?.verified && (
+                                                            <Badge variant="secondary" className="text-xs">✓ Verified</Badge>
+                                                        )}
+                                                        {selectedNode.properties?.confidence && selectedNode.properties.confidence > 0.8 && (
+                                                            <Badge variant="secondary" className="text-xs">High Confidence</Badge>
+                                                        )}
+                                                        {selectedNode.properties?.engagement_rate && selectedNode.properties.engagement_rate > 0.1 && (
+                                                            <Badge variant="secondary" className="text-xs">High Engagement</Badge>
+                                                        )}
+                                                        {selectedNode.properties?.follower_count && selectedNode.properties.follower_count > 10000 && (
+                                                            <Badge variant="secondary" className="text-xs">Large Following</Badge>
+                                                        )}
+                                                    </div>
+
+                                                    {selectedNode.properties && Object.keys(selectedNode.properties).length > 0 && (
+                                                        <div className="text-xs text-gray-600">
+                                                            <div className="font-medium mb-1">Properties:</div>
+                                                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                                                                {Object.entries(selectedNode.properties).map(([key, value]) => (
+                                                                    <div key={key} className="flex justify-between text-xs">
+                                                                        <span className="capitalize truncate">{key.replace('_', ' ')}:</span>
+                                                                        <span className="truncate ml-2">{String(value)}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {selectedEdge && (
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center space-x-2">
+                                                        <Badge variant="outline" className="capitalize">
+                                                            {selectedEdge.edgeType}
+                                                        </Badge>
+                                                        <span className="font-medium text-sm">Weight: {selectedEdge.weight}</span>
+                                                    </div>
+                                                    {selectedEdge.properties && Object.keys(selectedEdge.properties).length > 0 && (
+                                                        <div className="text-xs text-gray-600">
+                                                            <div className="font-medium mb-1">Properties:</div>
+                                                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                                                                {Object.entries(selectedEdge.properties).map(([key, value]) => (
+                                                                    <div key={key} className="flex justify-between text-xs">
+                                                                        <span className="capitalize truncate">{key.replace('_', ' ')}:</span>
+                                                                        <span className="truncate ml-2">{String(value)}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </CardContent>
+                                    </Card>
+                                )}
                             </div>
                         </div>
                     ) : (
@@ -481,6 +599,63 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
                     />
                 </TabsContent>
 
+                <TabsContent value="entities">
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h2 className="text-xl font-semibold">Entity Dictionary</h2>
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    onClick={() => setShowImportModal(true)}
+                                    variant="outline"
+                                    size="sm"
+                                >
+                                    Import/Export
+                                </Button>
+                                <Button
+                                    onClick={() => setShowDuplicatesModal(true)}
+                                    variant="outline"
+                                    size="sm"
+                                >
+                                    Find Duplicates
+                                </Button>
+                            </div>
+                        </div>
+                        <EntityDictionaryManager datasetId={datasetId} />
+                    </div>
+                </TabsContent>
+
+                <TabsContent value="suggestions">
+                    <EntitySuggestionsPanel
+                        datasetId={datasetId}
+                        onSuggestionApproved={(suggestion) => {
+                            success('Suggestion Approved', `Added "${suggestion.canonicalName}" to dictionary`);
+                            loadGraphData(); // Refresh graph data
+                        }}
+                        onSuggestionRejected={(suggestion) => {
+                            success('Suggestion Rejected', `Rejected "${suggestion.canonicalName}"`);
+                        }}
+                    />
+                </TabsContent>
+
+                <TabsContent value="discovery">
+                    <EntityAutoDiscovery
+                        datasetId={datasetId}
+                        onDiscoveryComplete={(result) => {
+                            success('Discovery Complete', `Found ${result.entities.length} entities`);
+                        }}
+                    />
+                </TabsContent>
+
+                <TabsContent value="normalization">
+                    <EntityNormalizationPanel
+                        datasetId={datasetId}
+                        onNormalizationComplete={(result) => {
+                            success('Normalization Complete', `Normalized ${result.normalized || 0} entities`);
+                            loadGraphData(); // Refresh graph data
+                        }}
+                    />
+                </TabsContent>
+
                 <TabsContent value="raw-data">
                     {graphData ? (
                         <Card>
@@ -502,6 +677,27 @@ export function GraphPage({ datasetId, datasetName }: GraphPageProps) {
                     )}
                 </TabsContent>
             </Tabs>
+
+            {/* Modals */}
+            <EntityDictionaryImportModal
+                datasetId={datasetId}
+                isOpen={showImportModal}
+                onClose={() => setShowImportModal(false)}
+                onImportComplete={(result) => {
+                    success('Import Complete', `Imported ${result.created} entities, skipped ${result.skipped}`);
+                    loadGraphData(); // Refresh graph data
+                }}
+            />
+
+            <DuplicateEntitiesModal
+                datasetId={datasetId}
+                isOpen={showDuplicatesModal}
+                onClose={() => setShowDuplicatesModal(false)}
+                onMergeComplete={(result) => {
+                    success('Merge Complete', `Merged ${result.merged} entities`);
+                    loadGraphData(); // Refresh graph data
+                }}
+            />
 
             {/* Clear Graph Data Confirmation Dialog */}
             <ConfirmationDialog

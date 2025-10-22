@@ -13,6 +13,8 @@ import { DocumentSegment } from './document-segment.entity';
 import { DatasetKeywordTable } from './dataset-keyword-table.entity';
 import { GraphNode } from '../../graph/entities/graph-node.entity';
 import { GraphEdge } from '../../graph/entities/graph-edge.entity';
+import { PredefinedEntity } from '../../graph/entities/predefined-entity.entity';
+import { EntityNormalizationLog } from '../../graph/entities/entity-normalization-log.entity';
 import { Exclude } from 'class-transformer';
 
 @Entity({ name: 'datasets' })
@@ -58,6 +60,22 @@ export class Dataset extends BaseEntity {
       model?: string;
       promptId?: string;
       temperature?: number;
+      useHybridExtraction?: boolean;
+      entityMatchingThreshold?: number;
+      autoNormalization?: boolean;
+      continuousLearning?: boolean;
+    };
+    chat_settings?: {
+      provider?: string;
+      model?: string;
+      temperature?: number;
+      maxChunks?: number;
+      promptId?: string;
+      bm25Weight?: number;
+      embeddingWeight?: number;
+      enableConversationHistory?: boolean;
+      includeConversationHistory?: boolean;
+      conversationHistoryLimit?: number;
     };
     graphExtractionEnabled?: boolean;
     graphExtractionConfig?: {
@@ -96,4 +114,10 @@ export class Dataset extends BaseEntity {
 
   @OneToMany(() => GraphEdge, (edge) => edge.dataset)
   graphEdges: GraphEdge[];
+
+  @OneToMany(() => PredefinedEntity, (entity) => entity.dataset)
+  predefinedEntities: PredefinedEntity[];
+
+  @OneToMany(() => EntityNormalizationLog, (log) => log.dataset)
+  entityNormalizationLogs: EntityNormalizationLog[];
 }

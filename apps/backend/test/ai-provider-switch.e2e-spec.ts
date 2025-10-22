@@ -275,7 +275,7 @@ async function testChatConfiguration(
     const actualModel = metadata.model || 'unknown';
 
     // Try to read debug log for more detailed configuration
-    let actualTemperature =
+    const actualTemperature =
       scenario.datasetChatSettings?.temperature ||
       scenario.userChatSettings?.temperature ||
       0.7;
@@ -418,7 +418,7 @@ describe('AI Provider Switch E2E Tests', () => {
   let jwtToken: string;
   let userId: string;
   let datasetId: string;
-  let testProviderIds: string[] = [];
+  const testProviderIds: string[] = [];
   let createdDataset: boolean = false;
 
   beforeAll(async () => {

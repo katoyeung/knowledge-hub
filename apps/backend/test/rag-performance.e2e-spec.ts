@@ -46,7 +46,7 @@ describe('RAG Performance E2E Tests', () => {
   let dataSource: DataSource;
   let jwtToken: string;
   let datasetId: string;
-  let documentIds: string[] = [];
+  const documentIds: string[] = [];
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({

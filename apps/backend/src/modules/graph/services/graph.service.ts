@@ -1,8 +1,8 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Between, ILike, FindManyOptions } from 'typeorm';
+import { Repository, In, ILike } from 'typeorm';
 import { GraphNode, NodeType } from '../entities/graph-node.entity';
-import { GraphEdge, EdgeType } from '../entities/graph-edge.entity';
+import { GraphEdge } from '../entities/graph-edge.entity';
 import { GraphQueryDto } from '../dto/graph-query.dto';
 
 @Injectable()
@@ -230,7 +230,7 @@ export class GraphService {
       this.findEdgesByDataset(datasetId, query),
     ]);
 
-    const stats = await this.getGraphStats(datasetId, query);
+    const stats = await this.getGraphStats(datasetId);
 
     return {
       nodes: nodesResult.nodes,
@@ -239,7 +239,7 @@ export class GraphService {
     };
   }
 
-  async getGraphStats(datasetId: string, query: GraphQueryDto): Promise<any> {
+  async getGraphStats(datasetId: string): Promise<any> {
     const nodeCount = await this.nodeRepository.count({
       where: { datasetId },
     });
@@ -317,14 +317,16 @@ export class GraphService {
     }));
 
     // Transform edges to match frontend expectations
-    const transformedEdges = edges.map((edge) => ({
-      id: edge.id,
-      from: edge.sourceNode?.label || 'Unknown',
-      to: edge.targetNode?.label || 'Unknown',
-      type: edge.edgeType, // Map edgeType to type
-      weight: edge.weight,
-      properties: edge.properties,
-    }));
+    const transformedEdges = edges
+      .filter((edge) => edge.sourceNode?.label && edge.targetNode?.label)
+      .map((edge) => ({
+        id: edge.id,
+        from: edge.sourceNode.label,
+        to: edge.targetNode.label,
+        type: edge.edgeType, // Map edgeType to type
+        weight: edge.weight,
+        properties: edge.properties,
+      }));
 
     return {
       nodes: transformedNodes,

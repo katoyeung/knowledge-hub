@@ -29,6 +29,9 @@ async function bootstrap() {
   // Use the custom validation pipe globally
   app.useGlobalPipes(new CustomValidationPipe());
 
+  // Set global prefix for all routes
+  app.setGlobalPrefix('api');
+
   if (process.env.NODE_ENV === 'production') {
     app.useLogger(['warn', 'error']);
   }

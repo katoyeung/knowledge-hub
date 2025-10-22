@@ -854,7 +854,7 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
                                                                                     return (
                                                                                         <div key={index} className="flex items-center space-x-2 text-xs">
                                                                                             <Badge variant="outline" className="text-xs">
-                                                                                                {node.nodeType || 'Unknown'}
+                                                                                                {node.type || 'Unknown'}
                                                                                             </Badge>
                                                                                             <span className="font-medium">{node.label}</span>
                                                                                             {node.properties?.confidence && typeof node.properties.confidence === 'number' && (
@@ -884,7 +884,7 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
                                                                                         <span className="font-medium">{edge.sourceNodeId}</span>
                                                                                         <span className="text-gray-400">→</span>
                                                                                         <Badge variant="outline" className="text-xs">
-                                                                                            {edge.edgeType || 'Unknown'}
+                                                                                            {edge.type || 'Unknown'}
                                                                                         </Badge>
                                                                                         <span className="font-medium">{edge.targetNodeId}</span>
                                                                                         {edge.properties?.confidence && typeof edge.properties.confidence === 'number' && (
@@ -1028,7 +1028,7 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
                         ...edge,
                         from: edge.sourceNodeId,
                         to: edge.targetNodeId,
-                        type: edge.edgeType
+                        type: edge.type
                     }))}
                     extractionStatus={selectedSegment.extractionStatus === 'processing' ? 'extracting' : selectedSegment.extractionStatus}
                     lastExtracted={selectedSegment.lastExtracted}

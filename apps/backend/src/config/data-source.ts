@@ -15,28 +15,29 @@ const AppDataSource = new DataSource({
   username: configService.get<string>('DB_USERNAME', 'postgres'),
   password: configService.get<string>('DB_PASSWORD', 'postgres'),
   database: configService.get<string>('DB_DATABASE', 'knowledge_hub'),
-  
+
   // For development: use TypeScript files directly
   entities: [
-    process.env.NODE_ENV === 'production' 
-      ? 'dist/**/*.entity.js' 
-      : 'src/**/*.entity.ts'
+    process.env.NODE_ENV === 'production'
+      ? 'dist/**/*.entity.js'
+      : 'src/**/*.entity.ts',
   ],
-  
+
   migrations: [
     process.env.NODE_ENV === 'production'
       ? 'dist/database/migrations/*.js'
-      : 'src/database/migrations/*.ts'
+      : 'src/database/migrations/*.ts',
   ],
-  
+
   migrationsTableName: 'migrations',
   namingStrategy: new SnakeNamingStrategy(),
-  
+
   // Enable logging for development
-  logging: process.env.NODE_ENV !== 'production' ? ['query', 'error'] : ['error'],
-  
+  logging:
+    process.env.NODE_ENV !== 'production' ? ['query', 'error'] : ['error'],
+
   // Synchronize in development (be careful in production)
   synchronize: false, // Keep false to use migrations
 });
 
-export default AppDataSource; 
+export default AppDataSource;

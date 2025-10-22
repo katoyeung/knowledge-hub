@@ -47,6 +47,9 @@ export class User extends BaseEntity {
   @OneToMany('GraphEdge', 'user')
   graphEdges: any[];
 
+  @OneToMany('PredefinedEntity', 'user')
+  predefinedEntities: any[];
+
   // User settings
   @Column('jsonb', { nullable: true, default: {} })
   settings: {
@@ -55,6 +58,18 @@ export class User extends BaseEntity {
       model?: string;
       promptId?: string;
       temperature?: number;
+    };
+    chat_settings?: {
+      provider?: string;
+      model?: string;
+      temperature?: number;
+      maxChunks?: number;
+      promptId?: string;
+      bm25Weight?: number;
+      embeddingWeight?: number;
+      enableConversationHistory?: boolean;
+      includeConversationHistory?: boolean;
+      conversationHistoryLimit?: number;
     };
     [key: string]: any;
   };

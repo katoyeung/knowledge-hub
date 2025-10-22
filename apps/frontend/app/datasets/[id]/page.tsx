@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { datasetApi, documentApi, type Dataset, type Document } from '@/lib/api'
-import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, LogOut, MessageSquare, FileText, StickyNote, Network } from 'lucide-react'
+import { Loader2, AlertCircle, ChevronRight, ArrowLeft, ChevronDown, LogOut, MessageSquare, FileText, StickyNote, Network } from 'lucide-react'
 import Link from 'next/link'
 import { authUtil } from '@/lib/auth'
 import type { AuthUser } from '@knowledge-hub/shared-types'
@@ -22,6 +22,7 @@ interface CollapsedDocumentsPanelProps {
     onExpand: () => void
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function CollapsedDocumentsPanel({ documents, loading, onDocumentClick, onExpand }: CollapsedDocumentsPanelProps) {
     const [previewDocument, setPreviewDocument] = useState<Document | null>(null)
     const [showPreview, setShowPreview] = useState(false)
@@ -101,8 +102,8 @@ function DatasetDetailContent() {
     const [error, setError] = useState<string | null>(null)
     const [selectedDocument, setSelectedDocument] = useState<Document | null>(null)
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([])
-    const [leftCollapsed, setLeftCollapsed] = useState(false)
-    const [rightCollapsed, setRightCollapsed] = useState(false)
+    // const [leftCollapsed, setLeftCollapsed] = useState(false)
+    // const [rightCollapsed, setRightCollapsed] = useState(false)
     const [user, setUser] = useState<AuthUser | null>(null)
     const [isDropdownOpen, setIsDropdownOpen] = useState(false)
     const [activeTab, setActiveTab] = useState<'documents' | 'chat' | 'notes' | 'graph'>('graph')

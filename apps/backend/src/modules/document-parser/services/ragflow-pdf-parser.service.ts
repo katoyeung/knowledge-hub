@@ -727,7 +727,7 @@ export class RagflowPdfParserService {
 
   private splitByHybrid(content: string, maxLength: number): string[] {
     // Enhanced hybrid approach: try paragraphs first, then sentences, then careful word splitting
-    let chunks = this.splitByParagraph(content, maxLength);
+    const chunks = this.splitByParagraph(content, maxLength);
 
     // If paragraphs are still too long, split by sentences
     const refinedChunks: string[] = [];
@@ -1030,7 +1030,7 @@ export class RagflowPdfParserService {
 
       // Return top keywords by frequency
       const sortedKeywords = Object.entries(keywords)
-        .sort(([, a], [, b]) => (b as number) - (a as number))
+        .sort(([, a], [, b]) => b - a)
         .slice(0, 8)
         .map(([word]) => word);
 

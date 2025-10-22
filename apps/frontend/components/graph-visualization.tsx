@@ -10,7 +10,6 @@ const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), {
 })
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import {
     ZoomIn,
     ZoomOut,
@@ -27,6 +26,8 @@ interface GraphVisualizationProps {
     data: GraphData
     onNodeClick?: (node: GraphNode) => void
     onEdgeClick?: (edge: GraphEdge) => void
+    onNodeSelect?: (node: NodeData | null) => void
+    onEdgeSelect?: (edge: EdgeData | null) => void
     height?: number
     width?: number
 }
@@ -38,11 +39,17 @@ interface NodeData extends GraphNode {
     vy?: number
     fx?: number
     fy?: number
+    color?: string
+    size?: number
+    opacity?: number
+    isIsolated?: boolean
 }
 
 interface EdgeData extends GraphEdge {
     source: string | NodeData
     target: string | NodeData
+    color?: string
+    width?: number
 }
 
 // Color mapping for different node types
@@ -80,39 +87,58 @@ export function GraphVisualization({
     data,
     onNodeClick,
     onEdgeClick,
+    onNodeSelect,
+    onEdgeSelect,
     height = 600,
     width = 800
 }: GraphVisualizationProps) {
     // Calculate responsive dimensions
     const canvasHeight = Math.floor(height / 1.5) // Reduce height by 1.5x
-    const fgRef = useRef<any>()
+    const fgRef = useRef<any>(null)
     const [searchTerm, setSearchTerm] = useState('')
     const [selectedNodeTypes, setSelectedNodeTypes] = useState<string[]>([])
     const [selectedEdgeTypes, setSelectedEdgeTypes] = useState<string[]>([])
     const [showLabels, setShowLabels] = useState(true)
-    const [selectedNode, setSelectedNode] = useState<NodeData | null>(null)
-    const [selectedEdge, setSelectedEdge] = useState<EdgeData | null>(null)
     const [containerWidth, setContainerWidth] = useState(width)
+    const [spreadShape, setSpreadShape] = useState<'left' | 'right' | 'follow' | 'circle'>('left')
 
     // Handle container resize - use ResizeObserver to get actual container width
     useEffect(() => {
         const container = document.querySelector('[data-graph-container]')
-        if (!container) return
+        if (!container) {
+            // Fallback: use the parent container or calculate based on viewport
+            const parentContainer = document.querySelector('.col-span-8')
+            if (parentContainer) {
+                const resizeObserver = new ResizeObserver(entries => {
+                    for (const entry of entries) {
+                        // Use full width of the 8-column container
+                        const newWidth = Math.floor(entry.contentRect.width)
+                        setContainerWidth(newWidth)
+                    }
+                })
+                resizeObserver.observe(parentContainer)
+                return () => resizeObserver.disconnect()
+            } else {
+                // Final fallback: use the passed width prop
+                setContainerWidth(width)
+            }
+            return
+        }
 
         const resizeObserver = new ResizeObserver(entries => {
             for (const entry of entries) {
-                // Calculate 80% of container width (8 out of 10 columns)
-                const newWidth = Math.floor(entry.contentRect.width * 0.8)
+                // Use full width of the container
+                const newWidth = Math.floor(entry.contentRect.width)
                 setContainerWidth(newWidth)
             }
         })
 
         resizeObserver.observe(container)
         return () => resizeObserver.disconnect()
-    }, [])
+    }, [width])
 
-    // Use container width for canvas
-    const currentCanvasWidth = containerWidth
+    // Use container width for canvas with maximum constraint
+    const currentCanvasWidth = Math.min(containerWidth, 1200) // Max width of 1200px
 
     // Get unique node and edge types
     const nodeTypes = Array.from(new Set(data.nodes.map(n => n.nodeType)))
@@ -159,50 +185,81 @@ export function GraphVisualization({
 
     // Transform data for react-force-graph-2d
     const graphData = React.useMemo(() => {
-        const nodes = filteredData.nodes.map((node, index) => {
-            // Calculate base size from confidence
+        // First, identify which nodes are isolated (have no connections)
+        const connectedNodeIds = new Set<string>()
+        filteredData.edges.forEach(edge => {
+            connectedNodeIds.add(edge.sourceNodeId)
+            connectedNodeIds.add(edge.targetNodeId)
+        })
+
+        const nodes = filteredData.nodes.map((node) => {
+            // Calculate base size from confidence - smaller base sizes
             const confidence = node.properties?.confidence || 0.5
-            let baseSize = Math.max(6, Math.min(20, confidence * 16 + 6))
+            let baseSize = Math.max(4, Math.min(12, confidence * 8 + 4))
 
             // Add size boost for high-engagement entities
             if (node.properties?.engagement_rate && node.properties.engagement_rate > 0.1) {
-                baseSize *= 1.3
+                baseSize *= 1.2
             }
 
             // Add size boost for verified entities
             if (node.properties?.verified) {
-                baseSize *= 1.2
+                baseSize *= 1.1
             }
 
             // Add size boost for high follower count (influencers, brands)
             if (node.properties?.follower_count && node.properties.follower_count > 10000) {
-                baseSize *= 1.4
+                baseSize *= 1.3
             }
 
             // Add size boost for frequently mentioned entities
             if (node.properties?.temporal_data?.mention_count && node.properties.temporal_data.mention_count > 5) {
-                baseSize *= 1.2
+                baseSize *= 1.1
             }
 
             // Add size boost for high sentiment entities (positive or negative)
             if (node.properties?.sentiment_score && Math.abs(node.properties.sentiment_score) > 0.7) {
-                baseSize *= 1.1
+                baseSize *= 1.05
             }
 
-            // Ensure size is within reasonable bounds
-            const finalSize = Math.max(4, Math.min(25, baseSize))
+            // Ensure size is within reasonable bounds - smaller maximum
+            const finalSize = Math.max(3, Math.min(15, baseSize))
+
+            // Check if this node is isolated (no connections)
+            const isIsolated = !connectedNodeIds.has(node.id)
+
+            // Different positioning strategy for isolated vs connected nodes
+            let x, y
+            if (isIsolated) {
+                // Isolated nodes: very close together in a tight cluster at top-left
+                const isolatedNodes = filteredData.nodes.filter(n => !connectedNodeIds.has(n.id))
+                const isolatedIndex = isolatedNodes.findIndex(n => n.id === node.id)
+                const angle = (isolatedIndex / Math.max(1, isolatedNodes.length)) * 2 * Math.PI
+                const radius = 8 // Very small radius for tight clustering
+                x = -150 + Math.cos(angle) * radius // Position at left side
+                y = -100 + Math.sin(angle) * radius // Position at top
+            } else {
+                // Connected nodes: spread out in the center area
+                const connectedNodes = filteredData.nodes.filter(n => connectedNodeIds.has(n.id))
+                const connectedIndex = connectedNodes.findIndex(n => n.id === node.id)
+                const angle = (connectedIndex / Math.max(1, connectedNodes.length)) * 2 * Math.PI
+                const radius = Math.min(150, Math.sqrt(connectedNodes.length) * 30)
+                x = Math.cos(angle) * radius // Position at center
+                y = Math.sin(angle) * radius
+            }
 
             return {
                 ...node,
                 id: node.id,
                 group: node.nodeType,
-                color: NODE_TYPE_COLORS[node.nodeType] || NODE_TYPE_COLORS.default,
+                color: isIsolated ? '#ff6b6b' : (NODE_TYPE_COLORS[node.nodeType] || NODE_TYPE_COLORS.default), // Red for isolated nodes
                 size: finalSize,
                 // Add visual emphasis for important nodes
                 opacity: confidence > 0.8 ? 1.0 : 0.8,
-                // Add initial random positioning to keep clusters together but spaced
-                x: (Math.random() - 0.5) * 400,
-                y: (Math.random() - 0.5) * 400
+                // Custom positioning based on connection status
+                x: x,
+                y: y,
+                isIsolated: isIsolated
             }
         })
 
@@ -218,36 +275,74 @@ export function GraphVisualization({
         return { nodes, links }
     }, [filteredData])
 
-    // Auto-spread nodes when graph data changes
-    useEffect(() => {
-        if (fgRef.current && graphData.nodes.length > 0) {
-            // Wait a bit for the graph to initialize, then spread nodes
-            const timer = setTimeout(() => {
-                try {
-                    // Simple approach - just restart the simulation without custom forces
-                    if (fgRef.current?.d3Reheat) {
-                        fgRef.current.d3Reheat()
-                    }
-                } catch (error) {
-                    console.warn('Force simulation error:', error)
-                }
-            }, 1000)
-
-            return () => clearTimeout(timer)
-        }
-    }, [graphData])
-
-    // Handle node click
+    // Handle node click with shape spreading
     const handleNodeClick = useCallback((node: NodeData) => {
-        setSelectedNode(node)
         onNodeClick?.(node)
-    }, [onNodeClick])
+        onNodeSelect?.(node)
+
+        // Find connected nodes
+        const connectedNodeIds = new Set<string>()
+        filteredData.edges.forEach(edge => {
+            if (edge.sourceNodeId === node.id) {
+                connectedNodeIds.add(edge.targetNodeId)
+            }
+            if (edge.targetNodeId === node.id) {
+                connectedNodeIds.add(edge.sourceNodeId)
+            }
+        })
+
+        if (connectedNodeIds.size > 0) {
+            // Get current graph data from the component state
+            const nodes = graphData.nodes
+            const centerX = node.x || 0
+            const centerY = node.y || 0
+
+            // Spread connected nodes in the selected shape
+            const connectedNodes = nodes.filter((n: NodeData) => connectedNodeIds.has(n.id))
+            connectedNodes.forEach((connectedNode: NodeData, index: number) => {
+                let angle: number
+                let distance: number
+
+                switch (spreadShape) {
+                    case 'left':
+                        // Left arrow shape (180-360 degrees)
+                        angle = (index / connectedNodes.length) * Math.PI + Math.PI
+                        distance = 100 + (index * 20)
+                        break
+                    case 'right':
+                        // Right arrow shape (0-180 degrees)
+                        angle = (index / connectedNodes.length) * Math.PI
+                        distance = 100 + (index * 20)
+                        break
+                    case 'follow':
+                        // Follow shape (vertical line)
+                        angle = Math.PI / 2 // 90 degrees (up)
+                        distance = 80 + (index * 30)
+                        break
+                    case 'circle':
+                        // Circle shape
+                        angle = (index / connectedNodes.length) * 2 * Math.PI
+                        distance = 120
+                        break
+                    default:
+                        angle = (index / connectedNodes.length) * Math.PI + Math.PI
+                        distance = 100 + (index * 20)
+                }
+
+                connectedNode.x = centerX + Math.cos(angle) * distance
+                connectedNode.y = centerY + Math.sin(angle) * distance
+            })
+
+            // Let the natural force simulation handle the positioning
+            // No need to manually restart the simulation
+        }
+    }, [onNodeClick, onNodeSelect, filteredData, graphData, spreadShape])
 
     // Handle edge click
     const handleEdgeClick = useCallback((edge: EdgeData) => {
-        setSelectedEdge(edge)
         onEdgeClick?.(edge)
-    }, [onEdgeClick])
+        onEdgeSelect?.(edge)
+    }, [onEdgeClick, onEdgeSelect])
 
     // Handle zoom controls
     const handleZoomIn = useCallback(() => {
@@ -261,26 +356,64 @@ export function GraphVisualization({
     const handleReset = useCallback(() => {
         fgRef.current?.zoomToFit(1000)
         // Restart the force simulation to redistribute nodes
-        if (fgRef.current?.d3Reheat) {
-            fgRef.current.d3Reheat()
-        }
+        // Let the natural force simulation handle the positioning
+        // No need to manually restart the simulation
     }, [])
 
     const handleSpreadNodes = useCallback(() => {
         try {
-            // Simple approach - just restart the simulation and zoom out
-            if (fgRef.current?.d3Reheat) {
-                fgRef.current.d3Reheat()
-            }
+            if (fgRef.current) {
+                // Get current graph data
+                const graphData = fgRef.current.graphData()
+                const nodes = graphData.nodes
+                const centerX = currentCanvasWidth / 2
+                const centerY = canvasHeight / 2
+                const spreadRadius = Math.min(currentCanvasWidth, canvasHeight) * 0.15
 
-            // Zoom out to see the full spread
-            setTimeout(() => {
-                fgRef.current?.zoomToFit(1200)
-            }, 500)
+                // Reposition nodes with different strategies for isolated vs connected
+                const isolatedNodes = nodes.filter((node: NodeData) => node.isIsolated)
+                const connectedNodes = nodes.filter((node: NodeData) => !node.isIsolated)
+
+                // Isolated nodes: very tight cluster at top-left
+                isolatedNodes.forEach((node: NodeData, index: number) => {
+                    const angle = (index / Math.max(1, isolatedNodes.length)) * 2 * Math.PI
+                    const radius = 10 // Very small radius for tight clustering
+                    node.x = centerX - 200 + Math.cos(angle) * radius
+                    node.y = centerY - 150 + Math.sin(angle) * radius
+                })
+
+                // Connected nodes: spread out in center area
+                connectedNodes.forEach((node: NodeData, index: number) => {
+                    const angle = (index / Math.max(1, connectedNodes.length)) * 2 * Math.PI
+                    const radius = spreadRadius * 0.5
+                    node.x = centerX + Math.cos(angle) * radius
+                    node.y = centerY + Math.sin(angle) * radius
+                })
+
+                // Let the natural force simulation handle the positioning
+                // No need to manually restart the simulation
+
+                // Zoom out to see the full spread
+                setTimeout(() => {
+                    fgRef.current?.zoomToFit(1200)
+                }, 500)
+            }
         } catch (error) {
             console.warn('Force simulation error:', error)
         }
-    }, [])
+    }, [currentCanvasWidth, canvasHeight])
+
+    // Auto-spread nodes when graph data changes
+    useEffect(() => {
+        if (fgRef.current && graphData.nodes.length > 0) {
+            // Wait for the graph to be ready, then spread nodes
+            const timer = setTimeout(() => {
+                handleSpreadNodes()
+            }, 1000)
+
+            return () => clearTimeout(timer)
+        }
+    }, [graphData, handleSpreadNodes])
 
     // Handle node type filter
     const handleNodeTypeToggle = useCallback((nodeType: string) => {
@@ -447,6 +580,20 @@ export function GraphVisualization({
                                 >
                                     <Settings className="h-4 w-4" />
                                 </Button>
+
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm text-gray-600">Shape:</span>
+                                    <select
+                                        value={spreadShape}
+                                        onChange={(e) => setSpreadShape(e.target.value as 'left' | 'right' | 'follow' | 'circle')}
+                                        className="text-sm border rounded px-2 py-1"
+                                    >
+                                        <option value="left">Left Arrow</option>
+                                        <option value="right">Right Arrow</option>
+                                        <option value="follow">Follow Line</option>
+                                        <option value="circle">Circle</option>
+                                    </select>
+                                </div>
                             </div>
                             <div className="flex items-center space-x-2">
                                 <Checkbox
@@ -470,7 +617,7 @@ export function GraphVisualization({
             {/* Graph Visualization */}
             <Card>
                 <CardContent className="p-0">
-                    <div className="relative">
+                    <div className="relative overflow-hidden">
                         {ForceGraph2D && (
                             <ForceGraph2D
                                 key={`${currentCanvasWidth}-${canvasHeight}`}
@@ -478,9 +625,9 @@ export function GraphVisualization({
                                 graphData={graphData}
                                 height={canvasHeight}
                                 width={currentCanvasWidth}
-                                nodeLabel={showLabels ? (node: NodeData) => `${node.label} (${node.nodeType})` : undefined}
-                                nodeColor={(node: NodeData) => node.color}
-                                nodeCanvasObject={(node: NodeData, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                                nodeLabel={showLabels ? (node: any) => `${node.label} (${node.nodeType})` : undefined}
+                                nodeColor={(node: any) => node.color}
+                                nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
                                     const label = node.label
                                     const nodeSize = node.size || 5
                                     const x = node.x || 0
@@ -519,9 +666,9 @@ export function GraphVisualization({
                                     }
 
                                     // Draw label if showLabels is true and scale is appropriate
-                                    if (showLabels && globalScale > 0.5) {
-                                        const fontSize = Math.max(8, 12 / globalScale)
-                                        ctx.font = `${fontSize}px Sans-Serif`
+                                    if (showLabels && globalScale > 0.3) {
+                                        const fontSize = Math.max(8, 10 / globalScale)
+                                        ctx.font = `bold ${fontSize}px Sans-Serif`
                                         ctx.textAlign = 'center'
                                         ctx.textBaseline = 'middle'
 
@@ -529,25 +676,34 @@ export function GraphVisualization({
                                         const textMetrics = ctx.measureText(label)
                                         const textWidth = textMetrics.width
                                         const textHeight = fontSize
-                                        const padding = 2
+                                        const padding = 3
+                                        const labelY = y + nodeSize + 8
 
-                                        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
-                                        ctx.fillRect(
-                                            x - textWidth / 2 - padding,
-                                            y + nodeSize + 2 - textHeight / 2 - padding,
-                                            textWidth + padding * 2,
-                                            textHeight + padding * 2
-                                        )
+                                        // Draw rounded rectangle background
+                                        const bgX = x - textWidth / 2 - padding
+                                        const bgY = labelY - textHeight / 2 - padding
+                                        const bgWidth = textWidth + padding * 2
+                                        const bgHeight = textHeight + padding * 2
+
+                                        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
+                                        ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)'
+                                        ctx.lineWidth = 1
+
+                                        // Draw rounded rectangle
+                                        ctx.beginPath()
+                                        ctx.roundRect(bgX, bgY, bgWidth, bgHeight, 4)
+                                        ctx.fill()
+                                        ctx.stroke()
 
                                         // Draw text
-                                        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
-                                        ctx.fillText(label, x, y + nodeSize + 2)
+                                        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)'
+                                        ctx.fillText(label, x, labelY)
                                     }
                                 }}
-                                linkLabel={(edge: EdgeData) => `${edge.edgeType} (${edge.weight})`}
-                                linkColor={(edge: EdgeData) => edge.color}
-                                linkWidth={(edge: EdgeData) => edge.width}
-                                linkCanvasObject={(link: EdgeData, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                                linkLabel={(edge: any) => `${edge.edgeType} (${edge.weight})`}
+                                linkColor={(edge: any) => edge.color}
+                                linkWidth={(edge: any) => edge.width}
+                                linkCanvasObject={(link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
                                     // Draw custom link with much better visibility
                                     const source = link.source as NodeData
                                     const target = link.target as NodeData
@@ -616,27 +772,26 @@ export function GraphVisualization({
                                     ctx.lineWidth = lineWidth
                                     ctx.stroke()
                                 }}
-                                onNodeClick={handleNodeClick}
-                                onLinkClick={handleEdgeClick}
-                                onNodeHover={(node: NodeData) => {
+                                onNodeClick={(node: any) => handleNodeClick(node as NodeData)}
+                                onLinkClick={(edge: any) => handleEdgeClick(edge as EdgeData)}
+                                onNodeHover={(node: any) => {
                                     if (node) {
                                         // Could add tooltip or highlight effect here
                                         console.log('Hovering over node:', node.label, 'Type:', node.nodeType)
                                     }
                                 }}
-                                cooldownTicks={150}
-                                d3AlphaDecay={0.03}
-                                d3VelocityDecay={0.4}
-                                d3AlphaMin={0.2}
-                                d3AlphaTarget={0.4}
+                                cooldownTicks={300}
+                                d3AlphaDecay={0.01}
+                                d3VelocityDecay={0.2}
+                                d3AlphaMin={0.1}
                                 enableZoomInteraction={true}
                                 enablePanInteraction={true}
                                 enableNodeDrag={true}
                                 linkDirectionalArrowLength={6}
                                 linkDirectionalArrowRelPos={1}
                                 linkCurvature={0.1}
-                                linkDirectionalArrowColor={(link: EdgeData) => link.color}
-                                nodePointerAreaPaint={(node: NodeData, color: string, ctx: CanvasRenderingContext2D) => {
+                                linkDirectionalArrowColor={(link: any) => link.color}
+                                nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
                                     // This ensures the clickable area matches the visual node
                                     const nodeSize = node.size || 5
                                     ctx.fillStyle = color
@@ -650,86 +805,6 @@ export function GraphVisualization({
                 </CardContent>
             </Card>
 
-            {/* Node/Edge Details */}
-            {(selectedNode || selectedEdge) && (
-                <Card>
-                    <CardHeader>
-                        <CardTitle>
-                            {selectedNode ? 'Node Details' : 'Edge Details'}
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        {selectedNode && (
-                            <div className="space-y-2">
-                                <div className="flex items-center space-x-2">
-                                    <Badge variant="outline" className="capitalize">
-                                        {selectedNode.nodeType}
-                                    </Badge>
-                                    <span className="font-medium">{selectedNode.label}</span>
-                                    <div className="flex items-center space-x-1">
-                                        <div
-                                            className="w-3 h-3 rounded-full"
-                                            style={{ backgroundColor: selectedNode.color }}
-                                        />
-                                        <span className="text-xs text-gray-500">
-                                            Size: {Math.round(selectedNode.size || 5)}px
-                                        </span>
-                                    </div>
-                                </div>
-
-                                {/* Importance indicators */}
-                                <div className="flex flex-wrap gap-2">
-                                    {selectedNode.properties?.verified && (
-                                        <Badge variant="secondary" className="text-xs">✓ Verified</Badge>
-                                    )}
-                                    {selectedNode.properties?.confidence && selectedNode.properties.confidence > 0.8 && (
-                                        <Badge variant="secondary" className="text-xs">High Confidence</Badge>
-                                    )}
-                                    {selectedNode.properties?.engagement_rate && selectedNode.properties.engagement_rate > 0.1 && (
-                                        <Badge variant="secondary" className="text-xs">High Engagement</Badge>
-                                    )}
-                                    {selectedNode.properties?.follower_count && selectedNode.properties.follower_count > 10000 && (
-                                        <Badge variant="secondary" className="text-xs">Large Following</Badge>
-                                    )}
-                                </div>
-
-                                {selectedNode.properties && Object.keys(selectedNode.properties).length > 0 && (
-                                    <div className="text-sm text-gray-600">
-                                        <div className="font-medium mb-1">Properties:</div>
-                                        {Object.entries(selectedNode.properties).map(([key, value]) => (
-                                            <div key={key} className="flex justify-between">
-                                                <span className="capitalize">{key.replace('_', ' ')}:</span>
-                                                <span>{String(value)}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {selectedEdge && (
-                            <div className="space-y-2">
-                                <div className="flex items-center space-x-2">
-                                    <Badge variant="outline" className="capitalize">
-                                        {selectedEdge.edgeType}
-                                    </Badge>
-                                    <span className="font-medium">Weight: {selectedEdge.weight}</span>
-                                </div>
-                                {selectedEdge.properties && Object.keys(selectedEdge.properties).length > 0 && (
-                                    <div className="text-sm text-gray-600">
-                                        <div className="font-medium mb-1">Properties:</div>
-                                        {Object.entries(selectedEdge.properties).map(([key, value]) => (
-                                            <div key={key} className="flex justify-between">
-                                                <span className="capitalize">{key.replace('_', ' ')}:</span>
-                                                <span>{String(value)}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-            )}
         </div>
     )
 }

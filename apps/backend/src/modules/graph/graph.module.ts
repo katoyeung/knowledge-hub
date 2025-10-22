@@ -5,6 +5,9 @@ import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { GraphNode } from './entities/graph-node.entity';
 import { GraphEdge } from './entities/graph-edge.entity';
+import { PredefinedEntity } from './entities/predefined-entity.entity';
+import { EntityAlias } from './entities/entity-alias.entity';
+import { EntityNormalizationLog } from './entities/entity-normalization-log.entity';
 import { Dataset } from '../dataset/entities/dataset.entity';
 import { Document } from '../dataset/entities/document.entity';
 import { DocumentSegment } from '../dataset/entities/document-segment.entity';
@@ -19,8 +22,15 @@ import { GraphService } from './services/graph.service';
 import { GraphExtractionService } from './services/graph-extraction.service';
 import { GraphQueryService } from './services/graph-query.service';
 import { BrandComparisonService } from './services/brand-comparison.service';
+import { GraphPromptSelectorService } from './services/graph-prompt-selector.service';
+import { EntityDictionaryService } from './services/entity-dictionary.service';
+import { HybridExtractionService } from './services/hybrid-extraction.service';
+import { EntityNormalizationService } from './services/entity-normalization.service';
+import { EntityLearningService } from './services/entity-learning.service';
 import { GraphController } from './controllers/graph.controller';
 import { BrandComparisonController } from './controllers/brand-comparison.controller';
+import { EntityDictionaryController } from './controllers/entity-dictionary.controller';
+import { EntityNormalizationController } from './controllers/entity-normalization.controller';
 import { AiProviderService } from '../ai-provider/services/ai-provider.service';
 import { PromptService } from '../prompts/services/prompt.service';
 import { LLMClientFactory } from '../ai-provider/services/llm-client-factory.service';
@@ -41,6 +51,9 @@ import { NotificationModule } from '../notification/notification.module';
     TypeOrmModule.forFeature([
       GraphNode,
       GraphEdge,
+      PredefinedEntity,
+      EntityAlias,
+      EntityNormalizationLog,
       Dataset,
       Document,
       DocumentSegment,
@@ -71,6 +84,11 @@ import { NotificationModule } from '../notification/notification.module';
     GraphExtractionService,
     GraphQueryService,
     BrandComparisonService,
+    GraphPromptSelectorService,
+    EntityDictionaryService,
+    HybridExtractionService,
+    EntityNormalizationService,
+    EntityLearningService,
     AiProviderService,
     PromptService,
     LLMClientFactory,
@@ -78,12 +96,21 @@ import { NotificationModule } from '../notification/notification.module';
     EventBusService,
     DetectorService,
   ],
-  controllers: [GraphController, BrandComparisonController],
+  controllers: [
+    GraphController,
+    BrandComparisonController,
+    EntityDictionaryController,
+    EntityNormalizationController,
+  ],
   exports: [
     GraphService,
     GraphExtractionService,
     GraphQueryService,
     BrandComparisonService,
+    EntityDictionaryService,
+    HybridExtractionService,
+    EntityNormalizationService,
+    EntityLearningService,
   ],
 })
 export class GraphModule {}

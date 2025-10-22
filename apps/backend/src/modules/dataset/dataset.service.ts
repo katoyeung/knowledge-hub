@@ -209,7 +209,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     );
 
     let deletedCount = 0;
-    let maxIterations = 20; // Increased limit for complex hierarchies
+    const maxIterations = 20; // Increased limit for complex hierarchies
     let iteration = 0;
 
     while (iteration < maxIterations) {

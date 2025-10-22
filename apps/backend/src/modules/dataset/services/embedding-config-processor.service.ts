@@ -181,7 +181,6 @@ export class EmbeddingConfigProcessorService {
       );
     }
 
-
     return {
       isValid: errors.length === 0,
       errors,

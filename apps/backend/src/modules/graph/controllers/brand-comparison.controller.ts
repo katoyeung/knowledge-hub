@@ -25,7 +25,7 @@ import {
 @ApiTags('Brand Comparison')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('api/brand-comparison')
+@Controller('brand-comparison')
 export class BrandComparisonController {
   constructor(
     private readonly brandComparisonService: BrandComparisonService,

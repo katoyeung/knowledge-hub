@@ -1654,7 +1654,7 @@ async function testRealTimeNotifications(
   console.log('📡 Testing real-time notifications...');
 
   const notifications: any[] = [];
-  let eventSource: EventSource | null = null;
+  const eventSource: EventSource | null = null;
 
   try {
     // Connect to notification stream

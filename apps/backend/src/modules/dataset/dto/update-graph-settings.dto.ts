@@ -26,4 +26,3 @@ export class UpdateGraphSettingsDto {
   @Max(2, { message: 'Temperature must not exceed 2' })
   temperature?: number;
 }
-

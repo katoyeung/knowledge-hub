@@ -54,6 +54,16 @@ export enum EventTypes {
   DOCUMENT_NER_STARTED = 'document.ner.started',
   DOCUMENT_NER_COMPLETED = 'document.ner.completed',
   DOCUMENT_NER_FAILED = 'document.ner.failed',
+
+  // Entity Learning Events
+  ENTITY_LEARNING_STARTED = 'entity.learning.started',
+  ENTITY_LEARNING_COMPLETED = 'entity.learning.completed',
+  ENTITY_LEARNING_FAILED = 'entity.learning.failed',
+
+  // Entity Normalization Events
+  ENTITY_NORMALIZATION_STARTED = 'entity.normalization.started',
+  ENTITY_NORMALIZATION_COMPLETED = 'entity.normalization.completed',
+  ENTITY_NORMALIZATION_FAILED = 'entity.normalization.failed',
 }
 
 export type EventType = (typeof EventTypes)[keyof typeof EventTypes];

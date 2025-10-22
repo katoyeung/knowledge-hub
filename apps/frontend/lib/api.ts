@@ -31,7 +31,7 @@ export interface CsvUploadConfig {
 
 // Create axios instance with base configuration
 const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api",
   timeout: 300000, // Increased timeout to 5 minutes for graph extraction operations
   headers: {
     "Content-Type": "application/json",
@@ -1463,7 +1463,7 @@ export interface GraphNode {
   datasetId: string;
   documentId: string;
   segmentId?: string;
-  nodeType:
+  type:
     | "author"
     | "brand"
     | "topic"
@@ -1499,7 +1499,7 @@ export interface GraphEdge {
   datasetId: string;
   sourceNodeId: string;
   targetNodeId: string;
-  edgeType:
+  type:
     | "mentions"
     | "sentiment"
     | "interacts_with"
@@ -1695,12 +1695,9 @@ export const graphApi = {
     datasetId: string,
     query?: GraphQuery
   ): Promise<GraphData> => {
-    const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/graph`,
-      {
-        params: query,
-      }
-    );
+    const response = await apiClient.get(`/graph/datasets/${datasetId}/graph`, {
+      params: query,
+    });
     return response.data.data;
   },
 
@@ -1714,12 +1711,9 @@ export const graphApi = {
     page: number;
     limit: number;
   }> => {
-    const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/nodes`,
-      {
-        params: query,
-      }
-    );
+    const response = await apiClient.get(`/graph/datasets/${datasetId}/nodes`, {
+      params: query,
+    });
     return response.data;
   },
 
@@ -1733,12 +1727,9 @@ export const graphApi = {
     page: number;
     limit: number;
   }> => {
-    const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/edges`,
-      {
-        params: query,
-      }
-    );
+    const response = await apiClient.get(`/graph/datasets/${datasetId}/edges`, {
+      params: query,
+    });
     return response.data;
   },
 
@@ -1753,12 +1744,9 @@ export const graphApi = {
     edgeTypeDistribution: Array<{ type: string; count: number }>;
     topBrands: Array<{ brand: string; mentionCount: number }>;
   }> => {
-    const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/stats`,
-      {
-        params: query,
-      }
-    );
+    const response = await apiClient.get(`/graph/datasets/${datasetId}/stats`, {
+      params: query,
+    });
     return response.data.data;
   },
 
@@ -1769,9 +1757,7 @@ export const graphApi = {
     nodes: GraphNode[];
     edges: GraphEdge[];
   }> => {
-    const response = await apiClient.get(
-      `/api/graph/segments/${segmentId}/graph`
-    );
+    const response = await apiClient.get(`/graph/segments/${segmentId}/graph`);
     return response.data.data;
   },
 
@@ -1781,7 +1767,7 @@ export const graphApi = {
     config: GraphExtractionConfig
   ): Promise<{ success: boolean; message: string; jobCount: number }> => {
     const response = await apiClient.post(
-      `/api/graph/datasets/${datasetId}/extract`,
+      `/graph/datasets/${datasetId}/extract`,
       config
     );
     return response.data;
@@ -1793,7 +1779,7 @@ export const graphApi = {
     config: GraphExtractionConfig
   ): Promise<{ success: boolean; message: string; documentId: string }> => {
     const response = await apiClient.post(
-      `/api/graph/documents/${documentId}/extract`,
+      `/graph/documents/${documentId}/extract`,
       config
     );
     return response.data;
@@ -1813,7 +1799,7 @@ export const graphApi = {
     edges?: GraphEdge[];
   }> => {
     const response = await apiClient.post(
-      `/api/graph/documents/${documentId}/segments/extract`,
+      `/graph/documents/${documentId}/segments/extract`,
       {
         segmentIds,
         ...config,
@@ -1824,13 +1810,13 @@ export const graphApi = {
 
   // Get a specific node
   getNode: async (nodeId: string): Promise<GraphNode> => {
-    const response = await apiClient.get(`/api/graph/nodes/${nodeId}`);
+    const response = await apiClient.get(`/graph/nodes/${nodeId}`);
     return response.data.data;
   },
 
   // Get a specific edge
   getEdge: async (edgeId: string): Promise<GraphEdge> => {
-    const response = await apiClient.get(`/api/graph/edges/${edgeId}`);
+    const response = await apiClient.get(`/graph/edges/${edgeId}`);
     return response.data.data;
   },
 
@@ -1842,7 +1828,7 @@ export const graphApi = {
     nodeTypes?: string[]
   ): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> => {
     const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/nodes/${nodeId}/neighbors`,
+      `/graph/datasets/${datasetId}/nodes/${nodeId}/neighbors`,
       {
         params: { depth, nodeTypes: nodeTypes?.join(",") },
       }
@@ -1862,7 +1848,7 @@ export const graphApi = {
     edges: GraphEdge[];
   } | null> => {
     const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/shortest-path/${sourceId}/${targetId}`,
+      `/graph/datasets/${datasetId}/shortest-path/${sourceId}/${targetId}`,
       {
         params: { maxDepth },
       }
@@ -1884,7 +1870,7 @@ export const graphApi = {
     modularity: number;
   }> => {
     const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/communities`,
+      `/graph/datasets/${datasetId}/communities`,
       {
         params: { minSize },
       }
@@ -1899,7 +1885,7 @@ export const graphApi = {
     limit?: number
   ): Promise<Array<{ node: GraphNode; centrality: number; rank: number }>> => {
     const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/centrality`,
+      `/graph/datasets/${datasetId}/centrality`,
       {
         params: { type, limit },
       }
@@ -1915,7 +1901,7 @@ export const graphApi = {
     limit?: number
   ): Promise<Array<{ node: GraphNode; centrality: number; rank: number }>> => {
     const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/influential-nodes`,
+      `/graph/datasets/${datasetId}/influential-nodes`,
       {
         params: { nodeType, minConnections, limit },
       }
@@ -1929,7 +1915,7 @@ export const graphApi = {
     minBetweenness?: number
   ): Promise<Array<{ node: GraphNode; centrality: number; rank: number }>> => {
     const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/bridge-nodes`,
+      `/graph/datasets/${datasetId}/bridge-nodes`,
       {
         params: { minBetweenness },
       }
@@ -1942,7 +1928,7 @@ export const graphApi = {
     datasetId: string
   ): Promise<{ density: number; averagePathLength: number }> => {
     const response = await apiClient.get(
-      `/api/graph/datasets/${datasetId}/graph-metrics`
+      `/graph/datasets/${datasetId}/graph-metrics`
     );
     return response.data.data;
   },
@@ -1951,7 +1937,7 @@ export const graphApi = {
   deleteGraphData: async (
     datasetId: string
   ): Promise<{ success: boolean; message: string }> => {
-    const response = await apiClient.delete(`/api/graph/datasets/${datasetId}`);
+    const response = await apiClient.delete(`/graph/datasets/${datasetId}`);
     return response.data;
   },
 
@@ -1959,8 +1945,250 @@ export const graphApi = {
   clearSegmentGraph: async (
     segmentId: string
   ): Promise<{ success: boolean; message: string }> => {
-    const response = await apiClient.delete(`/api/graph/segments/${segmentId}`);
+    const response = await apiClient.delete(`/graph/segments/${segmentId}`);
     return response.data;
+  },
+
+  // Entity Dictionary APIs
+  entityDictionary: {
+    // Get entities with pagination and filters
+    getEntities: async (
+      datasetId: string,
+      params?: {
+        entityType?: string;
+        searchTerm?: string;
+        source?: string;
+        limit?: number;
+        offset?: number;
+      }
+    ) => {
+      const response = await apiClient.get(
+        `/graph/datasets/${datasetId}/entities`,
+        { params }
+      );
+      return response.data;
+    },
+
+    // Get entity statistics
+    getStatistics: async (datasetId: string) => {
+      const response = await apiClient.get(
+        `/graph/datasets/${datasetId}/entities/statistics`
+      );
+      return response.data;
+    },
+
+    // Get entity suggestions
+    getSuggestions: async (datasetId: string) => {
+      const response = await apiClient.get(
+        `/graph/datasets/${datasetId}/entities/suggestions`
+      );
+      return response.data;
+    },
+
+    // Create entity
+    createEntity: async (
+      datasetId: string,
+      data: {
+        entityType: string;
+        canonicalName: string;
+        confidenceScore?: number;
+        source?: string;
+        metadata?: any;
+        aliases?: string[];
+      }
+    ) => {
+      const response = await apiClient.post(
+        `/graph/datasets/${datasetId}/entities`,
+        data
+      );
+      return response.data;
+    },
+
+    // Update entity
+    updateEntity: async (
+      datasetId: string,
+      entityId: string,
+      data: {
+        entityType?: string;
+        canonicalName?: string;
+        confidenceScore?: number;
+        source?: string;
+        metadata?: any;
+        aliases?: string[];
+      }
+    ) => {
+      const response = await apiClient.put(
+        `/graph/datasets/${datasetId}/entities/${entityId}`,
+        data
+      );
+      return response.data;
+    },
+
+    // Delete entity
+    deleteEntity: async (datasetId: string, entityId: string) => {
+      const response = await apiClient.delete(
+        `/graph/datasets/${datasetId}/entities/${entityId}`
+      );
+      return response.data;
+    },
+
+    // Bulk import entities
+    bulkImport: async (
+      datasetId: string,
+      data: {
+        entities: Array<{
+          entityType: string;
+          canonicalName: string;
+          description?: string;
+          category?: string;
+          tags?: string[];
+          aliases?: string[];
+          metadata?: any;
+        }>;
+        source?: string;
+        options?: {
+          skipDuplicates?: boolean;
+          updateExisting?: boolean;
+          defaultConfidence?: number;
+        };
+      }
+    ) => {
+      const response = await apiClient.post(
+        `/graph/datasets/${datasetId}/entities/bulk-import`,
+        data
+      );
+      return response.data;
+    },
+
+    // Export entities
+    exportEntities: async (datasetId: string) => {
+      const response = await apiClient.get(
+        `/graph/datasets/${datasetId}/entities/export`
+      );
+      return response.data;
+    },
+
+    // Auto-discover entities from existing graph
+    autoDiscover: async (datasetId: string) => {
+      const response = await apiClient.post(
+        `/graph/datasets/${datasetId}/entities/auto-discover`
+      );
+      return response.data;
+    },
+
+    // Discover aliases
+    discoverAliases: async (datasetId: string) => {
+      const response = await apiClient.post(
+        `/graph/datasets/${datasetId}/entities/discover-aliases`
+      );
+      return response.data;
+    },
+  },
+
+  // Entity Normalization APIs
+  entityNormalization: {
+    // Trigger normalization
+    normalize: async (
+      datasetId: string,
+      data: {
+        nodeIds?: string[];
+        entityType?: string;
+        similarityThreshold?: number;
+        method?: string;
+        confidenceThreshold?: number;
+        keyNodeId?: string;
+      }
+    ) => {
+      const response = await apiClient.post(
+        `/graph/datasets/${datasetId}/normalize`,
+        data
+      );
+      return response.data;
+    },
+
+    // Normalize specific node
+    normalizeNode: async (
+      nodeId: string,
+      data: {
+        datasetId: string;
+        threshold?: number;
+      }
+    ) => {
+      const response = await apiClient.post(
+        `/graph/nodes/${nodeId}/normalize`,
+        data
+      );
+      return response.data;
+    },
+
+    // Find duplicates
+    findDuplicates: async (
+      datasetId: string,
+      data: {
+        nodeType?: string;
+        threshold?: number;
+      }
+    ) => {
+      const response = await apiClient.post(
+        `/graph/datasets/${datasetId}/find-duplicates`,
+        data
+      );
+      return response.data;
+    },
+
+    // Merge nodes
+    mergeNodes: async (
+      datasetId: string,
+      data: {
+        sourceIds: string[];
+        targetId: string;
+      }
+    ) => {
+      const response = await apiClient.post(
+        `/graph/datasets/${datasetId}/merge-nodes`,
+        data
+      );
+      return response.data;
+    },
+
+    // Schedule normalization job
+    scheduleNormalization: async (
+      datasetId: string,
+      data: {
+        nodeTypes?: string[];
+        similarityThreshold?: number;
+        batchSize?: number;
+      }
+    ) => {
+      const response = await apiClient.post(
+        `/graph/datasets/${datasetId}/schedule-normalization`,
+        data
+      );
+      return response.data;
+    },
+
+    // Get normalization logs
+    getLogs: async (
+      datasetId: string,
+      params?: {
+        limit?: number;
+        offset?: number;
+      }
+    ) => {
+      const response = await apiClient.get(
+        `/graph/datasets/${datasetId}/normalization-logs`,
+        { params }
+      );
+      return response.data;
+    },
+
+    // Get normalization statistics
+    getStats: async (datasetId: string) => {
+      const response = await apiClient.get(
+        `/graph/datasets/${datasetId}/normalization-stats`
+      );
+      return response.data;
+    },
   },
 };
 

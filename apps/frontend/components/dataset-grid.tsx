@@ -64,7 +64,8 @@ export function DatasetGrid({ onCreateDataset, onDatasetClick }: DatasetGridProp
     // Load datasets on mount and when search query changes
     useEffect(() => {
         loadDatasets(currentPage, searchQuery)
-    }, [loadDatasets, currentPage, searchQuery])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentPage, searchQuery])
 
     // Handle search input change
     const handleSearch = useCallback((query: string) => {
@@ -81,8 +82,7 @@ export function DatasetGrid({ onCreateDataset, onDatasetClick }: DatasetGridProp
     // Handle page change
     const handlePageChange = useCallback((page: number) => {
         setCurrentPage(page)
-        loadDatasets(page, searchQuery)
-    }, [loadDatasets, searchQuery])
+    }, [])
 
     const handleEditDataset = async (id: string, newName: string) => {
         try {
@@ -102,8 +102,8 @@ export function DatasetGrid({ onCreateDataset, onDatasetClick }: DatasetGridProp
         try {
             await datasetApi.delete(id)
             setDatasets(prev => prev.filter(dataset => dataset.id !== id))
-            // Reload current page to refresh pagination
-            loadDatasets(currentPage, searchQuery)
+            // Update total count to reflect deletion
+            setTotalCount(prev => Math.max(0, prev - 1))
         } catch (err) {
             console.error('Failed to delete dataset:', err)
             throw err
