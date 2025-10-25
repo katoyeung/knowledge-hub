@@ -8,6 +8,9 @@ export enum NotificationType {
   DOCUMENT_PROCESSING_UPDATE = 'DOCUMENT_PROCESSING_UPDATE',
   DATASET_UPDATE = 'DATASET_UPDATE',
   GRAPH_EXTRACTION_UPDATE = 'GRAPH_EXTRACTION_UPDATE',
+  WORKFLOW_EXECUTION_UPDATE = 'WORKFLOW_EXECUTION_UPDATE',
+  WORKFLOW_EXECUTION_COMPLETED = 'WORKFLOW_EXECUTION_COMPLETED',
+  WORKFLOW_EXECUTION_FAILED = 'WORKFLOW_EXECUTION_FAILED',
 }
 
 export interface NotificationMessage {
@@ -80,6 +83,42 @@ export class NotificationService {
       datasetId,
       documentId,
       ...data,
+    });
+  }
+
+  sendWorkflowExecutionUpdate(
+    executionId: string,
+    workflowId: string,
+    data: any,
+  ) {
+    this.sendNotification(NotificationType.WORKFLOW_EXECUTION_UPDATE, {
+      executionId,
+      workflowId,
+      ...data,
+    });
+  }
+
+  sendWorkflowExecutionCompleted(
+    executionId: string,
+    workflowId: string,
+    data: any,
+  ) {
+    this.sendNotification(NotificationType.WORKFLOW_EXECUTION_COMPLETED, {
+      executionId,
+      workflowId,
+      ...data,
+    });
+  }
+
+  sendWorkflowExecutionFailed(
+    executionId: string,
+    workflowId: string,
+    error: string,
+  ) {
+    this.sendNotification(NotificationType.WORKFLOW_EXECUTION_FAILED, {
+      executionId,
+      workflowId,
+      error,
     });
   }
 }

@@ -1,0 +1,411 @@
+{
+  "name": "Advanced Document Processing Workflow",
+  "description": "A comprehensive workflow for processing documents with AI enhancement, filtering, and knowledge graph extraction",
+  "datasetId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+  "isTemplate": false,
+  "isActive": true,
+  "tags": "document-processing,ai,workflow",
+  "nodes": [
+    {
+      "id": "data-source-1",
+      "type": "data_source",
+      "name": "Load Document Segments",
+      "description": "Load segments from the specified dataset",
+      "position": { "x": 100, "y": 200 },
+      "config": {
+        "sourceType": "dataset",
+        "datasetId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+        "filters": {
+          "status": "active",
+          "contentLength": { "min": 100 }
+        }
+      },
+      "inputSources": [
+        {
+          "id": "ds-input-1",
+          "name": "Dataset Input",
+          "type": "dataset",
+          "sourceId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+          "format": "structured",
+          "filters": {
+            "status": "active",
+            "contentLength": { "min": 100 }
+          }
+        }
+      ],
+      "outputFormats": [
+        {
+          "id": "ds-output-1",
+          "name": "Document Segments",
+          "type": "segment",
+          "format": "structured",
+          "schema": {
+            "id": "string",
+            "content": "string",
+            "position": "number",
+            "documentId": "string"
+          }
+        }
+      ],
+      "executionMode": "consecutive",
+      "dependencies": [],
+      "enabled": true,
+      "timeout": 300
+    },
+    {
+      "id": "dedup-1",
+      "type": "duplicate_segment",
+      "name": "Remove Duplicates",
+      "description": "Remove duplicate segments based on content hash",
+      "position": { "x": 300, "y": 200 },
+      "config": {
+        "method": "content_hash",
+        "action": "remove",
+        "caseSensitive": false,
+        "normalizeWhitespace": true
+      },
+      "inputSources": [
+        {
+          "id": "dedup-input-1",
+          "name": "Segments Input",
+          "type": "previous_node",
+          "nodeId": "data-source-1",
+          "format": "structured",
+          "mapping": {
+            "content": "content",
+            "id": "id"
+          }
+        }
+      ],
+      "outputFormats": [
+        {
+          "id": "dedup-output-1",
+          "name": "Deduplicated Segments",
+          "type": "segment",
+          "format": "structured"
+        }
+      ],
+      "executionMode": "consecutive",
+      "dependencies": ["data-source-1"],
+      "enabled": true,
+      "timeout": 600
+    },
+    {
+      "id": "filter-1",
+      "type": "rule_based_filter",
+      "name": "Content Filter",
+      "description": "Filter out advertisements and low-quality content",
+      "position": { "x": 500, "y": 200 },
+      "config": {
+        "rules": [
+          {
+            "id": "ad-filter",
+            "name": "Advertisement Filter",
+            "pattern": "\\[AD\\]|\\[Advertisement\\]|sponsored content",
+            "action": "remove",
+            "flags": "i",
+            "enabled": true
+          },
+          {
+            "id": "short-content-filter",
+            "name": "Short Content Filter",
+            "pattern": "^.{1,20}$",
+            "action": "remove",
+            "enabled": true
+          },
+          {
+            "id": "quality-filter",
+            "name": "Quality Content Filter",
+            "pattern": ".*(high quality|excellent|outstanding).*",
+            "action": "keep",
+            "flags": "i",
+            "enabled": true
+          }
+        ],
+        "defaultAction": "keep",
+        "caseSensitive": false,
+        "minContentLength": 50,
+        "maxContentLength": 10000
+      },
+      "inputSources": [
+        {
+          "id": "filter-input-1",
+          "name": "Segments Input",
+          "type": "previous_node",
+          "nodeId": "dedup-1",
+          "format": "structured"
+        }
+      ],
+      "outputFormats": [
+        {
+          "id": "filter-output-1",
+          "name": "Filtered Segments",
+          "type": "segment",
+          "format": "structured"
+        }
+      ],
+      "executionMode": "consecutive",
+      "dependencies": ["dedup-1"],
+      "enabled": true,
+      "timeout": 300
+    },
+    {
+      "id": "ai-summary-1",
+      "type": "ai_summarization",
+      "name": "AI Summarization",
+      "description": "Summarize long content using AI",
+      "position": { "x": 700, "y": 200 },
+      "config": {
+        "aiProviderId": "openai-provider-123",
+        "model": "gpt-3.5-turbo",
+        "promptTemplate": "Summarize the following content in 2-3 sentences, focusing on key points:\n\n{{content}}",
+        "temperature": 0.5,
+        "maxTokens": 200,
+        "minLength": 500,
+        "maxLength": 2000,
+        "batchSize": 5,
+        "timeout": 30000
+      },
+      "inputSources": [
+        {
+          "id": "ai-input-1",
+          "name": "Segments Input",
+          "type": "previous_node",
+          "nodeId": "filter-1",
+          "format": "structured",
+          "filters": {
+            "contentLength": { "min": 500 }
+          }
+        }
+      ],
+      "outputFormats": [
+        {
+          "id": "ai-output-1",
+          "name": "Summarized Segments",
+          "type": "segment",
+          "format": "structured",
+          "schema": {
+            "id": "string",
+            "content": "string",
+            "summary": "string",
+            "originalLength": "number",
+            "summaryLength": "number"
+          }
+        }
+      ],
+      "executionMode": "parallel",
+      "dependencies": ["filter-1"],
+      "enabled": true,
+      "timeout": 1800,
+      "retryCount": 2
+    },
+    {
+      "id": "embedding-1",
+      "type": "embedding_generation",
+      "name": "Generate Embeddings",
+      "description": "Generate vector embeddings for all segments",
+      "position": { "x": 900, "y": 200 },
+      "config": {
+        "embeddingModel": "bge-m3",
+        "provider": "local",
+        "customModelName": "BAAI/bge-m3",
+        "batchSize": 10,
+        "useWorkerPool": true,
+        "skipExisting": true,
+        "dimensions": 1024
+      },
+      "inputSources": [
+        {
+          "id": "embed-input-1",
+          "name": "Segments Input",
+          "type": "previous_node",
+          "nodeId": "ai-summary-1",
+          "format": "structured"
+        }
+      ],
+      "outputFormats": [
+        {
+          "id": "embed-output-1",
+          "name": "Embedded Segments",
+          "type": "segment",
+          "format": "structured",
+          "schema": {
+            "id": "string",
+            "content": "string",
+            "embedding": "vector",
+            "embeddingId": "string"
+          }
+        }
+      ],
+      "executionMode": "parallel",
+      "dependencies": ["ai-summary-1"],
+      "enabled": true,
+      "timeout": 3600
+    },
+    {
+      "id": "graph-extract-1",
+      "type": "graph_extraction",
+      "name": "Extract Knowledge Graph",
+      "description": "Extract entities and relationships for knowledge graph",
+      "position": { "x": 1100, "y": 200 },
+      "config": {
+        "promptId": "graph-extraction-prompt-123",
+        "aiProviderId": "ollama-provider-456",
+        "model": "llama3",
+        "temperature": 0.3,
+        "enableDeduplication": true,
+        "batchSize": 3,
+        "confidenceThreshold": 0.7,
+        "useHybridExtraction": true,
+        "entityMatchingThreshold": 0.8,
+        "autoNormalization": true,
+        "continuousLearning": false
+      },
+      "inputSources": [
+        {
+          "id": "graph-input-1",
+          "name": "Segments Input",
+          "type": "previous_node",
+          "nodeId": "embedding-1",
+          "format": "structured"
+        }
+      ],
+      "outputFormats": [
+        {
+          "id": "graph-output-1",
+          "name": "Graph Data",
+          "type": "dataset",
+          "format": "structured",
+          "destination": "knowledge_graph_dataset",
+          "schema": {
+            "nodes": "array",
+            "edges": "array",
+            "metadata": "object"
+          }
+        }
+      ],
+      "executionMode": "consecutive",
+      "dependencies": ["embedding-1"],
+      "enabled": true,
+      "timeout": 2400
+    },
+    {
+      "id": "output-1",
+      "type": "data_sink",
+      "name": "Save Results",
+      "description": "Save processed data to final destination",
+      "position": { "x": 1300, "y": 200 },
+      "config": {
+        "destinationType": "dataset",
+        "datasetId": "processed_documents_123",
+        "format": "structured",
+        "includeMetadata": true,
+        "compression": "gzip"
+      },
+      "inputSources": [
+        {
+          "id": "output-input-1",
+          "name": "Processed Data",
+          "type": "previous_node",
+          "nodeId": "graph-extract-1",
+          "format": "structured"
+        }
+      ],
+      "outputFormats": [
+        {
+          "id": "output-output-1",
+          "name": "Final Dataset",
+          "type": "dataset",
+          "format": "structured",
+          "destination": "processed_documents_123"
+        }
+      ],
+      "executionMode": "consecutive",
+      "dependencies": ["graph-extract-1"],
+      "enabled": true,
+      "timeout": 600
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn-1",
+      "sourceNodeId": "data-source-1",
+      "targetNodeId": "dedup-1",
+      "sourceOutputId": "ds-output-1",
+      "targetInputId": "dedup-input-1",
+      "dataMapping": {
+        "content": "content",
+        "id": "id"
+      }
+    },
+    {
+      "id": "conn-2",
+      "sourceNodeId": "dedup-1",
+      "targetNodeId": "filter-1",
+      "sourceOutputId": "dedup-output-1",
+      "targetInputId": "filter-input-1"
+    },
+    {
+      "id": "conn-3",
+      "sourceNodeId": "filter-1",
+      "targetNodeId": "ai-summary-1",
+      "sourceOutputId": "filter-output-1",
+      "targetInputId": "ai-input-1",
+      "transform": {
+        "type": "filter",
+        "config": {
+          "condition": "content.length > 500"
+        }
+      }
+    },
+    {
+      "id": "conn-4",
+      "sourceNodeId": "ai-summary-1",
+      "targetNodeId": "embedding-1",
+      "sourceOutputId": "ai-output-1",
+      "targetInputId": "embed-input-1"
+    },
+    {
+      "id": "conn-5",
+      "sourceNodeId": "embedding-1",
+      "targetNodeId": "graph-extract-1",
+      "sourceOutputId": "embed-output-1",
+      "targetInputId": "graph-input-1"
+    },
+    {
+      "id": "conn-6",
+      "sourceNodeId": "graph-extract-1",
+      "targetNodeId": "output-1",
+      "sourceOutputId": "graph-output-1",
+      "targetInputId": "output-input-1"
+    }
+  ],
+  "settings": {
+    "name": "Advanced Document Processing Workflow",
+    "description": "A comprehensive workflow for processing documents with AI enhancement, filtering, and knowledge graph extraction",
+    "executionMode": "hybrid",
+    "maxConcurrency": 5,
+    "errorHandling": "retry",
+    "maxRetries": 3,
+    "timeout": 7200,
+    "dataRetention": 30,
+    "enableSnapshots": true,
+    "snapshotInterval": 30,
+    "enablePreview": true,
+    "notificationSettings": {
+      "onStart": true,
+      "onComplete": true,
+      "onError": true,
+      "onProgress": true
+    }
+  },
+  "metadata": {
+    "version": "1.0.0",
+    "createdBy": "user-123",
+    "lastModifiedBy": "user-123",
+    "category": "document-processing",
+    "complexity": "complex",
+    "estimatedDuration": 3600,
+    "tags": ["ai", "nlp", "knowledge-graph", "document-processing"]
+  }
+}

@@ -23,11 +23,14 @@ import { DocumentParserModule } from '@modules/document-parser/document-parser.m
 import { CsvConnectorModule } from '@modules/csv-connector/csv-connector.module';
 import { ChatModule } from '@modules/chat/chat.module';
 import { GraphModule } from '@modules/graph/graph.module';
+import { PipelineModule } from '@modules/pipeline/pipeline.module';
+import { WorkflowModule } from '@modules/pipeline/workflow.module';
 import { Document } from './modules/dataset/entities/document.entity';
 import { DocumentSegment } from './modules/dataset/entities/document-segment.entity';
 import { QueueSharedModule } from './modules/queue/queue-shared.module';
 import { DocumentJobsModule } from './modules/queue/jobs/document/document-jobs.module';
 import { GraphJobsModule } from './modules/queue/jobs/graph/graph-jobs.module';
+import { JobsModule } from './modules/queue/jobs/jobs.module';
 import { CPUThrottlingService } from './common/services/cpu-throttling.service';
 import { CPUThrottlingInterceptor } from './common/interceptors/cpu-throttling.interceptor';
 
@@ -59,12 +62,15 @@ import { CPUThrottlingInterceptor } from './common/interceptors/cpu-throttling.i
     CsvConnectorModule,
     ChatModule,
     GraphModule,
+    PipelineModule,
+    WorkflowModule,
     NotificationModule,
     QueueSharedModule,
     QueueModule,
     QueueCoreModule,
     DocumentJobsModule,
     GraphJobsModule,
+    JobsModule,
     EventEmitterModule.forRoot(),
     EventModule,
     SchedulerModule,

@@ -33,9 +33,6 @@ import { UpdateDatasetDto } from './dto/update-dataset.dto';
 import { UpdateChatSettingsDto } from './dto/update-chat-settings.dto';
 import { UpdateGraphSettingsDto } from './dto/update-graph-settings.dto';
 import { UploadDocumentDto } from './dto/upload-document.dto';
-import { ParseJsonStringsPipe } from '../../common/pipes/parse-json-strings.pipe';
-import { CreateGraphExtractionConfigDto } from '../graph/dto/create-graph-extraction-config.dto';
-import { GraphExtractionJob } from '../queue/jobs/graph/graph-extraction.job';
 import {
   getEffectiveChunkSize,
   getEffectiveChunkOverlap,
@@ -773,6 +770,78 @@ export class DatasetController implements CrudController<Dataset> {
       throw new BadRequestException(
         `Failed to get graph extraction status: ${error.message}`,
       );
+    }
+  }
+
+  @Get(':id/documents')
+  async getDocumentsByDataset(
+    @Param('id') id: string,
+    @Request() req: any,
+    @Query('q') searchTerm?: string,
+  ) {
+    try {
+      const documents = await this.documentService.findByDatasetId(id);
+
+      let filteredDocuments = documents;
+      if (searchTerm) {
+        filteredDocuments = documents.filter(
+          (doc: any) =>
+            doc.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            doc.description?.toLowerCase().includes(searchTerm.toLowerCase()),
+        );
+      }
+
+      return {
+        success: true,
+        data: filteredDocuments.map((doc: any) => ({
+          id: doc.id,
+          name: doc.name,
+          description: doc.description,
+          status: doc.indexingStatus,
+          createdAt: doc.createdAt,
+          updatedAt: doc.updatedAt,
+        })),
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to get documents: ${error.message}`,
+      );
+    }
+  }
+
+  @Get(':datasetId/documents/:documentId/segments')
+  async getSegmentsByDocument(
+    @Param('datasetId') datasetId: string,
+    @Param('documentId') documentId: string,
+    @Request() req: any,
+    @Query('q') searchTerm?: string,
+  ) {
+    try {
+      const segments =
+        await this.documentSegmentService.findByDocumentId(documentId);
+
+      let filteredSegments = segments;
+      if (searchTerm) {
+        filteredSegments = segments.filter((segment: any) =>
+          segment.content.toLowerCase().includes(searchTerm.toLowerCase()),
+        );
+      }
+
+      return {
+        success: true,
+        data: filteredSegments.map((segment: any) => ({
+          id: segment.id,
+          content:
+            segment.content.substring(0, 200) +
+            (segment.content.length > 200 ? '...' : ''),
+          wordCount: segment.wordCount,
+          tokens: segment.tokens,
+          status: segment.status,
+          createdAt: segment.createdAt,
+        })),
+      };
+    } catch (error) {
+      throw new BadRequestException(`Failed to get segments: ${error.message}`);
     }
   }
 }

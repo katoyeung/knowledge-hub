@@ -64,6 +64,15 @@ export enum EventTypes {
   ENTITY_NORMALIZATION_STARTED = 'entity.normalization.started',
   ENTITY_NORMALIZATION_COMPLETED = 'entity.normalization.completed',
   ENTITY_NORMALIZATION_FAILED = 'entity.normalization.failed',
+
+  // Pipeline Events
+  PIPELINE_EXECUTION_STARTED = 'pipeline.execution.started',
+  PIPELINE_EXECUTION_COMPLETED = 'pipeline.execution.completed',
+  PIPELINE_EXECUTION_FAILED = 'pipeline.execution.failed',
+  PIPELINE_EXECUTION_CANCELLED = 'pipeline.execution.cancelled',
+  PIPELINE_STEP_STARTED = 'pipeline.step.started',
+  PIPELINE_STEP_COMPLETED = 'pipeline.step.completed',
+  PIPELINE_STEP_FAILED = 'pipeline.step.failed',
 }
 
 export type EventType = (typeof EventTypes)[keyof typeof EventTypes];

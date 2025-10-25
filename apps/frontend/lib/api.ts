@@ -2452,4 +2452,10 @@ export const queueApi = {
   },
 };
 
+// Export workflow API
+export { workflowApi } from "./api/workflow";
+
+// Export apiClient as named export for convenience
+export { apiClient };
+
 export default apiClient;

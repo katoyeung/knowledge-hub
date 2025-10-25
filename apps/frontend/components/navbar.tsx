@@ -3,8 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronDown, LogOut, Settings, Bot, FileText } from 'lucide-react'
-// import { Button } from '@/components/ui/simple-button'
+import { ChevronDown, LogOut, Settings, Bot, FileText, Workflow } from 'lucide-react'
 import { authUtil } from '@/lib/auth'
 import type { AuthUser } from '@knowledge-hub/shared-types'
 
@@ -58,6 +57,17 @@ export function Navbar({ onLogout }: NavbarProps) {
                             KH
                         </div>
                         <h1 className="text-2xl font-bold text-gray-900">Knowledge Hub</h1>
+                    </Link>
+                </div>
+
+                {/* Center - Main navigation */}
+                <div className="flex items-center space-x-6">
+                    <Link
+                        href="/workflows"
+                        className="flex items-center space-x-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+                    >
+                        <Workflow className="w-5 h-5 text-gray-600" />
+                        <span className="text-sm font-medium text-gray-700">Workflows</span>
                     </Link>
                 </div>
 

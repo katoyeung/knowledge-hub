@@ -112,6 +112,25 @@ export interface EntityNormalizationEvent extends BaseEvent {
   };
 }
 
+export interface PipelineEvent extends BaseEvent {
+  type:
+    | EventTypes.PIPELINE_EXECUTION_STARTED
+    | EventTypes.PIPELINE_EXECUTION_COMPLETED
+    | EventTypes.PIPELINE_EXECUTION_FAILED
+    | EventTypes.PIPELINE_EXECUTION_CANCELLED
+    | EventTypes.PIPELINE_STEP_STARTED
+    | EventTypes.PIPELINE_STEP_COMPLETED
+    | EventTypes.PIPELINE_STEP_FAILED;
+  payload: {
+    executionId: string;
+    pipelineId?: string;
+    stepId?: string;
+    data?: any;
+    error?: string;
+    userId?: string;
+  };
+}
+
 export type Event =
   | InstrumentEvent
   | MarketDataEvent
@@ -119,4 +138,5 @@ export type Event =
   | SystemEvent
   | DocumentEvent
   | EntityLearningEvent
-  | EntityNormalizationEvent;
+  | EntityNormalizationEvent
+  | PipelineEvent;

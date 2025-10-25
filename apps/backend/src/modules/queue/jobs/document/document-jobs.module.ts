@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
 import { HttpModule } from '@nestjs/axios';
@@ -34,15 +34,41 @@ import { NerProcessingService } from '../../../dataset/services/ner-processing.s
 import { DocumentParserModule } from '../../../document-parser/document-parser.module';
 import { CsvConnectorModule } from '../../../csv-connector/csv-connector.module';
 import { DetectorService } from '../../../../common/services/detector.service';
-import { DatasetModule } from '../../../dataset/dataset.module';
 import { JobDispatcherService } from '../../services/job-dispatcher.service';
 import { QueueManagerService } from '../../services/queue-manager.service';
 import { EventBusService } from '../../../event/services/event-bus.service';
 import { NotificationService } from '../../../notification/notification.service';
+import { WorkflowJob } from '../workflow/workflow.job';
+import { Workflow } from '../../../pipeline/entities/workflow.entity';
+import { WorkflowExecution } from '../../../pipeline/entities/workflow-execution.entity';
+import { WorkflowService } from '../../../pipeline/services/workflow.service';
+import { WorkflowOrchestrator } from '../../../pipeline/services/workflow-orchestrator.service';
+import { WorkflowExecutor } from '../../../pipeline/services/workflow-executor.service';
+import { PipelineStepRegistry } from '../../../pipeline/services/pipeline-step-registry.service';
+import { NodeOutputCacheService } from '../../../pipeline/services/node-output-cache.service';
+import { DuplicateSegmentStep } from '../../../pipeline/steps/duplicate-segment.step';
+import { RuleBasedFilterStep } from '../../../pipeline/steps/rule-based-filter.step';
+import { AiSummarizationStep } from '../../../pipeline/steps/ai-summarization.step';
+import { EmbeddingGenerationStep } from '../../../pipeline/steps/embedding-generation.step';
+import { GraphExtractionStep } from '../../../pipeline/steps/graph-extraction.step';
+import { DataSourceStep } from '../../../pipeline/steps/datasource.step';
+import { DocumentSegmentService } from '../../../dataset/document-segment.service';
+import { DocumentService } from '../../../dataset/document.service';
+import { AiProviderModule } from '../../../ai-provider/ai-provider.module';
+import { PromptsModule } from '../../../prompts/prompts.module';
+import { GraphModule } from '../../../graph/graph.module';
+import { EventModule } from '../../../event/event.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Document, DocumentSegment, Dataset, Embedding]),
+    TypeOrmModule.forFeature([
+      Document,
+      DocumentSegment,
+      Dataset,
+      Embedding,
+      Workflow,
+      WorkflowExecution,
+    ]),
     DocumentParserModule,
     CsvConnectorModule,
     HttpModule,
@@ -51,6 +77,10 @@ import { NotificationService } from '../../../notification/notification.service'
     BullModule.registerQueue({
       name: 'default',
     }),
+    forwardRef(() => AiProviderModule),
+    forwardRef(() => PromptsModule),
+    forwardRef(() => GraphModule),
+    EventModule,
   ],
   providers: [
     ChunkingJob,
@@ -81,8 +111,23 @@ import { NotificationService } from '../../../notification/notification.service'
     LocalLLMClient,
     DashScopeApiClient,
     LocalLLMService,
+    WorkflowJob,
+    // WorkflowJob dependencies
+    WorkflowService,
+    WorkflowOrchestrator,
+    WorkflowExecutor,
+    PipelineStepRegistry,
+    NodeOutputCacheService,
+    DuplicateSegmentStep,
+    RuleBasedFilterStep,
+    AiSummarizationStep,
+    EmbeddingGenerationStep,
+    GraphExtractionStep,
+    DataSourceStep,
+    DocumentSegmentService,
+    DocumentService,
   ],
-  exports: [ChunkingJob, EmbeddingJob, NerJob, WorkerPoolService],
+  exports: [ChunkingJob, EmbeddingJob, NerJob, WorkerPoolService, WorkflowJob],
 })
 export class DocumentJobsModule {
   constructor(
@@ -90,20 +135,27 @@ export class DocumentJobsModule {
     private readonly chunkingJob: ChunkingJob,
     private readonly embeddingJob: EmbeddingJob,
     private readonly nerJob: NerJob,
+    private readonly workflowJob: WorkflowJob,
+    private readonly dataSourceStep: DataSourceStep,
+    private readonly stepRegistry: PipelineStepRegistry,
+    private readonly duplicateSegmentStep: DuplicateSegmentStep,
+    private readonly ruleBasedFilterStep: RuleBasedFilterStep,
+    private readonly aiSummarizationStep: AiSummarizationStep,
+    private readonly embeddingGenerationStep: EmbeddingGenerationStep,
+    private readonly graphExtractionStep: GraphExtractionStep,
   ) {
-    console.log('DocumentJobsModule constructor called');
-    console.log('ChunkingJob jobType:', this.chunkingJob.jobType);
-    console.log('EmbeddingJob jobType:', this.embeddingJob.jobType);
-    console.log('NerJob jobType:', this.nerJob.jobType);
-
     // Register jobs with the registry
     this.jobRegistry.register(this.chunkingJob);
     this.jobRegistry.register(this.embeddingJob);
     this.jobRegistry.register(this.nerJob);
+    this.jobRegistry.register(this.workflowJob);
 
-    console.log(
-      'Jobs registered. Total jobs:',
-      this.jobRegistry.getAllJobs().length,
-    );
+    // Register pipeline steps
+    this.stepRegistry.registerStep(this.duplicateSegmentStep);
+    this.stepRegistry.registerStep(this.ruleBasedFilterStep);
+    this.stepRegistry.registerStep(this.aiSummarizationStep);
+    this.stepRegistry.registerStep(this.embeddingGenerationStep);
+    this.stepRegistry.registerStep(this.graphExtractionStep);
+    this.stepRegistry.registerStep(this.dataSourceStep);
   }
 }

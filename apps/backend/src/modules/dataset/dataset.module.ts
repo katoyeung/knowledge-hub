@@ -124,6 +124,7 @@ import { AiProvider } from '../ai-provider/entities/ai-provider.entity';
     DocumentSegmentService,
     DocumentProcessingService,
     EmbeddingV2Service,
+    EmbeddingProcessingService,
     HybridSearchService,
     EntityExtractionService,
     ModelMappingService,

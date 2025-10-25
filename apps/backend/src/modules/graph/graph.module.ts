@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CacheModule } from '@nestjs/cache-manager';
 import { HttpModule } from '@nestjs/axios';
@@ -68,10 +68,10 @@ import { NotificationModule } from '../notification/notification.module';
     CacheModule.register(),
     HttpModule,
     ConfigModule,
-    DatasetModule,
+    forwardRef(() => DatasetModule),
     UserModule,
     CsvConnectorModule,
-    QueueModule,
+    forwardRef(() => QueueModule),
     EventModule,
     DocumentParserModule,
     NotificationModule,

@@ -1,0 +1,131 @@
+{
+  "name": "Complete Document Processing Pipeline",
+  "description": "A comprehensive pipeline that processes documents through deduplication, filtering, AI summarization, embedding generation, and graph extraction",
+  "steps": [
+    {
+      "id": "dedup-step-1",
+      "type": "duplicate_segment",
+      "name": "Remove Duplicate Segments",
+      "description": "Remove duplicate segments using content hash comparison",
+      "config": {
+        "method": "content_hash",
+        "action": "remove",
+        "caseSensitive": false,
+        "ignoreWhitespace": true,
+        "normalizeText": true
+      },
+      "order": 0,
+      "enabled": true
+    },
+    {
+      "id": "filter-step-1",
+      "type": "rule_based_filter",
+      "name": "Filter Advertisements and Spam",
+      "description": "Remove segments containing advertisements, spam, or irrelevant content",
+      "config": {
+        "rules": [
+          {
+            "id": "ad-filter-1",
+            "name": "Advertisement Filter",
+            "pattern": "\\[AD\\]|\\[Advertisement\\]|\\[Sponsored\\]",
+            "flags": "i",
+            "action": "remove",
+            "description": "Remove segments with advertisement markers",
+            "enabled": true
+          },
+          {
+            "id": "spam-filter-1",
+            "name": "Spam Filter",
+            "pattern": "^(sponsored|promo|discount|sale|offer)",
+            "flags": "i",
+            "action": "remove",
+            "description": "Remove segments starting with promotional keywords",
+            "enabled": true
+          },
+          {
+            "id": "short-content-filter",
+            "name": "Short Content Filter",
+            "pattern": "^.{1,10}$",
+            "action": "remove",
+            "description": "Remove very short segments",
+            "enabled": true
+          }
+        ],
+        "defaultAction": "keep",
+        "caseSensitive": false,
+        "minContentLength": 20,
+        "preserveEmptySegments": false
+      },
+      "order": 1,
+      "enabled": true
+    },
+    {
+      "id": "summarize-step-1",
+      "type": "ai_summarization",
+      "name": "Summarize Long Content",
+      "description": "Use AI to summarize segments that are too long",
+      "config": {
+        "aiProviderId": "openrouter-provider-id",
+        "model": "gpt-4",
+        "maxLength": 500,
+        "minLength": 1000,
+        "condition": "segment.wordCount > 1000",
+        "temperature": 0.7,
+        "preserveOriginal": false,
+        "batchSize": 3,
+        "timeout": 30000
+      },
+      "order": 2,
+      "enabled": true
+    },
+    {
+      "id": "embedding-step-1",
+      "type": "embedding_generation",
+      "name": "Generate Embeddings",
+      "description": "Generate vector embeddings for all segments",
+      "config": {
+        "model": "bge-m3",
+        "provider": "local",
+        "batchSize": 5,
+        "useWorkerPool": true,
+        "maxConcurrency": 3,
+        "skipExisting": true,
+        "updateExisting": false
+      },
+      "order": 3,
+      "enabled": true
+    },
+    {
+      "id": "graph-step-1",
+      "type": "graph_extraction",
+      "name": "Extract Knowledge Graph",
+      "description": "Extract entities and relationships to build knowledge graph",
+      "config": {
+        "promptId": "knowledge-graph-extraction-prompt",
+        "aiProviderId": "openrouter-provider-id",
+        "model": "gpt-4",
+        "temperature": 0.7,
+        "enableDeduplication": true,
+        "batchSize": 10,
+        "confidenceThreshold": 0.7,
+        "extractRelations": true,
+        "extractEntities": true,
+        "entityTypes": ["PERSON", "ORGANIZATION", "LOCATION", "CONCEPT"],
+        "relationTypes": ["RELATED_TO", "PART_OF", "LOCATED_IN", "WORKS_FOR"]
+      },
+      "order": 4,
+      "enabled": true
+    }
+  ],
+  "settings": {
+    "errorHandling": "retry",
+    "maxRetries": 3,
+    "parallelExecution": false,
+    "notifyOnCompletion": true,
+    "timeout": 300000,
+    "retryDelay": 5000
+  },
+  "isActive": true,
+  "isTemplate": true,
+  "tags": "document-processing,ai,embeddings,graph-extraction"
+}
