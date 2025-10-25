@@ -79,6 +79,7 @@
     "nodejieba": "^3.4.4",
     "onnxruntime-node": "^1.22.0-rev",
     "passport": "^0.7.0",
+    "passport-custom": "^1.1.1",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
     "pdf-parse": "^1.1.1",

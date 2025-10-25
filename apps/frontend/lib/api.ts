@@ -5,6 +5,11 @@ import {
   Conversation,
   PaginatedMessagesResponse,
 } from "./types/chat";
+import type {
+  AuthUser,
+  ApiKey,
+  ApiKeyCreateResponse,
+} from "@knowledge-hub/shared-types";
 
 // CSV Connector Types
 export enum CsvConnectorType {
@@ -1477,6 +1482,32 @@ export const userApi = {
   getUserGraphSettings: async (userId: string): Promise<any> => {
     const response = await apiClient.get(`/users/${userId}/graph-settings`);
     return response.data;
+  },
+};
+
+// API Key API functions
+export const apiKeyApi = {
+  // Get all API keys for the current user
+  list: async (): Promise<ApiKey[]> => {
+    const response = await apiClient.get("/api-keys");
+    return response.data;
+  },
+
+  // Create a new API key
+  create: async (name: string): Promise<ApiKeyCreateResponse> => {
+    const response = await apiClient.post("/api-keys", { name });
+    return response.data;
+  },
+
+  // Get a specific API key by ID
+  get: async (id: string): Promise<ApiKey> => {
+    const response = await apiClient.get(`/api-keys/${id}`);
+    return response.data;
+  },
+
+  // Delete an API key
+  delete: async (id: string): Promise<void> => {
+    await apiClient.delete(`/api-keys/${id}`);
   },
 };
 

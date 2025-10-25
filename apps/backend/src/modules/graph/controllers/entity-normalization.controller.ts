@@ -17,13 +17,13 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { JwtOrApiKeyAuthGuard } from '@modules/api-key/guards/jwt-or-api-key.guard';
 import { EntityNormalizationService } from '../services/entity-normalization.service';
 import { NormalizeNodesDto } from '../dto/normalize-nodes.dto';
 
 @ApiTags('Entity Normalization')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtOrApiKeyAuthGuard)
 @Controller('graph')
 export class EntityNormalizationController {
   constructor(

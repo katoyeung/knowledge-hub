@@ -15,7 +15,7 @@ import { Crud, CrudController, ParsedRequest, Override } from '@dataui/crud';
 import { DocumentSegment } from './entities/document-segment.entity';
 import { validate } from 'class-validator';
 import { plainToInstance, classToPlain } from 'class-transformer';
-import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
+import { JwtOrApiKeyAuthGuard } from '@modules/api-key/guards/jwt-or-api-key.guard';
 import { CreateDocumentSegmentDto } from './dto/create-document-segment.dto';
 import { UpdateDocumentSegmentDto } from './dto/update-document-segment.dto';
 import { Resource } from '@modules/access/enums/permission.enum';
@@ -111,7 +111,7 @@ class BulkUpdateStatusDto extends BulkSegmentIdsDto {
   },
 })
 @Controller('document-segments')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtOrApiKeyAuthGuard)
 @UsePipes(
   new ValidationPipe({
     transform: true,

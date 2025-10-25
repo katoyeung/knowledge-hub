@@ -73,4 +73,8 @@ export class User extends BaseEntity {
     };
     [key: string]: any;
   };
+
+  // API Key relationships
+  @OneToMany('ApiKey', 'user')
+  apiKeys: any[];
 }

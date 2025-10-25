@@ -27,7 +27,7 @@ import {
 import { Dataset } from './entities/dataset.entity';
 import { validate } from 'class-validator';
 import { plainToInstance, classToPlain } from 'class-transformer';
-import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
+import { JwtOrApiKeyAuthGuard } from '@modules/api-key/guards/jwt-or-api-key.guard';
 import { CreateDatasetDto } from './dto/create-dataset.dto';
 import { UpdateDatasetDto } from './dto/update-dataset.dto';
 import { UpdateChatSettingsDto } from './dto/update-chat-settings.dto';
@@ -111,7 +111,7 @@ import { Logger } from '@nestjs/common';
 @Controller('datasets')
 @ApiTags('Datasets')
 //@UseGuards(JwtAuthGuard, PermsGuard)
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtOrApiKeyAuthGuard)
 @UseInterceptors(PopulateUserIdInterceptor)
 @UsePipes(
   new ValidationPipe({

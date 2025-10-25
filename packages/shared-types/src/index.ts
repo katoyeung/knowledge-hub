@@ -221,6 +221,8 @@ export type {
   RegisterRequest,
   AuthError,
   TokenPayload,
+  ApiKey,
+  ApiKeyCreateResponse,
 } from "./auth-types";
 
 // Export settings types

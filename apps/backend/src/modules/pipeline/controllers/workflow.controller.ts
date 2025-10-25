@@ -19,7 +19,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { JwtOrApiKeyAuthGuard } from '@modules/api-key/guards/jwt-or-api-key.guard';
 import { Workflow } from '../entities/workflow.entity';
 import {
   WorkflowExecution,
@@ -34,7 +34,7 @@ import { Repository } from 'typeorm';
 
 @ApiTags('Workflow')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtOrApiKeyAuthGuard)
 @Controller('workflow')
 export class WorkflowController {
   constructor(

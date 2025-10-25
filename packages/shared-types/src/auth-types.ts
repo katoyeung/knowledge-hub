@@ -44,6 +44,23 @@ export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type AuthError = z.infer<typeof AuthErrorSchema>;
 
+// API Key types
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: Date;
+  lastUsedAt?: Date;
+}
+
+export interface ApiKeyCreateResponse {
+  id: string;
+  name: string;
+  key: string; // Full key, only returned once
+  prefix: string;
+  createdAt: Date;
+}
+
 // Token payload type (for JWT decoding if needed)
 export interface TokenPayload {
   email: string;

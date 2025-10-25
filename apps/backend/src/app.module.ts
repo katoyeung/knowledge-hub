@@ -7,6 +7,7 @@ import { UserModule } from '@modules/user';
 import { AuthModule } from '@modules/auth';
 import { getDatabaseConfig, localModelsConfig } from './config';
 import { AccessModule } from '@modules/access';
+import { ApiKeyModule } from '@modules/api-key';
 import { DatasetModule } from '@modules/dataset';
 import { AiProviderModule } from '@modules/ai-provider';
 import { PromptsModule } from '@modules/prompts';
@@ -55,6 +56,7 @@ import { CPUThrottlingInterceptor } from './common/interceptors/cpu-throttling.i
     UserModule,
     AuthModule,
     AccessModule,
+    ApiKeyModule,
     DatasetModule,
     AiProviderModule,
     PromptsModule,

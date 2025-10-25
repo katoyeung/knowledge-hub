@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronDown, LogOut, Settings, Bot, FileText, Workflow } from 'lucide-react'
+import { ChevronDown, LogOut, Settings, Bot, FileText, Workflow, Key } from 'lucide-react'
 import { authUtil } from '@/lib/auth'
 import type { AuthUser } from '@knowledge-hub/shared-types'
 
@@ -108,6 +108,13 @@ export function Navbar({ onLogout }: NavbarProps) {
                                     >
                                         <Settings className="w-4 h-4 mr-3" />
                                         Chat Settings
+                                    </button>
+                                    <button
+                                        onClick={() => handleSettingsClick('/settings/api-keys')}
+                                        className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    >
+                                        <Key className="w-4 h-4 mr-3" />
+                                        API Keys
                                     </button>
                                 </div>
                             </div>

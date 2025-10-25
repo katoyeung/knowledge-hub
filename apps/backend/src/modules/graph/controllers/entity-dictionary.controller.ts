@@ -19,7 +19,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { JwtOrApiKeyAuthGuard } from '@modules/api-key/guards/jwt-or-api-key.guard';
 import { EntityDictionaryService } from '../services/entity-dictionary.service';
 import { EntityLearningService } from '../services/entity-learning.service';
 import { CreatePredefinedEntityDto } from '../dto/create-predefined-entity.dto';
@@ -28,7 +28,7 @@ import { BulkImportEntitiesDto } from '../dto/bulk-import-entities.dto';
 
 @ApiTags('Entity Dictionary')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtOrApiKeyAuthGuard)
 @Controller('graph/datasets/:datasetId/entities')
 export class EntityDictionaryController {
   constructor(

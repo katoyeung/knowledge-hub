@@ -19,7 +19,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { JwtOrApiKeyAuthGuard } from '@modules/api-key/guards/jwt-or-api-key.guard';
 import { PipelineConfig } from '../entities/pipeline-config.entity';
 import { PipelineExecution } from '../entities/pipeline-execution.entity';
 import { PipelineOrchestrator } from '../services/pipeline-orchestrator.service';
@@ -34,7 +34,7 @@ import {
 
 @ApiTags('Pipeline')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtOrApiKeyAuthGuard)
 @Controller('pipeline')
 export class PipelineController {
   constructor(

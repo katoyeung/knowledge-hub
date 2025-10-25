@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { UserModule } from '@modules/user';
 import { AccessModule } from '@modules/access';
+import { ApiKeyModule } from '@modules/api-key';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { LocalStrategy } from './strategies/local.strategy';
@@ -13,6 +14,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   imports: [
     UserModule,
     AccessModule,
+    ApiKeyModule,
     PassportModule,
     ConfigModule.forRoot(),
     JwtModule.registerAsync({
