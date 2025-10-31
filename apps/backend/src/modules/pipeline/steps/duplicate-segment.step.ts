@@ -1,18 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { DocumentSegment } from '../../dataset/entities/document-segment.entity';
 import {
   BaseStep,
   StepConfig,
   StepExecutionContext,
   StepExecutionResult,
 } from './base.step';
+import { DocumentSegment } from '../../dataset/entities/document-segment.entity';
 
 export interface DuplicateSegmentConfig extends StepConfig {
-  method: 'content_hash' | 'content_similarity' | 'exact_match';
-  action: 'skip' | 'remove' | 'merge';
-  similarityThreshold?: number; // For content_similarity method (0-1)
-  mergeStrategy?: 'first' | 'last' | 'longest' | 'shortest';
+  method: 'hash' | 'similarity';
+  similarityThreshold?: number; // For similarity method (0-1)
+  contentField?: string; // Path to content field (e.g., "data.post_message", "post_message")
   caseSensitive?: boolean;
   ignoreWhitespace?: boolean;
   normalizeText?: boolean;
@@ -24,19 +23,269 @@ export class DuplicateSegmentStep extends BaseStep {
     super('duplicate_segment', 'Duplicate Segment Detection');
   }
 
-  async execute(
-    inputSegments: DocumentSegment[],
+  /**
+   * Main execution logic - detect and remove duplicates
+   */
+  protected async executeStep(
+    inputSegments: any[],
     config: DuplicateSegmentConfig,
-    context: StepExecutionContext,
+    _context: StepExecutionContext,
+  ): Promise<any[]> {
+    this.logger.log(
+      `Starting duplicate detection for ${inputSegments.length} segments`,
+    );
+
+
+    // Handle case where input is a wrapper structure containing an array
+    let segmentsToProcess: any[] = inputSegments;
+    let adjustedContentField = config.contentField;
+
+    if (
+      inputSegments.length === 1 &&
+      inputSegments[0] &&
+      typeof inputSegments[0] === 'object'
+    ) {
+      const wrapper = inputSegments[0];
+
+      // Look for any array property in the wrapper
+      for (const [key, value] of Object.entries(wrapper)) {
+        if (Array.isArray(value) && value.length > 0) {
+
+          // Check if this array contains objects (not primitives)
+          if (
+            value.length > 0 &&
+            typeof value[0] === 'object' &&
+            value[0] !== null
+          ) {
+            // Special case: if array[0] has a 'data' array, extract that
+            if (
+              'data' in value[0] &&
+              Array.isArray(value[0].data) &&
+              value[0].data.length > 0
+            ) {
+              segmentsToProcess = value[0].data;
+
+              // Adjust content field if it starts with "data."
+              if (
+                adjustedContentField &&
+                adjustedContentField.startsWith('data.')
+              ) {
+                const originalField = adjustedContentField;
+                adjustedContentField = adjustedContentField.substring(5); // Remove "data." prefix
+              }
+              break;
+            }
+
+            segmentsToProcess = value;
+
+            // Adjust content field by removing the array property prefix
+            if (
+              adjustedContentField &&
+              adjustedContentField.startsWith(`${key}.`)
+            ) {
+              const originalField = adjustedContentField;
+              adjustedContentField = adjustedContentField.substring(
+                key.length + 1,
+              ); // Remove "key." prefix
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // Update the config with adjusted content field
+    config.contentField = adjustedContentField;
+
+    if (segmentsToProcess.length > 0) {
+      const firstSegment = segmentsToProcess[0];
+
+      // Try extracting content
+      const extractedContent = this.extractContent(firstSegment, config);
+
+      if (extractedContent.length < 100) {
+      } else {
+      }
+
+      // If content is empty, show more details
+      if (!extractedContent || extractedContent.trim() === '') {
+        for (const key in firstSegment) {
+        }
+      }
+    }
+
+    // Log similarity threshold
+
+    const outputSegments: any[] = [];
+    const seenHashes = new Set<string>();
+    const seenContents = new Set<string>();
+    let duplicatesFound = 0;
+    let segmentsProcessed = 0;
+
+    // Process segments in batches to avoid blocking the event loop
+    const batchSize = 100;
+    let currentIndex = 0;
+
+    while (currentIndex < segmentsToProcess.length) {
+      const batch = segmentsToProcess.slice(
+        currentIndex,
+        currentIndex + batchSize,
+      );
+
+      for (const segment of batch) {
+        segmentsProcessed++;
+
+
+        const content = this.extractContent(segment, config);
+        const normalizedContent = this.normalizeContent(content, config);
+
+
+        if (!content || content.trim() === '') {
+          this.logger.warn(
+            `Empty content extracted from segment ${segment.id || 'unknown'}`,
+          );
+        }
+
+        const isDuplicate = this.isDuplicate(
+          segment,
+          normalizedContent,
+          config,
+          seenHashes,
+          seenContents,
+        );
+
+
+        if (isDuplicate) {
+          duplicatesFound++;
+          continue;
+        } else {
+          // Add to seen sets
+          if (config.method === 'hash') {
+            const hash = this.generateContentHash(normalizedContent);
+            seenHashes.add(hash);
+          } else if (config.method === 'similarity') {
+            seenContents.add(normalizedContent);
+          }
+          // Return the raw data object, not wrapped in DocumentSegment
+          outputSegments.push(segment);
+        }
+      }
+
+      currentIndex += batchSize;
+
+      // Log progress
+      if (inputSegments.length > 0) {
+        const progress = Math.round(
+          Math.min(100, (currentIndex / inputSegments.length) * 100),
+        );
+        this.logger.log(
+          `Duplicate detection progress: ${progress}% (${currentIndex}/${inputSegments.length} segments processed)`,
+        );
+      }
+
+      // Yield control back to the event loop after each batch
+      if (currentIndex < inputSegments.length) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+
+    this.logger.log(
+      `Duplicate detection completed. Processed ${segmentsProcessed} segments, found ${duplicatesFound} duplicates, returning ${outputSegments.length} unique segments`,
+    );
+
+    return outputSegments;
+  }
+
+  async execute(
+    inputSegments: any[],
+    config: DuplicateSegmentConfig,
+    _context: StepExecutionContext,
   ): Promise<StepExecutionResult> {
     const startTime = new Date();
     this.logger.log(
       `Starting duplicate detection for ${inputSegments.length} segments`,
     );
 
+
+    // Handle case where input is a wrapper structure containing an array
+    let segmentsToProcess: any[] = inputSegments;
+    let adjustedContentField = config.contentField;
+
+    if (
+      inputSegments.length === 1 &&
+      inputSegments[0] &&
+      typeof inputSegments[0] === 'object'
+    ) {
+      const wrapper = inputSegments[0];
+
+      // Look for any array property in the wrapper
+      for (const [key, value] of Object.entries(wrapper)) {
+        if (Array.isArray(value) && value.length > 0) {
+
+          // Check if this array contains objects (not primitives)
+          if (
+            value.length > 0 &&
+            typeof value[0] === 'object' &&
+            value[0] !== null
+          ) {
+            // Special case: if array[0] has a 'data' array, extract that
+            if (
+              'data' in value[0] &&
+              Array.isArray(value[0].data) &&
+              value[0].data.length > 0
+            ) {
+              segmentsToProcess = value[0].data;
+
+              // Adjust content field if it starts with "data."
+              if (
+                adjustedContentField &&
+                adjustedContentField.startsWith('data.')
+              ) {
+                const originalField = adjustedContentField;
+                adjustedContentField = adjustedContentField.substring(5); // Remove "data." prefix
+              }
+              break;
+            }
+
+            segmentsToProcess = value;
+
+            // Adjust content field by removing the array property prefix
+            if (
+              adjustedContentField &&
+              adjustedContentField.startsWith(`${key}.`)
+            ) {
+              const originalField = adjustedContentField;
+              adjustedContentField = adjustedContentField.substring(
+                key.length + 1,
+              ); // Remove "key." prefix
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // Update the config with adjusted content field
+    config.contentField = adjustedContentField;
+
+    if (segmentsToProcess.length > 0) {
+      const firstSegment = segmentsToProcess[0];
+
+      const extractedContent = this.extractContent(firstSegment, config);
+
+      if (extractedContent.length < 100) {
+      } else {
+      }
+
+      if (!extractedContent || extractedContent.trim() === '') {
+        for (const key in firstSegment) {
+        }
+      }
+    }
+
     try {
-      const outputSegments: DocumentSegment[] = [];
-      const duplicateSegments: DocumentSegment[] = [];
+      const outputSegments: any[] = [];
+      const duplicateSegments: any[] = [];
       const seenHashes = new Set<string>();
       const seenContents = new Set<string>();
       let duplicatesFound = 0;
@@ -46,8 +295,8 @@ export class DuplicateSegmentStep extends BaseStep {
       const batchSize = 100; // Process 100 segments at a time
       let currentIndex = 0;
 
-      while (currentIndex < inputSegments.length) {
-        const batch = inputSegments.slice(
+      while (currentIndex < segmentsToProcess.length) {
+        const batch = segmentsToProcess.slice(
           currentIndex,
           currentIndex + batchSize,
         );
@@ -55,10 +304,19 @@ export class DuplicateSegmentStep extends BaseStep {
         for (const segment of batch) {
           segmentsProcessed++;
 
-          const normalizedContent = this.normalizeContent(
-            segment.content,
-            config,
-          );
+
+          // Extract content using the specified field path
+          const content = this.extractContent(segment, config);
+          const normalizedContent = this.normalizeContent(content, config);
+
+
+          // Log if content is empty
+          if (!content || content.trim() === '') {
+            this.logger.warn(
+              `Empty content extracted from segment ${segment.id || 'unknown'}. Segment keys: ${Object.keys(segment).join(', ')}`,
+            );
+          }
+
           const isDuplicate = this.isDuplicate(
             segment,
             normalizedContent,
@@ -67,32 +325,18 @@ export class DuplicateSegmentStep extends BaseStep {
             seenContents,
           );
 
+
           if (isDuplicate) {
             duplicatesFound++;
             duplicateSegments.push(segment);
-            this.logger.debug(
-              `Found duplicate segment: ${segment.id} - "${segment.content.substring(0, 50)}..."`,
-            );
-
-            if (config.action === 'skip') {
-              // Skip duplicate segments
-              continue;
-            } else if (config.action === 'remove') {
-              // Remove duplicate segments
-              continue;
-            } else if (config.action === 'merge') {
-              // Merge with existing segment (keep the first one)
-              continue;
-            }
+            // Skip duplicate segments (removed)
+            continue;
           } else {
             // Add to seen sets
-            if (config.method === 'content_hash') {
+            if (config.method === 'hash') {
               const hash = this.generateContentHash(normalizedContent);
               seenHashes.add(hash);
-            } else if (
-              config.method === 'exact_match' ||
-              config.method === 'content_similarity'
-            ) {
+            } else if (config.method === 'similarity') {
               seenContents.add(normalizedContent);
             }
 
@@ -103,12 +347,14 @@ export class DuplicateSegmentStep extends BaseStep {
         currentIndex += batchSize;
 
         // Log progress
-        const progress = Math.round(
-          (currentIndex / inputSegments.length) * 100,
-        );
-        this.logger.log(
-          `Duplicate detection progress: ${progress}% (${currentIndex}/${inputSegments.length} segments processed)`,
-        );
+        if (inputSegments.length > 0) {
+          const progress = Math.round(
+            Math.min(100, (currentIndex / inputSegments.length) * 100),
+          );
+          this.logger.log(
+            `Duplicate detection progress: ${progress}% (${currentIndex}/${inputSegments.length} segments processed)`,
+          );
+        }
 
         // Yield control back to the event loop after each batch
         if (currentIndex < inputSegments.length) {
@@ -134,18 +380,39 @@ export class DuplicateSegmentStep extends BaseStep {
         `Duplicate detection completed: ${duplicatesFound} duplicates found, ${outputSegments.length} segments remaining`,
       );
 
+      // Format output according to user specification
+      const formattedOutput = {
+        items: outputSegments,
+        total: outputSegments.length,
+        duplicates: duplicateSegments,
+        duplicate_count: duplicatesFound,
+      };
+
       return {
         success: true,
-        outputSegments,
-        duplicates: duplicateSegments,
+        outputSegments: [formattedOutput] as any, // Wrap in array to maintain compatibility
+        // duplicates field is already included in formattedOutput, no need to duplicate
         metrics,
         rollbackData: this.createRollbackData(inputSegments, config),
+        // Add count information for frontend display
+        count: outputSegments.length,
+        totalCount: segmentsToProcess.length,
+        duplicateCount: duplicatesFound,
       };
     } catch (error) {
       this.logger.error('Duplicate detection failed:', error);
+
+      // Format error output according to user specification
+      const errorOutput = {
+        items: inputSegments,
+        total: inputSegments.length,
+        duplicates: [],
+        duplicate_count: 0,
+      };
+
       return {
         success: false,
-        outputSegments: inputSegments, // Return original segments on error
+        outputSegments: [errorOutput] as any, // Wrap in array to maintain compatibility
         metrics: this.calculateMetrics(
           inputSegments,
           inputSegments,
@@ -154,6 +421,10 @@ export class DuplicateSegmentStep extends BaseStep {
         ),
         error: error.message,
         rollbackData: this.createRollbackData(inputSegments, config),
+        // Add count information for frontend display (error case)
+        count: inputSegments.length,
+        totalCount: inputSegments.length,
+        duplicateCount: 0,
       };
     }
   }
@@ -165,44 +436,19 @@ export class DuplicateSegmentStep extends BaseStep {
 
     if (!config.method) {
       errors.push('Method is required');
-    } else if (
-      !['content_hash', 'content_similarity', 'exact_match'].includes(
-        config.method,
-      )
-    ) {
-      errors.push(
-        'Method must be one of: content_hash, content_similarity, exact_match',
-      );
+    } else if (!['hash', 'similarity'].includes(config.method)) {
+      errors.push('Method must be one of: hash, similarity');
     }
 
-    if (!config.action) {
-      errors.push('Action is required');
-    } else if (!['skip', 'remove', 'merge'].includes(config.action)) {
-      errors.push('Action must be one of: skip, remove, merge');
-    }
-
-    if (config.method === 'content_similarity') {
+    if (config.method === 'similarity') {
       if (config.similarityThreshold === undefined) {
-        errors.push(
-          'Similarity threshold is required for content_similarity method',
-        );
+        errors.push('Similarity threshold is required for similarity method');
       } else if (
         config.similarityThreshold < 0 ||
         config.similarityThreshold > 1
       ) {
         errors.push('Similarity threshold must be between 0 and 1');
       }
-    }
-
-    if (config.action === 'merge' && !config.mergeStrategy) {
-      errors.push('Merge strategy is required when action is merge');
-    } else if (
-      config.mergeStrategy &&
-      !['first', 'last', 'longest', 'shortest'].includes(config.mergeStrategy)
-    ) {
-      errors.push(
-        'Merge strategy must be one of: first, last, longest, shortest',
-      );
     }
 
     return {
@@ -212,8 +458,8 @@ export class DuplicateSegmentStep extends BaseStep {
   }
 
   async rollback(
-    rollbackData: any,
-    context: StepExecutionContext,
+    _rollbackData: any,
+    _context: StepExecutionContext,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       this.logger.log('Rolling back duplicate detection step');
@@ -226,12 +472,55 @@ export class DuplicateSegmentStep extends BaseStep {
     }
   }
 
+  /**
+   * Format output for storage/display
+   * Returns the structured format with items, total, duplicates, etc.
+   */
+  formatOutput(
+    result: StepExecutionResult,
+    _originalInput?: DocumentSegment[],
+  ): any {
+    // Extract outputSegments - handle both array and single object formats
+    let outputSegments: any[] = [];
+    if (Array.isArray(result.outputSegments)) {
+      // If outputSegments is an array
+      if (
+        result.outputSegments.length === 1 &&
+        typeof result.outputSegments[0] === 'object' &&
+        result.outputSegments[0] !== null &&
+        'items' in result.outputSegments[0]
+      ) {
+        // Already formatted structure
+        return result.outputSegments[0];
+      }
+      outputSegments = result.outputSegments;
+    } else if (
+      result.outputSegments &&
+      typeof result.outputSegments === 'object'
+    ) {
+      // If outputSegments is a single object (shouldn't happen, but handle it)
+      outputSegments = [result.outputSegments];
+    }
+
+    // Build formatted output structure
+    const duplicates = result.duplicates || [];
+    const total = outputSegments.length;
+    const duplicateCount = duplicates.length;
+
+    return {
+      items: outputSegments,
+      total,
+      duplicates,
+      duplicate_count: duplicateCount,
+    };
+  }
+
   getMetadata() {
     return {
       type: 'duplicate_segment',
       name: 'Duplicate Segment Detection',
-      description: 'Detect and handle duplicate segments using various methods',
-      version: '1.0.0',
+      description: 'Detect duplicate segments using hash or similarity',
+      version: '2.0.0',
       inputTypes: ['document_segment'],
       outputTypes: ['document_segment'],
       configSchema: {
@@ -239,24 +528,22 @@ export class DuplicateSegmentStep extends BaseStep {
         properties: {
           method: {
             type: 'string',
-            enum: ['content_hash', 'content_similarity', 'exact_match'],
-            description: 'Method for detecting duplicates',
-          },
-          action: {
-            type: 'string',
-            enum: ['skip', 'remove', 'merge'],
-            description: 'Action to take with duplicate segments',
+            enum: ['hash', 'similarity'],
+            description: 'Method for detecting duplicates (hash or similarity)',
+            default: 'hash',
           },
           similarityThreshold: {
             type: 'number',
             minimum: 0,
             maximum: 1,
-            description: 'Similarity threshold for content_similarity method',
+            description: 'Similarity threshold for similarity method (0-1)',
+            default: 0.8,
           },
-          mergeStrategy: {
+          contentField: {
             type: 'string',
-            enum: ['first', 'last', 'longest', 'shortest'],
-            description: 'Strategy for merging duplicate segments',
+            description:
+              'Path to content field (e.g., "data.post_message", "post_message")',
+            default: 'content',
           },
           caseSensitive: {
             type: 'boolean',
@@ -274,9 +561,73 @@ export class DuplicateSegmentStep extends BaseStep {
             description: 'Whether to normalize text before comparison',
           },
         },
-        required: ['method', 'action'],
+        required: ['method'],
       },
     };
+  }
+
+  /**
+   * Extract content from segment using the specified field path
+   * Supports nested paths like "data.post_message" or "post_message"
+   */
+  private extractContent(segment: any, config: DuplicateSegmentConfig): string {
+    const fieldPath = config.contentField || 'content';
+
+    // If it's a simple field (no dots), just get it directly
+    if (!fieldPath.includes('.')) {
+      const value = segment[fieldPath];
+      if (value === undefined || value === null) {
+        this.logger.warn(
+          `Content field '${fieldPath}' not found in segment. Available fields: ${Object.keys(segment).join(', ')}`,
+        );
+        return '';
+      }
+      return String(value);
+    }
+
+    // For nested paths like "data.post_message", traverse the object
+    const parts = fieldPath.split('.');
+    let value: any = segment;
+
+    for (const part of parts) {
+      if (value && typeof value === 'object') {
+        if (part in value) {
+          value = value[part];
+        } else {
+          // Field not found - try to find the last part at the top level
+          const lastPart = parts[parts.length - 1];
+          if (lastPart in segment) {
+            this.logger.log(
+              `Content field '${part}' not found, but found '${lastPart}' at top level. Using that instead.`,
+            );
+            value = segment[lastPart];
+            break;
+          } else {
+            this.logger.warn(
+              `Content field path '${fieldPath}' not valid. Stuck at '${part}' in path. Available fields: ${value ? Object.keys(value).join(', ') : 'none'}`,
+            );
+            return '';
+          }
+        }
+      } else {
+        this.logger.warn(
+          `Content field path '${fieldPath}' not valid. Stuck at '${part}' in path. Available fields: ${value ? Object.keys(value).join(', ') : 'none'}`,
+        );
+        return '';
+      }
+    }
+
+    // Convert to string if it's not already
+    if (typeof value === 'string') {
+      return value;
+    } else if (value !== undefined && value !== null) {
+      return String(value);
+    }
+
+    this.logger.warn(
+      `Content field path '${fieldPath}' resulted in null/undefined value`,
+    );
+    return '';
   }
 
   private normalizeContent(
@@ -307,32 +658,41 @@ export class DuplicateSegmentStep extends BaseStep {
   }
 
   private isDuplicate(
-    segment: DocumentSegment,
+    segment: any,
     normalizedContent: string,
     config: DuplicateSegmentConfig,
     seenHashes: Set<string>,
     seenContents: Set<string>,
   ): boolean {
     switch (config.method) {
-      case 'content_hash':
+      case 'hash': {
         const hash = this.generateContentHash(normalizedContent);
         return seenHashes.has(hash);
+      }
 
-      case 'exact_match':
-        return seenContents.has(normalizedContent);
-
-      case 'content_similarity':
+      case 'similarity': {
         // Check similarity against all seen contents
+        const threshold =
+          config.similarityThreshold !== undefined
+            ? config.similarityThreshold
+            : 0.8;
+
+        // Special case: threshold 0 means everything is a duplicate
+        if (threshold === 0) {
+          return seenContents.size > 0; // First item is not duplicate, rest are
+        }
+
         for (const seenContent of seenContents) {
           const similarity = this.calculateSimilarity(
             normalizedContent,
             seenContent,
           );
-          if (similarity >= (config.similarityThreshold || 0.8)) {
+          if (similarity >= threshold) {
             return true;
           }
         }
         return false;
+      }
 
       default:
         return false;

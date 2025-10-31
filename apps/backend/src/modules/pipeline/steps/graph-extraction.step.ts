@@ -29,6 +29,15 @@ export class GraphExtractionStep extends BaseStep {
     super('graph_extraction', 'Knowledge Graph Extraction');
   }
 
+  protected async executeStep(
+    _inputSegments: DocumentSegment[],
+    _config: any,
+    _context: any,
+  ): Promise<DocumentSegment[]> {
+    this.logger.warn('executeStep() not yet migrated - using old execute()');
+    return [];
+  }
+
   async execute(
     inputSegments: DocumentSegment[],
     config: GraphExtractionConfig,

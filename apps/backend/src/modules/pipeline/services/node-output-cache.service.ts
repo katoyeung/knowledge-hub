@@ -62,7 +62,7 @@ export class NodeOutputCacheService {
    * Retrieve node output data
    * Checks memory cache first, then database
    */
-  async getNodeOutput(executionId: string, nodeId: string): Promise<any[]> {
+  async getNodeOutput(executionId: string, nodeId: string): Promise<any> {
     // Try memory cache first
     const memoryData = this.getFromMemory(executionId, nodeId);
     if (memoryData) {
@@ -130,22 +130,36 @@ export class NodeOutputCacheService {
           (s) => s.nodeId === nodeId,
         );
         if (snapshot) {
-          // Store in the snapshot's outputData
-          snapshot.outputData = {
-            count: outputData.length,
-            sample: outputData.slice(0, 5),
-            schema: this.inferSchema(outputData),
-            items: outputData, // Full data for processing
-            meta: {
-              total: outputData.length,
-              storedIn: 'database',
-              timestamp: new Date().toISOString(),
-            },
-          };
+          // If snapshot.outputData is already set (from transformOutputData), preserve it
+          // This ensures raw structures are not wrapped
+          if (snapshot.outputData && typeof snapshot.outputData === 'object') {
+            // Check if it's already a raw structure (not wrapped)
+            if (
+              !(
+                'count' in snapshot.outputData &&
+                'sample' in snapshot.outputData &&
+                'items' in snapshot.outputData
+              )
+            ) {
+              // It's already a raw structure, don't overwrite it
+              this.logger.log(
+                `Preserving existing outputData structure for node ${nodeId}`,
+              );
+              await this.executionRepo.save(execution);
+              return;
+            }
+          }
+
+          // Use the existing snapshot.outputData (formatted by step) instead of overwriting
+          // The snapshot.outputData is already in the correct format from the step's formatOutput method
+          // Don't overwrite it with the raw outputData parameter
 
           await this.executionRepo.save(execution);
+          const itemCount = Array.isArray(outputData)
+            ? outputData.length
+            : (outputData as any)?.total || (outputData as any)?.count || 0;
           this.logger.log(
-            `Stored ${outputData.length} items in database for node ${nodeId}`,
+            `Stored ${itemCount} items in database for node ${nodeId}`,
           );
         }
       }
@@ -162,7 +176,7 @@ export class NodeOutputCacheService {
   /**
    * Get from memory cache
    */
-  private getFromMemory(executionId: string, nodeId: string): any[] | null {
+  private getFromMemory(executionId: string, nodeId: string): any | null {
     const executionCache = this.memoryCache.get(executionId);
     if (executionCache) {
       return executionCache.get(nodeId) || null;
@@ -176,19 +190,53 @@ export class NodeOutputCacheService {
   private async getFromDatabase(
     executionId: string,
     nodeId: string,
-  ): Promise<any[] | null> {
+  ): Promise<any | null> {
     try {
       const execution = await this.executionRepo.findOne({
         where: { id: executionId },
-        relations: ['nodeSnapshots'],
       });
 
       if (execution && execution.nodeSnapshots) {
         const snapshot = execution.nodeSnapshots.find(
           (s) => s.nodeId === nodeId,
         );
-        if (snapshot && snapshot.outputData && snapshot.outputData.items) {
-          return snapshot.outputData.items;
+        if (snapshot && snapshot.outputData) {
+          // If outputData is an array (raw data), return it directly
+          if (Array.isArray(snapshot.outputData)) {
+            return snapshot.outputData;
+          }
+          // If outputData has items (structured object), return the structure as-is
+          if (
+            typeof snapshot.outputData === 'object' &&
+            'items' in snapshot.outputData &&
+            Array.isArray(snapshot.outputData.items)
+          ) {
+            return snapshot.outputData;
+          }
+          // If outputData is a single object (like {total, data, ...}), return it directly
+          if (
+            typeof snapshot.outputData === 'object' &&
+            snapshot.outputData !== null
+          ) {
+            // Check if it's a raw structure like {total, data, ...}
+            if (
+              'data' in snapshot.outputData ||
+              'total' in snapshot.outputData
+            ) {
+              return snapshot.outputData;
+            }
+
+            // Handle wrapped structure like {"0": {total, data, ...}, "meta": {...}}
+            const keys = Object.keys(snapshot.outputData);
+            if (
+              keys.length > 0 &&
+              keys[0] === '0' &&
+              typeof (snapshot.outputData as any)[keys[0]] === 'object'
+            ) {
+              // Return the unwrapped data
+              return (snapshot.outputData as any)[keys[0]];
+            }
+          }
         }
       }
       return null;

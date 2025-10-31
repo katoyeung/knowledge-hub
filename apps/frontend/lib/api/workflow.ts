@@ -231,9 +231,11 @@ export const workflowApi = {
   getAll: async (params?: {
     isActive?: boolean;
     isTemplate?: boolean;
-    page?: number;
+    datasetId?: string;
+    tags?: string;
     limit?: number;
-  }): Promise<Workflow[]> => {
+    offset?: number;
+  }): Promise<{ workflows: Workflow[]; total: number }> => {
     const response = await apiClient.get("/workflow/configs", { params });
     return response.data;
   },
@@ -264,11 +266,19 @@ export const workflowApi = {
     return response.data;
   },
 
-  // Execute workflow
+  // Execute workflow (asynchronous)
   execute: async (
     data: ExecuteWorkflowDto
   ): Promise<WorkflowExecutionResponse> => {
     const response = await apiClient.post("/workflow/execute", data);
+    return response.data;
+  },
+
+  // Execute workflow synchronously (wait for completion)
+  executeSync: async (
+    data: ExecuteWorkflowDto
+  ): Promise<WorkflowExecutionResponse> => {
+    const response = await apiClient.post("/workflow/execute/sync", data);
     return response.data;
   },
 
@@ -287,6 +297,18 @@ export const workflowApi = {
       `/workflow/executions/${id}/cancel`,
       data
     );
+    return response.data;
+  },
+
+  // Get all executions for the current user
+  getAllExecutions: async (params?: {
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    executions: WorkflowExecution[];
+    total: number;
+  }> => {
+    const response = await apiClient.get("/workflow/executions", { params });
     return response.data;
   },
 

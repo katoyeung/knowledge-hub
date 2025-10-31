@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module, forwardRef, OnModuleInit } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
 import { HttpModule } from '@nestjs/axios';
@@ -11,33 +11,13 @@ import { DocumentSegment } from '../dataset/entities/document-segment.entity';
 import { AiProvider } from '../ai-provider/entities/ai-provider.entity';
 import { Embedding } from '../dataset/entities/embedding.entity';
 import { PipelineController } from './controllers/pipeline.controller';
+import { PipelineStepRegistry } from './services/pipeline-step-registry.service';
 import { PipelineOrchestrator } from './services/pipeline-orchestrator.service';
 import { PipelineExecutor } from './services/pipeline-executor.service';
-import { PipelineStepRegistry } from './services/pipeline-step-registry.service';
 import { PipelineConfigService } from './services/pipeline-config.service';
 import { NodeOutputCacheService } from './services/node-output-cache.service';
 import { PipelineJob } from '../queue/jobs/pipeline/pipeline.job';
-
-// Import pipeline steps
-import { DuplicateSegmentStep } from './steps/duplicate-segment.step';
-import { RuleBasedFilterStep } from './steps/rule-based-filter.step';
-import { AiSummarizationStep } from './steps/ai-summarization.step';
-import { EmbeddingGenerationStep } from './steps/embedding-generation.step';
-import { GraphExtractionStep } from './steps/graph-extraction.step';
-import { DataSourceStep } from './steps/datasource.step';
-
-// Import required services
-import { AiProviderService } from '../ai-provider/services/ai-provider.service';
-import { LLMClientFactory } from '../ai-provider/services/llm-client-factory.service';
-import { EmbeddingProcessingService } from '../dataset/services/embedding-processing.service';
-import { EmbeddingV2Service } from '../dataset/services/embedding-v2.service';
-import { EmbeddingClientFactory } from '../../common/services/embedding-client-factory.service';
-import { ModelMappingService } from '../../common/services/model-mapping.service';
-import { WorkerPoolService } from '../queue/jobs/document/worker-pool.service';
-import { GraphExtractionService } from '../graph/services/graph-extraction.service';
-import { JobDispatcherService } from '../queue/services/job-dispatcher.service';
-import { EventBusService } from '../event/services/event-bus.service';
-import { NotificationService } from '../notification/notification.service';
+import { StepAutoLoaderService } from './services/step-auto-loader.service';
 import { DatasetModule } from '../dataset/dataset.module';
 import { EventModule } from '../event/event.module';
 import { NotificationModule } from '../notification/notification.module';
@@ -45,6 +25,7 @@ import { QueueSharedModule } from '../queue/queue-shared.module';
 import { QueueCoreModule } from '../queue/queue-core.module';
 import { AiProviderModule } from '../ai-provider/ai-provider.module';
 import { GraphModule } from '../graph/graph.module';
+import { ALL_STEP_CLASSES } from './steps/index';
 
 @Module({
   imports: [
@@ -73,54 +54,31 @@ import { GraphModule } from '../graph/graph.module';
   controllers: [PipelineController],
   providers: [
     // Core services
+    PipelineStepRegistry,
     PipelineOrchestrator,
     PipelineExecutor,
-    PipelineStepRegistry,
     PipelineConfigService,
     NodeOutputCacheService,
+    StepAutoLoaderService,
 
-    // Pipeline steps
-    DuplicateSegmentStep,
-    RuleBasedFilterStep,
-    AiSummarizationStep,
-    EmbeddingGenerationStep,
-    GraphExtractionStep,
-    DataSourceStep,
+    // Pipeline steps - auto-loaded via index
+    ...ALL_STEP_CLASSES,
 
     // Pipeline job
     PipelineJob,
-
-    // Required dependencies (provided by imported modules)
-    // AiProviderService, LLMClientFactory, EmbeddingProcessingService, etc. are provided by DatasetModule
   ],
   exports: [
     PipelineOrchestrator,
     PipelineExecutor,
-    PipelineStepRegistry,
     PipelineConfigService,
     PipelineJob,
   ],
 })
-export class PipelineModule {
-  constructor(
-    private readonly stepRegistry: PipelineStepRegistry,
-    private readonly duplicateSegmentStep: DuplicateSegmentStep,
-    private readonly ruleBasedFilterStep: RuleBasedFilterStep,
-    private readonly aiSummarizationStep: AiSummarizationStep,
-    private readonly embeddingGenerationStep: EmbeddingGenerationStep,
-    private readonly graphExtractionStep: GraphExtractionStep,
-    private readonly dataSourceStep: DataSourceStep,
-  ) {
-    // Register all pipeline steps
-    this.registerSteps();
-  }
+export class PipelineModule implements OnModuleInit {
+  constructor(private readonly stepAutoLoader: StepAutoLoaderService) {}
 
-  private registerSteps(): void {
-    this.stepRegistry.registerStep(this.duplicateSegmentStep);
-    this.stepRegistry.registerStep(this.ruleBasedFilterStep);
-    this.stepRegistry.registerStep(this.aiSummarizationStep);
-    this.stepRegistry.registerStep(this.embeddingGenerationStep);
-    this.stepRegistry.registerStep(this.graphExtractionStep);
-    this.stepRegistry.registerStep(this.dataSourceStep);
+  async onModuleInit() {
+    // Automatically register all pipeline steps
+    await this.stepAutoLoader.loadAllSteps();
   }
 }

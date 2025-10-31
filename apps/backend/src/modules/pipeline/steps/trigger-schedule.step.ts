@@ -20,39 +20,27 @@ export class TriggerScheduleStep extends BaseStep {
     super('trigger_schedule', 'Schedule Trigger');
   }
 
-  async execute(
+  /**
+   * Main execution logic - schedule trigger (pass-through)
+   */
+  protected async executeStep(
     inputSegments: DocumentSegment[],
     config: TriggerScheduleConfig,
     context: StepExecutionContext,
-  ): Promise<StepExecutionResult> {
+  ): Promise<DocumentSegment[]> {
     this.logger.log(`Executing scheduled trigger: ${config.schedule}`);
 
-    try {
-      // Schedule triggers would typically be handled by a scheduler
-      // This execution is for testing or immediate execution
-      return {
-        success: true,
-        outputSegments: inputSegments, // Pass through input segments
-        metrics: {
-          triggerType: 'schedule',
-          schedule: config.schedule,
-          timezone: config.timezone || 'UTC',
-          description: config.description || 'Scheduled workflow execution',
-          timestamp: new Date().toISOString(),
-          nextExecution: this.getNextExecutionTime(config.schedule),
-          context: context.executionId,
-        },
-      };
-    } catch (error) {
-      this.logger.error(`Scheduled trigger execution failed: ${error.message}`);
-      return {
-        success: false,
-        outputSegments: [],
-        metrics: {},
-        error: error.message,
-      };
-    }
+    // Schedule triggers would typically be handled by a scheduler
+    // This execution is for testing or immediate execution
+    this.logger.log(
+      `Scheduled trigger completed: ${config.description || 'Scheduled workflow execution'}`,
+    );
+
+    // Pass through input segments unchanged
+    return inputSegments;
   }
+
+  // Old execute() removed - using BaseStep template now
 
   async validate(
     config: TriggerScheduleConfig,

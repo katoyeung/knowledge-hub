@@ -33,6 +33,15 @@ export class RuleBasedFilterStep extends BaseStep {
     super('rule_based_filter', 'Rule-Based Content Filtering');
   }
 
+  protected async executeStep(
+    _inputSegments: DocumentSegment[],
+    _config: any,
+    _context: any,
+  ): Promise<DocumentSegment[]> {
+    this.logger.warn('executeStep() not yet migrated - using old execute()');
+    return [];
+  }
+
   async execute(
     inputSegments: DocumentSegment[],
     config: RuleBasedFilterConfig,

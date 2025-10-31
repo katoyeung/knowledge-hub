@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Global } from '@nestjs/common';
 import { BaseStep } from '../steps/base.step';
 
 export interface StepMetadata {
@@ -8,14 +8,28 @@ export interface StepMetadata {
   version: string;
   inputTypes: string[];
   outputTypes: string[];
-  configSchema: Record<string, any>;
   stepInstance: BaseStep;
 }
 
+@Global()
 @Injectable()
 export class PipelineStepRegistry {
-  private readonly logger = new Logger(PipelineStepRegistry.name);
-  private readonly steps = new Map<string, StepMetadata>();
+  private readonly logger: Logger;
+  private static readonly sharedSteps = (() => {
+    const map = new Map<string, StepMetadata>();
+    return map;
+  })();
+  private static instanceCount = 0;
+
+  constructor() {
+    PipelineStepRegistry.instanceCount++;
+    this.logger = new Logger(
+      `${PipelineStepRegistry.name}#${PipelineStepRegistry.instanceCount}`,
+    );
+    this.logger.log(
+      `Creating PipelineStepRegistry instance #${PipelineStepRegistry.instanceCount}`,
+    );
+  }
 
   /**
    * Register a pipeline step
@@ -23,14 +37,14 @@ export class PipelineStepRegistry {
   registerStep(stepInstance: BaseStep): void {
     const metadata = stepInstance.getMetadata();
 
-    this.steps.set(metadata.type, {
+    PipelineStepRegistry.sharedSteps.set(metadata.type, {
       type: metadata.type,
       name: metadata.name,
       description: metadata.description,
       version: metadata.version,
       inputTypes: metadata.inputTypes,
       outputTypes: metadata.outputTypes,
-      configSchema: metadata.configSchema,
+      // configSchema is now part of getMetadata() method
       stepInstance,
     });
 
@@ -43,29 +57,32 @@ export class PipelineStepRegistry {
    * Get a step by type
    */
   getStep(type: string): StepMetadata | undefined {
-    return this.steps.get(type);
+    return PipelineStepRegistry.sharedSteps.get(type);
   }
 
   /**
    * Get all registered steps
    */
   getAllSteps(): Omit<StepMetadata, 'stepInstance'>[] {
-    return Array.from(this.steps.values()).map((step) => ({
-      type: step.type,
-      name: step.name,
-      description: step.description,
-      version: step.version,
-      inputTypes: step.inputTypes,
-      outputTypes: step.outputTypes,
-      configSchema: step.configSchema,
-    }));
+    return Array.from(PipelineStepRegistry.sharedSteps.values()).map((step) => {
+      const metadata = step.stepInstance.getMetadata();
+      return {
+        type: metadata.type,
+        name: metadata.name,
+        description: metadata.description,
+        version: metadata.version,
+        inputTypes: metadata.inputTypes,
+        outputTypes: metadata.outputTypes,
+        configSchema: metadata.configSchema,
+      };
+    });
   }
 
   /**
    * Get step types
    */
   getStepTypes(): string[] {
-    return Array.from(this.steps.keys());
+    return Array.from(PipelineStepRegistry.sharedSteps.keys());
   }
 
   /**
@@ -113,7 +130,7 @@ export class PipelineStepRegistry {
    * Check if step type is registered
    */
   hasStep(type: string): boolean {
-    return this.steps.has(type);
+    return PipelineStepRegistry.sharedSteps.has(type);
   }
 
   /**
@@ -132,6 +149,6 @@ export class PipelineStepRegistry {
    */
   getStepConfigSchema(type: string): Record<string, any> | null {
     const stepMetadata = this.getStep(type);
-    return stepMetadata?.configSchema || null;
+    return stepMetadata?.stepInstance.getConfigSchema() || null;
   }
 }

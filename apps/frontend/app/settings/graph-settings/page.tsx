@@ -40,7 +40,7 @@ export default function GraphSettingsPage() {
     useEffect(() => {
         const loadUser = async () => {
             try {
-                const userData = await authUtil.getCurrentUser()
+                const userData = authUtil.getUser()
                 setUser(userData)
             } catch (err) {
                 console.error('Failed to load user:', err)

@@ -31,6 +31,20 @@ export class AiSummarizationStep extends BaseStep {
     super('ai_summarization', 'AI-Powered Content Summarization');
   }
 
+  /**
+   * Main execution logic - AI summarization
+   */
+  protected async executeStep(
+    _inputSegments: DocumentSegment[],
+    _config: AiSummarizationConfig,
+    _context: StepExecutionContext,
+  ): Promise<DocumentSegment[]> {
+    // TODO: Migrate logic from execute() method
+    // For now, return empty to satisfy abstract requirement
+    this.logger.warn('executeStep() not yet migrated - using old execute()');
+    return [];
+  }
+
   async execute(
     inputSegments: DocumentSegment[],
     config: AiSummarizationConfig,

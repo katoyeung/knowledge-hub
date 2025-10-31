@@ -5,6 +5,7 @@ import {
   StepExecutionContext,
   StepExecutionResult,
 } from './base.step';
+import { ValidationResult } from '../interfaces/step.interfaces';
 import { DocumentSegment } from '../../dataset/entities/document-segment.entity';
 
 export interface TestConfig extends StepConfig {
@@ -21,87 +22,68 @@ export class TestStep extends BaseStep {
     super('test', 'Test Step');
   }
 
-  async execute(
+  /**
+   * Main execution logic - create test output
+   */
+  protected async executeStep(
     inputSegments: DocumentSegment[],
     config: TestConfig,
     context: StepExecutionContext,
-  ): Promise<StepExecutionResult> {
+  ): Promise<DocumentSegment[]> {
     this.logger.log(
       `Executing test step: ${config.testName || 'Unnamed Test'}`,
     );
 
-    try {
-      // Process input segments and create test output
-      const testOutput = {
-        stepName: config.testName || 'Test Step',
-        description: config.description || 'Testing workflow output',
-        inputCount: inputSegments.length,
-        processedAt: new Date().toISOString(),
-        inputSegments: inputSegments
-          .slice(0, config.maxOutputItems || 10)
-          .map((segment) => ({
-            id: segment.id,
-            content:
-              segment.content.substring(0, 200) +
-              (segment.content.length > 200 ? '...' : ''),
-            wordCount: segment.wordCount,
-            tokens: segment.tokens,
-            status: segment.status,
-            createdAt: segment.createdAt,
-          })),
-        summary: {
-          totalSegments: inputSegments.length,
-          averageLength:
-            inputSegments.reduce((sum, seg) => sum + seg.content.length, 0) /
-            inputSegments.length,
-          uniqueSources: new Set(
-            inputSegments.map((seg) => seg.documentId || 'unknown'),
-          ).size,
-        },
-        executionContext: {
-          executionId: context.executionId,
-          pipelineConfigId: context.pipelineConfigId,
-          userId: context.userId,
-        },
-      };
+    // Process input segments and create test output
+    const testOutput = {
+      stepName: config.testName || 'Test Step',
+      description: config.description || 'Testing workflow output',
+      inputCount: inputSegments.length,
+      processedAt: new Date().toISOString(),
+      inputSegments: inputSegments
+        .slice(0, config.maxOutputItems || 10)
+        .map((segment) => ({
+          id: segment.id,
+          content:
+            segment.content.substring(0, 200) +
+            (segment.content.length > 200 ? '...' : ''),
+          wordCount: segment.wordCount,
+          tokens: segment.tokens,
+          status: segment.status,
+          createdAt: segment.createdAt,
+        })),
+      summary: {
+        totalSegments: inputSegments.length,
+        processedSegments: Math.min(
+          inputSegments.length,
+          config.maxOutputItems || 10,
+        ),
+        averageWordCount:
+          inputSegments.reduce((sum, s) => sum + (s.wordCount || 0), 0) /
+          inputSegments.length,
+        averageTokens:
+          inputSegments.reduce((sum, s) => sum + (s.tokens || 0), 0) /
+          inputSegments.length,
+      },
+      executionContext: {
+        executionId: context.executionId,
+        pipelineConfigId: context.pipelineConfigId,
+        userId: context.userId,
+        timestamp: new Date().toISOString(),
+      },
+    };
 
-      this.logger.log(
-        `Test step completed successfully. Processed ${inputSegments.length} segments`,
-      );
+    this.logger.log(
+      `Test step completed: ${JSON.stringify(testOutput.summary)}`,
+    );
 
-      return {
-        success: true,
-        outputSegments: inputSegments, // Pass through the original segments
-        metrics: {
-          testOutput,
-          stepType: 'test',
-          executionTime: Date.now(),
-        },
-        rollbackData: {
-          originalSegments: inputSegments,
-          testConfig: config,
-        },
-      };
-    } catch (error) {
-      this.logger.error(
-        `Test step execution failed: ${error.message}`,
-        error.stack,
-      );
-      return {
-        success: false,
-        error: error.message,
-        outputSegments: [],
-        metrics: {
-          stepType: 'test',
-          executionTime: Date.now(),
-        },
-      };
-    }
+    // Return original segments (test step doesn't modify them)
+    return inputSegments;
   }
 
-  async validate(
-    config: TestConfig,
-  ): Promise<{ isValid: boolean; errors: string[] }> {
+  // Old execute() method removed - using BaseStep template pattern now
+
+  async validate(config: TestConfig): Promise<ValidationResult> {
     const errors: string[] = [];
 
     if (!config.testName || config.testName.trim().length === 0) {

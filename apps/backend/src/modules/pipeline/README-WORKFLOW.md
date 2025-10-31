@@ -577,4 +577,145 @@ app.post('/webhook/workflow/:workflowId', async (req, res) => {
 - `GET /workflow/steps/:type` - Get step configuration schema
 - `POST /workflow/steps/:type/validate` - Validate step configuration
 
+## 🆕 **Custom Data Sources**
+
+### **Lenx API Data Source**
+
+The Lenx API data source step fetches data from external APIs and converts it to document segments.
+
+#### **Configuration**
+
+```typescript
+{
+  type: 'lenx_api_datasource',
+  config: {
+    apiUrl: 'https://prod-searcher.fasta.ai/api/raw/all',
+    authToken: 'Basic YWRtaW46...',  // Basic Auth token
+    from: 1758563015807,  // Start timestamp
+    to: 1758682194360,    // End timestamp
+    query: 'complex Boolean search expression',
+    timeout: 30000,       // Optional: Request timeout
+    maxRetries: 3        // Optional: Retry attempts
+  }
+}
+```
+
+#### **Response Transformation**
+
+The step automatically transforms API response data to document segment format:
+
+- Extracts text content from various common fields (text, content, body, description, message)
+- Calculates word count and estimates token count
+- Extracts keywords from metadata fields (tags, categories, title, source, type)
+- Creates hierarchy metadata with source information
+
+#### **Example Usage**
+
+```typescript
+const workflow = {
+  nodes: [
+    {
+      id: 'lenx-source',
+      type: 'lenx_api_datasource',
+      name: 'Fetch Lenx Data',
+      config: {
+        apiUrl: 'https://prod-searcher.fasta.ai/api/raw/all',
+        authToken: 'Basic YWRtaW46...',
+        from: 1758563015807,
+        to: 1758682194360,
+        query: 'complex Boolean search expression',
+      },
+    },
+    // ... more nodes
+  ],
+};
+```
+
+### **Dataset Inserter**
+
+The dataset inserter step inserts document segments into a specified dataset and document.
+
+#### **Configuration**
+
+```typescript
+{
+  type: 'dataset_inserter',
+  config: {
+    datasetId: 'uuid',      // Target dataset ID
+    documentId: 'uuid',     // Target document ID
+    segmentType: 'api_import',  // Optional: Segment type
+    batchSize: 100          // Optional: Batch size for inserts
+  }
+}
+```
+
+#### **Behavior**
+
+- Validates that dataset and document exist and are properly associated
+- Automatically calculates position for new segments based on current count
+- Inserts segments in batches for efficiency
+- Updates document metadata after insertion
+- Returns inserted segments with database IDs
+
+#### **Example Usage**
+
+```typescript
+const workflow = {
+  nodes: [
+    {
+      id: 'inserter',
+      type: 'dataset_inserter',
+      name: 'Insert to Dataset',
+      config: {
+        datasetId: 'dataset-123',
+        documentId: 'document-456',
+        segmentType: 'api_import',
+        batchSize: 50,
+      },
+      inputSources: [
+        {
+          type: 'previous_node',
+          nodeId: 'previous-node-id',
+        },
+      ],
+    },
+  ],
+};
+```
+
+## 🧪 **Testing**
+
+### **Running the Lenx Integration Test**
+
+The test validates a complete workflow from API data source to dataset insertion:
+
+```bash
+# Navigate to test directory
+cd tests/keep
+
+# Run the integration test
+node test-workflow-lenx-integration.js
+```
+
+The test will:
+
+1. Start the backend server automatically
+2. Connect to the database
+3. Create test dataset and document
+4. Create a workflow with schedule trigger, Lenx API source, and dataset inserter
+5. Execute the workflow manually
+6. Monitor execution progress
+7. Validate inserted segments
+8. Display results summary
+
+### **Test Configuration**
+
+Edit `test-workflow-lenx-integration.js` to customize:
+
+- API endpoint URL
+- Authentication token
+- Time range parameters
+- Query string
+- Test dataset/document names
+
 This enhanced workflow system provides a comprehensive solution for complex data processing workflows with visual editing, real-time monitoring, and flexible execution modes.

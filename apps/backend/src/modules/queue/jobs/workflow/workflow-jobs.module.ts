@@ -12,11 +12,9 @@ import { NodeOutputCacheService } from '../../../pipeline/services/node-output-c
 import { DocumentSegment } from '../../../dataset/entities/document-segment.entity';
 import { EventBusService } from '../../../event/services/event-bus.service';
 import { NotificationService } from '../../../notification/notification.service';
-import { DuplicateSegmentStep } from '../../../pipeline/steps/duplicate-segment.step';
-import { RuleBasedFilterStep } from '../../../pipeline/steps/rule-based-filter.step';
-import { AiSummarizationStep } from '../../../pipeline/steps/ai-summarization.step';
-import { EmbeddingGenerationStep } from '../../../pipeline/steps/embedding-generation.step';
-import { GraphExtractionStep } from '../../../pipeline/steps/graph-extraction.step';
+import { HttpModule } from '@nestjs/axios';
+import { Document } from '../../../dataset/entities/document.entity';
+import { Dataset } from '../../../dataset/entities/dataset.entity';
 import { AiProviderModule } from '../../../ai-provider/ai-provider.module';
 import { PromptsModule } from '../../../prompts/prompts.module';
 import { DatasetModule } from '../../../dataset/dataset.module';
@@ -31,7 +29,14 @@ import { QueueManagerService } from '../../services/queue-manager.service';
     BullModule.registerQueue({
       name: 'default',
     }),
-    TypeOrmModule.forFeature([Workflow, WorkflowExecution, DocumentSegment]),
+    TypeOrmModule.forFeature([
+      Workflow,
+      WorkflowExecution,
+      DocumentSegment,
+      Document,
+      Dataset,
+    ]),
+    HttpModule,
     forwardRef(() => AiProviderModule),
     forwardRef(() => PromptsModule),
     forwardRef(() => DatasetModule),
@@ -50,23 +55,11 @@ import { QueueManagerService } from '../../services/queue-manager.service';
     JobRegistryService,
     JobDispatcherService,
     QueueManagerService,
-    // Pipeline steps
-    DuplicateSegmentStep,
-    RuleBasedFilterStep,
-    AiSummarizationStep,
-    EmbeddingGenerationStep,
-    GraphExtractionStep,
   ],
   exports: [WorkflowJob],
 })
-export class WorkflowJobsModule implements OnModuleInit {
+export class WorkflowJobsModule {
   constructor(
-    private readonly stepRegistry: PipelineStepRegistry,
-    private readonly duplicateSegmentStep: DuplicateSegmentStep,
-    private readonly ruleBasedFilterStep: RuleBasedFilterStep,
-    private readonly aiSummarizationStep: AiSummarizationStep,
-    private readonly embeddingGenerationStep: EmbeddingGenerationStep,
-    private readonly graphExtractionStep: GraphExtractionStep,
     private readonly jobRegistry: JobRegistryService,
     private readonly workflowJob: WorkflowJob,
   ) {
@@ -75,15 +68,6 @@ export class WorkflowJobsModule implements OnModuleInit {
   }
 
   onModuleInit() {
-    console.log('WorkflowJobsModule onModuleInit called');
-
-    // Register pipeline steps
-    this.stepRegistry.registerStep(this.duplicateSegmentStep);
-    this.stepRegistry.registerStep(this.ruleBasedFilterStep);
-    this.stepRegistry.registerStep(this.aiSummarizationStep);
-    this.stepRegistry.registerStep(this.embeddingGenerationStep);
-    this.stepRegistry.registerStep(this.graphExtractionStep);
-
     // Register workflow job
     console.log(
       'Registering WorkflowJob with jobType:',

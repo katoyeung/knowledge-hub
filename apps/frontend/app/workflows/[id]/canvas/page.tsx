@@ -30,6 +30,7 @@ export default function WorkflowCanvasPage() {
     const [stepSearchTerm, setStepSearchTerm] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [executing, setExecuting] = useState(false);
     const [selectedNode, setSelectedNode] = useState<WorkflowNode | null>(null);
     const [isNodeConfigOpen, setIsNodeConfigOpen] = useState(false);
 
@@ -38,6 +39,11 @@ export default function WorkflowCanvasPage() {
     const [editingDescription, setEditingDescription] = useState(false);
     const [tempName, setTempName] = useState('');
     const [tempDescription, setTempDescription] = useState('');
+
+    // Drag-and-drop state
+    const [draggedNodeIndex, setDraggedNodeIndex] = useState<number | null>(null);
+    const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+    const [draggedStepType, setDraggedStepType] = useState<string | null>(null);
 
     // Auto-save debounce
     const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -154,20 +160,20 @@ export default function WorkflowCanvasPage() {
     }, [workflowId]);
 
     const handleExecute = async () => {
-        if (!workflow) return;
+        if (!workflow || executing) return;
 
+        setExecuting(true);
         try {
+            // Execute asynchronously - returns immediately
             const response = await workflowApi.execute({ workflowId });
             success(`Workflow execution started: ${response.executionId}`);
-            // Switch to executions tab instead of redirecting
-            setActiveTab('executions');
-            // Refresh the executions list to show the new execution
-            setTimeout(() => {
-                executionsListRef.current?.refresh();
-            }, 1000);
-        } catch (error) {
+            // Navigate to execution detail page immediately
+            router.push(`/workflows/executions/${response.executionId}`);
+        } catch (error: any) {
             console.error('Failed to execute workflow:', error);
-            error('Failed to execute workflow');
+            error(`Failed to execute workflow: ${error?.response?.data?.message || error?.message || 'Unknown error'}`);
+        } finally {
+            setExecuting(false);
         }
     };
 
@@ -244,6 +250,83 @@ export default function WorkflowCanvasPage() {
         setIsNodeConfigOpen(false);
     };
 
+    // Drag-and-drop handlers for node reordering
+    const handleNodeDragStart = (e: React.DragEvent, index: number) => {
+        setDraggedNodeIndex(index);
+        setDraggedStepType(null);
+        e.dataTransfer.effectAllowed = 'move';
+        (e.target as HTMLElement).style.opacity = '0.5';
+    };
+
+    const handleNodeDragEnd = (e: React.DragEvent) => {
+        (e.target as HTMLElement).style.opacity = '1';
+        setDraggedNodeIndex(null);
+        setDragOverIndex(null);
+        setDraggedStepType(null);
+    };
+
+    const handleNodeDragOver = (e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (draggedNodeIndex !== null && draggedNodeIndex !== index) {
+            setDragOverIndex(index);
+        }
+    };
+
+    const handleNodeDrop = (e: React.DragEvent, dropIndex: number) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (!workflow || draggedNodeIndex === null || draggedNodeIndex === dropIndex) {
+            setDraggedNodeIndex(null);
+            setDragOverIndex(null);
+            return;
+        }
+
+        const newNodes = [...workflow.nodes];
+        const draggedNode = newNodes[draggedNodeIndex];
+
+        newNodes.splice(draggedNodeIndex, 1);
+        newNodes.splice(dropIndex, 0, draggedNode);
+
+        const updatedWorkflow = {
+            ...workflow,
+            nodes: newNodes
+        };
+
+        setWorkflow(updatedWorkflow);
+        setDraggedNodeIndex(null);
+        setDragOverIndex(null);
+
+        debouncedAutoSave(updatedWorkflow);
+    };
+
+    // Drag-and-drop handlers for steps
+    const handleStepDragStart = (e: React.DragEvent, stepType: string) => {
+        setDraggedStepType(stepType);
+        setDraggedNodeIndex(null);
+        e.dataTransfer.effectAllowed = 'copy';
+    };
+
+    const handleStepDragEnd = (e: React.DragEvent) => {
+        setDraggedStepType(null);
+    };
+
+    const handleCanvasDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
+    const handleCanvasDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (draggedStepType && workflow) {
+            handleAddNode(draggedStepType);
+        }
+
+        setDraggedStepType(null);
+    };
 
     // Helper function to create update data
     const createUpdateData = (updates: Partial<Workflow>) => {
@@ -459,32 +542,6 @@ export default function WorkflowCanvasPage() {
                         </p>
                     )}
                 </div>
-                <div className="flex items-center gap-2">
-                    <Button
-                        variant="outline"
-                        onClick={handleExecute}
-                        disabled={!workflow.isActive}
-                    >
-                        <Play className="h-4 w-4 mr-2" />
-                        Execute
-                    </Button>
-                    <Button
-                        onClick={handleSave}
-                        disabled={saving}
-                    >
-                        {saving ? (
-                            <>
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                                Saving...
-                            </>
-                        ) : (
-                            <>
-                                <Save className="h-4 w-4 mr-2" />
-                                Save
-                            </>
-                        )}
-                    </Button>
-                </div>
             </div>
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -500,26 +557,66 @@ export default function WorkflowCanvasPage() {
                         <div className="flex-1">
                             <Card className="h-full flex flex-col">
                                 <CardHeader>
-                                    <CardTitle>Workflow Design</CardTitle>
-                                    <CardDescription>
-                                        {workflow?.nodes.length || 0} nodes, {workflow?.edges.length || 0} connections
-                                    </CardDescription>
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <CardTitle>Workflow Design</CardTitle>
+                                            <CardDescription>
+                                                {workflow?.nodes.length || 0} nodes, {workflow?.edges.length || 0} connections
+                                            </CardDescription>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                variant="outline"
+                                                onClick={handleExecute}
+                                                disabled={!workflow?.isActive || executing}
+                                            >
+                                                <Play className={`h-4 w-4 mr-2 ${executing ? 'animate-pulse' : ''}`} />
+                                                {executing ? 'Executing...' : 'Execute'}
+                                            </Button>
+                                            <Button
+                                                onClick={handleSave}
+                                                disabled={saving}
+                                            >
+                                                {saving ? (
+                                                    <>
+                                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+                                                        Saving...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Save className="h-4 w-4 mr-2" />
+                                                        Save
+                                                    </>
+                                                )}
+                                            </Button>
+                                        </div>
+                                    </div>
                                 </CardHeader>
                                 <CardContent className="flex-1 overflow-hidden">
                                     <div className="h-full overflow-y-auto">
-                                        <div className="min-h-[500px] border-2 border-dashed border-gray-300 rounded-lg p-4">
+                                        <div
+                                            className="min-h-[500px] border-2 border-dashed border-gray-300 rounded-lg p-4"
+                                            onDragOver={handleCanvasDragOver}
+                                            onDrop={handleCanvasDrop}
+                                        >
                                             {workflow?.nodes.length === 0 ? (
                                                 <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                                                    <Plus className="h-12 w-12 mb-4" />
+                                                    <Plus className="h-12 w-12 mb-4 grew" />
                                                     <p className="text-lg font-medium">No nodes added yet</p>
-                                                    <p className="text-sm">Add steps from the sidebar to build your workflow</p>
+                                                    <p className="text-sm">Drag steps from the sidebar or click to add</p>
                                                 </div>
                                             ) : (
                                                 <div className="space-y-4">
-                                                    {workflow?.nodes.map((node) => (
+                                                    {workflow?.nodes.map((node, index) => (
                                                         <div
                                                             key={node.id}
-                                                            className="p-4 border rounded-lg bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                                                            draggable
+                                                            onDragStart={(e) => handleNodeDragStart(e, index)}
+                                                            onDragEnd={handleNodeDragEnd}
+                                                            onDragOver={(e) => handleNodeDragOver(e, index)}
+                                                            onDrop={(e) => handleNodeDrop(e, index)}
+                                                            className={`p-4 border rounded-lg bg-white shadow-sm hover:shadow-md transition-all cursor-pointer ${dragOverIndex === index ? 'border-blue-500 border-2' : 'border-gray-200'
+                                                                }`}
                                                             onClick={() => handleNodeClick(node)}
                                                         >
                                                             <div className="flex items-center justify-between mb-2">
@@ -623,7 +720,10 @@ export default function WorkflowCanvasPage() {
                                                         {steps.map((step) => (
                                                             <div
                                                                 key={step.type}
-                                                                className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                                                                draggable
+                                                                onDragStart={(e) => handleStepDragStart(e, step.type)}
+                                                                onDragEnd={handleStepDragEnd}
+                                                                className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors cursor-grab active:cursor-grabbing"
                                                                 onClick={() => handleAddNode(step.type)}
                                                             >
                                                                 <div className="flex items-start gap-2">

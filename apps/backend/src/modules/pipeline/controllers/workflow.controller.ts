@@ -11,6 +11,7 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -37,6 +38,8 @@ import { Repository } from 'typeorm';
 @UseGuards(JwtOrApiKeyAuthGuard)
 @Controller('workflow')
 export class WorkflowController {
+  private readonly logger = new Logger(WorkflowController.name);
+
   constructor(
     private readonly workflowOrchestrator: WorkflowOrchestrator,
     private readonly workflowService: WorkflowService,
@@ -46,10 +49,10 @@ export class WorkflowController {
   ) {}
 
   @Post('execute')
-  @ApiOperation({ summary: 'Execute a workflow' })
+  @ApiOperation({ summary: 'Execute a workflow asynchronously' })
   @ApiResponse({
     status: 200,
-    description: 'Workflow execution started successfully',
+    description: 'Workflow execution queued successfully',
   })
   @ApiResponse({ status: 400, description: 'Invalid input data' })
   @HttpCode(HttpStatus.OK)
@@ -57,33 +60,34 @@ export class WorkflowController {
     @Body() request: any,
     @Request() req: any,
   ): Promise<any> {
-    // Handle data source configuration
+    // Handle data source configuration (keep this async but don't wait if not needed)
     let inputData = request.inputData || [];
 
-    if (request.dataSourceConfig) {
-      // Create a data source node and add it to the workflow
-      const dataSourceNode = {
-        id: `datasource_${Date.now()}`,
-        type: 'datasource',
-        name: 'Data Source',
-        position: { x: 0, y: 0 },
-        config: request.dataSourceConfig,
-        enabled: true,
-      };
+    // Prepare data source config update asynchronously (don't block response)
+    const dataSourceUpdatePromise = request.dataSourceConfig
+      ? (async () => {
+          const dataSourceNode = {
+            id: `datasource_${Date.now()}`,
+            type: 'datasource',
+            name: 'Data Source',
+            position: { x: 0, y: 0 },
+            config: request.dataSourceConfig,
+            enabled: true,
+          };
 
-      // Get the workflow and add the data source node
-      const workflow = await this.workflowService.getWorkflow(
-        request.workflowId,
-        req.user.id,
-      );
-      if (workflow) {
-        workflow.nodes = [dataSourceNode, ...workflow.nodes];
-        // Save the updated workflow directly
-        await this.workflowRepository.save(workflow);
-      }
-    }
+          const workflow = await this.workflowService.getWorkflow(
+            request.workflowId,
+            req.user.id,
+          );
+          if (workflow) {
+            workflow.nodes = [dataSourceNode, ...workflow.nodes];
+            await this.workflowRepository.save(workflow);
+          }
+        })()
+      : Promise.resolve();
 
-    return await this.workflowOrchestrator.executeWorkflowAsync({
+    // Execute workflow async immediately (don't wait for data source update)
+    const executionPromise = this.workflowOrchestrator.executeWorkflowAsync({
       workflowId: request.workflowId,
       documentId: request.documentId,
       datasetId: request.datasetId,
@@ -93,6 +97,16 @@ export class WorkflowController {
       triggerSource: request.triggerSource || 'manual',
       triggerData: request.triggerData,
     });
+
+    // Return immediately after queuing the job, don't wait for data source update
+    const result = await executionPromise;
+
+    // Start data source update in background (don't await)
+    dataSourceUpdatePromise.catch((error) => {
+      this.logger.warn('Failed to update data source config:', error);
+    });
+
+    return result;
   }
 
   @Post('execute/sync')
@@ -236,6 +250,17 @@ export class WorkflowController {
     return this.stepRegistry.getAllSteps();
   }
 
+  @Get('steps/debug/registered')
+  @ApiOperation({ summary: 'Debug: Get all registered step types' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of registered step types',
+  })
+  async getRegisteredStepTypes(): Promise<{ types: string[]; count: number }> {
+    const types = this.stepRegistry.getStepTypes();
+    return { types, count: types.length };
+  }
+
   @Get('steps/:type')
   @ApiOperation({ summary: 'Get workflow step configuration schema' })
   @ApiResponse({
@@ -276,19 +301,28 @@ export class WorkflowController {
   @ApiQuery({ name: 'isTemplate', required: false, type: Boolean })
   @ApiQuery({ name: 'isActive', required: false, type: Boolean })
   @ApiQuery({ name: 'tags', required: false, type: String })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'offset', required: false, type: Number })
   async getWorkflows(
     @Request() req: any,
     @Query('datasetId') datasetId?: string,
     @Query('isTemplate') isTemplate?: boolean,
     @Query('isActive') isActive?: boolean,
     @Query('tags') tags?: string,
-  ): Promise<Workflow[]> {
-    return await this.workflowService.getWorkflows(req.user.id, {
-      datasetId,
-      isTemplate,
-      isActive,
-      tags,
-    });
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+  ): Promise<{ workflows: Workflow[]; total: number }> {
+    return await this.workflowService.getWorkflows(
+      req.user.id,
+      {
+        datasetId,
+        isTemplate,
+        isActive,
+        tags,
+      },
+      limit || 50,
+      offset || 0,
+    );
   }
 
   @Get('configs/:id')
@@ -354,6 +388,26 @@ export class WorkflowController {
   ): Promise<{ success: boolean; message: string }> {
     await this.workflowService.deleteWorkflow(id, req.user.id);
     return { success: true, message: 'Workflow deleted successfully' };
+  }
+
+  @Get('executions')
+  @ApiOperation({ summary: 'Get all executions for the current user' })
+  @ApiResponse({
+    status: 200,
+    description: 'Executions retrieved successfully',
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'offset', required: false, type: Number })
+  async getAllExecutions(
+    @Request() req: any,
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+  ): Promise<{ executions: WorkflowExecution[]; total: number }> {
+    return await this.workflowService.getAllExecutions(
+      req.user.id,
+      limit || 50,
+      offset || 0,
+    );
   }
 
   @Get('configs/:id/executions')

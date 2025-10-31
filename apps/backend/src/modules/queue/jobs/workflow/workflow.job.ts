@@ -83,6 +83,28 @@ export class WorkflowJob extends BaseJob<WorkflowJobData> {
         status: 'running',
       });
 
+      // Send notification that workflow execution started
+      try {
+        await this.notificationService.sendWorkflowExecutionUpdate(
+          executionId,
+          workflowId,
+          {
+            status: 'running',
+            message: 'Workflow execution started',
+            progress: {
+              completedNodes: 0,
+              totalNodes: workflow.nodes.length,
+              percentage: 0,
+            },
+          },
+        );
+      } catch (notificationError) {
+        this.logger.warn(
+          'Failed to send workflow start notification:',
+          notificationError,
+        );
+      }
+
       // Publish start event
       this.eventBus.publish({
         type: EventTypes.PIPELINE_EXECUTION_STARTED,
@@ -127,7 +149,27 @@ export class WorkflowJob extends BaseJob<WorkflowJobData> {
         `[WORKFLOW_JOB] Workflow execution completed: ${executionId}`,
       );
 
-      // Send completion notification
+      // Send completion notification via NotificationService
+      try {
+        await this.notificationService.sendWorkflowExecutionCompleted(
+          executionId,
+          workflowId,
+          {
+            status: result.status,
+            message: 'Workflow execution completed',
+            metrics: result.metrics,
+            duration: result.metrics?.totalDuration || 0,
+            completedAt: new Date().toISOString(),
+          },
+        );
+      } catch (notificationError) {
+        this.logger.warn(
+          'Failed to send workflow completion notification:',
+          notificationError,
+        );
+      }
+
+      // Publish completion event
       this.eventBus.publish({
         type: EventTypes.PIPELINE_EXECUTION_COMPLETED,
         timestamp: Date.now(),
@@ -152,6 +194,20 @@ export class WorkflowJob extends BaseJob<WorkflowJobData> {
         completedAt: new Date(),
         error: error.message,
       });
+
+      // Send failure notification via NotificationService
+      try {
+        await this.notificationService.sendWorkflowExecutionFailed(
+          executionId,
+          workflowId,
+          error.message || 'Unknown error',
+        );
+      } catch (notificationError) {
+        this.logger.warn(
+          'Failed to send workflow failure notification:',
+          notificationError,
+        );
+      }
 
       // Publish failure event
       this.eventBus.publish({

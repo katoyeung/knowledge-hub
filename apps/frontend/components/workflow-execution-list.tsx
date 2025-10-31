@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Calendar, Clock, Timer, Eye, Play, Pause, Square, RefreshCw, Activity, Trash2 } from 'lucide-react';
+import { Calendar, Clock, Timer, Eye, Play, Square, RefreshCw, Activity, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { WorkflowExecution, NodeExecutionSnapshot } from '@/lib/api/workflow';
 import { workflowApi } from '@/lib/api/workflow';
 import { useToast } from '@/components/ui/simple-toast';
@@ -50,6 +50,11 @@ export const WorkflowExecutionList = forwardRef<WorkflowExecutionListRef, Workfl
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [deleting, setDeleting] = useState(false);
 
+    // Pagination state
+    const [executionPage, setExecutionPage] = useState(0);
+    const [executionPageSize] = useState(10); // 10 per page
+    const [executionTotal, setExecutionTotal] = useState(0);
+
     // Expose refresh method to parent component
     useImperativeHandle(ref, () => ({
         refresh: loadExecutions,
@@ -57,7 +62,7 @@ export const WorkflowExecutionList = forwardRef<WorkflowExecutionListRef, Workfl
 
     useEffect(() => {
         loadExecutions();
-    }, [workflowId]);
+    }, [workflowId, executionPage]);
 
     useEffect(() => {
         if (!autoRefresh) return;
@@ -72,10 +77,16 @@ export const WorkflowExecutionList = forwardRef<WorkflowExecutionListRef, Workfl
     const loadExecutions = async () => {
         try {
             setRefreshing(true);
-            const response = await workflowApi.getExecutionHistory(workflowId, { limit: 50 });
+            const offset = executionPage * executionPageSize;
+            const response = await workflowApi.getExecutionHistory(workflowId, {
+                limit: executionPageSize,
+                offset: offset,
+            });
             // Handle both array and object response formats
             const executions = Array.isArray(response) ? response : response.executions || [];
+            const total = Array.isArray(response) ? executions.length : response.total || 0;
             setExecutions(executions);
+            setExecutionTotal(total);
             updateStats(executions);
         } catch (error) {
             console.error('Failed to load executions:', error);
@@ -425,6 +436,38 @@ export const WorkflowExecutionList = forwardRef<WorkflowExecutionListRef, Workfl
                                 ))}
                             </TableBody>
                         </Table>
+                    )}
+
+                    {/* Pagination Controls */}
+                    {executions.length > 0 && (
+                        <div className="flex items-center justify-between mt-4 px-4 pb-4">
+                            <div className="text-sm text-gray-600">
+                                Showing {executionPage * executionPageSize + 1} to {Math.min((executionPage + 1) * executionPageSize, executionTotal)} of {executionTotal} executions
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setExecutionPage(p => Math.max(0, p - 1))}
+                                    disabled={executionPage === 0}
+                                >
+                                    <ChevronLeft className="h-4 w-4 mr-1" />
+                                    Previous
+                                </Button>
+                                <span className="text-sm text-gray-600">
+                                    Page {executionPage + 1} of {Math.ceil(executionTotal / executionPageSize) || 1}
+                                </span>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setExecutionPage(p => p + 1)}
+                                    disabled={(executionPage + 1) * executionPageSize >= executionTotal}
+                                >
+                                    Next
+                                    <ChevronRight className="h-4 w-4 ml-1" />
+                                </Button>
+                            </div>
+                        </div>
                     )}
                 </CardContent>
             </Card>

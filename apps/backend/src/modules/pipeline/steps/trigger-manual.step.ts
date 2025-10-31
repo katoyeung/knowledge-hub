@@ -19,39 +19,29 @@ export class TriggerManualStep extends BaseStep {
     super('trigger_manual', 'Manual Trigger');
   }
 
-  async execute(
+  /**
+   * Main execution logic - manual trigger (pass-through)
+   */
+  protected async executeStep(
     inputSegments: DocumentSegment[],
     config: TriggerManualConfig,
     context: StepExecutionContext,
-  ): Promise<StepExecutionResult> {
+  ): Promise<DocumentSegment[]> {
     this.logger.log(
       `Executing manual trigger: ${config.triggerName || 'Unnamed'}`,
     );
 
-    try {
-      // Manual triggers don't need to do anything special
-      // They just pass through the execution context
-      return {
-        success: true,
-        outputSegments: inputSegments, // Pass through input segments
-        metrics: {
-          triggerType: 'manual',
-          triggerName: config.triggerName || 'Manual Trigger',
-          description: config.description || 'Manually triggered workflow',
-          timestamp: new Date().toISOString(),
-          context: context.executionId,
-        },
-      };
-    } catch (error) {
-      this.logger.error(`Manual trigger execution failed: ${error.message}`);
-      return {
-        success: false,
-        outputSegments: [],
-        metrics: {},
-        error: error.message,
-      };
-    }
+    // Manual triggers don't need to do anything special
+    // They just pass through the execution context
+    this.logger.log(
+      `Manual trigger completed: ${config.description || 'Manually triggered workflow'}`,
+    );
+
+    // Pass through input segments unchanged
+    return inputSegments;
   }
+
+  // Old execute() removed - using BaseStep template now
 
   async validate(
     config: TriggerManualConfig,

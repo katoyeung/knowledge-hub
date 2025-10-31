@@ -592,8 +592,9 @@ export function WorkflowNodeConfig({
                 Object.keys(nodeData.config).forEach(key => {
                     const configValue = nodeData.config[key];
                     // If config value is a field name from previous output, map the actual value
-                    if (typeof configValue === 'string' && previousOutput.items && Array.isArray(previousOutput.items)) {
-                        const firstItem = previousOutput.items[0];
+                    const items = previousOutput.items || previousOutput.data || previousOutput.outputSegments;
+                    if (typeof configValue === 'string' && items && Array.isArray(items)) {
+                        const firstItem = items[0];
                         if (firstItem && firstItem[configValue] !== undefined) {
                             // This is a field mapping, use the actual value from previous output
                             mappedConfig[key] = firstItem[configValue];
@@ -623,6 +624,10 @@ export function WorkflowNodeConfig({
                     requestBody.inputSegments = previousOutput.items;
                 } else if (previousOutput.outputSegments) {
                     requestBody.inputSegments = previousOutput.outputSegments;
+                } else if (previousOutput.data && Array.isArray(previousOutput.data)) {
+                    // Handle Lenx API datasource output format 
+                    // Pass the complete structure so data.post_message path works
+                    requestBody.inputSegments = [previousOutput];
                 }
             }
             const response = await apiClient.post('/workflow/steps/test', requestBody);
@@ -685,29 +690,40 @@ export function WorkflowNodeConfig({
 
         // Special handling for Duplicate Segment Detection
         if (apiResponse.stepType === 'duplicate_segment') {
-            // Extract unique segments (non-duplicates) and duplicates from the response
-            const uniqueSegments = apiResponse.outputSegments || [];
-            const duplicates = apiResponse.duplicates || [];
+            // The backend testStep now returns { items, total, duplicates, duplicate_count } directly
+            // Check if the response already has the correct structure
+            if (apiResponse.items !== undefined && apiResponse.total !== undefined) {
+                // Response is already in the correct format, just limit arrays
+                const sampleCount = Math.min(10, apiResponse.items.length);
+                const sampleDuplicatesCount = Math.min(10, apiResponse.duplicates?.length || 0);
+
+                return {
+                    items: apiResponse.items.slice(0, sampleCount),
+                    total: apiResponse.total,
+                    duplicates: apiResponse.duplicates?.slice(0, sampleDuplicatesCount) || [],
+                    duplicate_count: apiResponse.duplicate_count || 0
+                };
+            }
+
+            // Fallback: Extract from outputSegments if response is wrapped
+            const outputData = apiResponse.outputSegments?.[0] || apiResponse;
+
+            const items = outputData.items || apiResponse.outputSegments || [];
+            const total = outputData.total !== undefined ? outputData.total : items.length;
+            const duplicates = outputData.duplicates || [];
+            const duplicate_count = outputData.duplicate_count !== undefined
+                ? outputData.duplicate_count
+                : (apiResponse.metrics?.duplicatesFound || duplicates.length);
 
             // Limit samples to prevent payload too large
-            const sampleCount = Math.min(5, uniqueSegments.length);
-            const sampleItems = uniqueSegments.slice(0, sampleCount);
-            const sampleDuplicates = duplicates.slice(0, sampleCount);
+            const sampleCount = Math.min(10, items.length);
+            const sampleDuplicatesCount = Math.min(10, duplicates.length);
 
             return {
-                items: sampleItems,
-                duplicates: sampleDuplicates,
-                meta: {
-                    totalCount: uniqueSegments.length,
-                    sampleCount,
-                    lastUpdated: new Date().toISOString(),
-                    totalProcessed: apiResponse.metrics?.segmentsProcessed || 0,
-                    duplicatesFound: apiResponse.metrics?.duplicatesFound || 0,
-                    deduplicationRate: apiResponse.metrics?.deduplicationRate || 0,
-                    method: apiResponse.testMetadata?.config?.method || 'unknown',
-                    action: apiResponse.testMetadata?.config?.action || 'unknown',
-                    hasMoreData: uniqueSegments.length > sampleCount
-                }
+                items: items.slice(0, sampleCount),
+                total: total,
+                duplicates: duplicates.slice(0, sampleDuplicatesCount),
+                duplicate_count: duplicate_count
             };
         }
 
@@ -721,35 +737,64 @@ export function WorkflowNodeConfig({
             return output;
         }
 
-        // If output has items array, limit to 5 samples
+        // Special handling ONLY for duplicate_segment format - must have duplicate_count field
+        // This ensures we don't accidentally match other nodes with items/total fields
+        if (output.items !== undefined &&
+            output.total !== undefined &&
+            output.duplicates !== undefined &&
+            output.duplicate_count !== undefined) {
+            // Duplicate segment format - keep it clean, just limit arrays
+            const items = Array.isArray(output.items) ? output.items.slice(0, 10) : output.items;
+            const duplicates = Array.isArray(output.duplicates) ? output.duplicates.slice(0, 10) : output.duplicates;
+
+            return {
+                items,
+                total: output.total,
+                duplicates,
+                duplicate_count: output.duplicate_count || 0
+            };
+        }
+
+        // If output has items array (generic case), limit to 10 samples and preserve all other fields
         if (output.items && Array.isArray(output.items)) {
             const totalCount = output.items.length;
-            const sampleCount = Math.min(5, totalCount);
+            const sampleCount = Math.min(10, totalCount);
             const sampleItems = output.items.slice(0, sampleCount);
 
             return {
-                ...output,
+                ...output,  // Preserve ALL other fields (meta, etc.)
                 items: sampleItems,
+                ...(output.meta ? {
+                    meta: {
+                        ...output.meta,
+                        totalCount,
+                        sampleCount,
+                        hasMoreData: totalCount > sampleCount
+                    }
+                } : {
+                    meta: {
+                        totalCount,
+                        sampleCount,
+                        lastUpdated: new Date().toISOString(),
+                        hasMoreData: totalCount > sampleCount
+                    }
+                })
+            };
+        }
+
+        // For other output formats, keep as is but add metadata if it doesn't exist
+        if (!output.meta) {
+            return {
+                ...output,
                 meta: {
-                    ...output.meta,
-                    totalCount,
-                    sampleCount,
                     lastUpdated: new Date().toISOString(),
-                    hasMoreData: totalCount > sampleCount
+                    sampleCount: 1,
+                    totalCount: 1
                 }
             };
         }
 
-        // For other output formats, keep as is but add metadata
-        return {
-            ...output,
-            meta: {
-                ...output.meta,
-                lastUpdated: new Date().toISOString(),
-                sampleCount: 1,
-                totalCount: 1
-            }
-        };
+        return output;
     };
 
 
@@ -1113,18 +1158,18 @@ export function WorkflowNodeConfig({
                     if (nodeData?.type === 'duplicate_segment') {
                         const method = nodeData.config?.method;
 
-                        // Show similarity threshold only for content_similarity method
-                        if (key === 'similarityThreshold' && method !== 'content_similarity') {
+                        // Show similarity threshold only for similarity method
+                        if (key === 'similarityThreshold' && method !== 'similarity') {
                             return null;
                         }
 
-                        // Show content field only for content_similarity method
-                        if (key === 'contentField' && method !== 'content_similarity') {
+                        // Show content field only for similarity method
+                        if (key === 'contentField' && method !== 'similarity') {
                             return null;
                         }
 
-                        // Show hash-specific fields only for content_hash method
-                        if ((key === 'caseSensitive' || key === 'normalizeText' || key === 'ignoreWhitespace') && method !== 'content_hash') {
+                        // Show hash-specific fields only for hash method
+                        if ((key === 'caseSensitive' || key === 'normalizeText' || key === 'ignoreWhitespace') && method !== 'hash') {
                             return null;
                         }
                     }
@@ -1218,7 +1263,9 @@ export function WorkflowNodeConfig({
                                 </SelectContent>
                             </Select>
                             <p className="text-xs text-gray-500">
-                                Select which field from the previous output contains the content to compare for duplicates
+                                Select which field from the previous output contains the content to compare for duplicates.
+                                <br />
+                                <strong>Note:</strong> Do not include wrapper fields like "data". Only select fields that exist in each item (e.g., "post_message", not "data.post_message").
                             </p>
                             {hasError && (
                                 <p className="text-sm text-red-500">{errorMessage}</p>
@@ -1757,47 +1804,94 @@ export function WorkflowNodeConfig({
         return null;
     }
 
-    // Get available fields from previous node output for mapping
-    function getPreviousOutputFields(): string[] {
-        const previousNode = getPreviousNode(nodeData?.id || '', workflowNodes);
-        if (!previousNode?.testOutput) return [];
-
+    // Recursively get all field paths from an object to the deepest level
+    // Handles arrays by extracting fields from first non-empty item
+    function getDeepFieldPaths(obj: any, prefix: string = '', visited: Set<any> = new Set()): string[] {
         const fields: string[] = [];
 
-        // Handle data source output format
-        if (previousNode.testOutput.items && Array.isArray(previousNode.testOutput.items)) {
-            const firstItem = previousNode.testOutput.items[0];
-            if (firstItem && typeof firstItem === 'object') {
-                fields.push(...Object.keys(firstItem));
+        // Prevent circular references
+        if (!obj || typeof obj !== 'object' || visited.has(obj)) {
+            return fields;
+        }
+        visited.add(obj);
+
+        // If it's an array, get fields from the first non-empty object element
+        if (Array.isArray(obj)) {
+            for (const item of obj) {
+                if (item && typeof item === 'object') {
+                    // If current level already has a prefix, add array index, otherwise skip it
+                    const newPrefix = prefix || '';
+                    const itemFields = getDeepFieldPaths(item, newPrefix, visited);
+                    if (itemFields.length > 0) {
+                        fields.push(...itemFields);
+                        break; // Just use the first non-empty object
+                    }
+                }
             }
+            return fields;
         }
 
-        // Handle other output formats
-        if (typeof previousNode.testOutput === 'object' && !previousNode.testOutput.items) {
-            fields.push(...Object.keys(previousNode.testOutput));
+        // For objects, extract all keys and recursively get nested fields
+        for (const key in obj) {
+            if (obj.hasOwnProperty(key)) {
+                const currentPath = prefix ? `${prefix}.${key}` : key;
+
+                // Add the current path
+                fields.push(currentPath);
+
+                // Recursively process nested values
+                const value = obj[key];
+                if (value && typeof value === 'object' && !visited.has(value)) {
+                    fields.push(...getDeepFieldPaths(value, currentPath, visited));
+                }
+            }
         }
 
         return fields;
     }
 
-    // Get field value from previous output for preview
+    // Get available fields from previous node output for mapping
+    // Works with any structure - data, items, or any nested format
+    function getPreviousOutputFields(): string[] {
+        const previousNode = getPreviousNode(nodeData?.id || '', workflowNodes);
+        if (!previousNode?.testOutput) return [];
+
+        // Start from the root of testOutput and get all deep fields
+        const allFields = getDeepFieldPaths(previousNode.testOutput);
+
+        // Remove duplicates and sort
+        return Array.from(new Set(allFields)).sort();
+    }
+
+    // Get field value from previous output for preview (supports nested paths)
+    // Works with any structure by searching through the entire output object
     function getPreviousOutputFieldValue(fieldPath: string): unknown {
         const previousNode = getPreviousNode(nodeData?.id || '', workflowNodes);
         if (!previousNode?.testOutput) return null;
 
-        // Handle data source output format
-        if (previousNode.testOutput.items && Array.isArray(previousNode.testOutput.items)) {
-            const firstItem = previousNode.testOutput.items[0];
-            if (firstItem && typeof firstItem === 'object') {
-                return firstItem[fieldPath];
+        // Function to get nested value using dot notation
+        const getNestedValue = (obj: any, path: string): unknown => {
+            if (!obj || !path) return null;
+
+            const parts = path.split('.');
+            let value: any = obj;
+
+            for (const part of parts) {
+                if (value && typeof value === 'object') {
+                    // Handle arrays: get first item if it's an array
+                    if (Array.isArray(value) && value.length > 0) {
+                        value = value[0];
+                    }
+                    value = value[part];
+                } else {
+                    return null;
+                }
             }
-        }
 
-        // Handle other output formats
-        if (typeof previousNode.testOutput === 'object' && !previousNode.testOutput.items) {
-            return previousNode.testOutput[fieldPath];
-        }
+            return value;
+        };
 
-        return null;
+        // Try to get value - the function will automatically handle arrays
+        return getNestedValue(previousNode.testOutput, fieldPath);
     }
 }

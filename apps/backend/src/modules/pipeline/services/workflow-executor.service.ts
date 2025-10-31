@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -10,8 +10,7 @@ import {
   WorkflowExecution,
   NodeExecutionSnapshot,
 } from '../entities/workflow-execution.entity';
-import { DocumentSegment } from '../../dataset/entities/document-segment.entity';
-import { BaseStep, StepExecutionContext } from '../steps/base.step';
+import { StepExecutionContext } from '../steps/base.step';
 import { PipelineStepRegistry } from './pipeline-step-registry.service';
 import { NodeOutputCacheService } from './node-output-cache.service';
 import { NotificationService } from '../../notification/notification.service';
@@ -43,8 +42,8 @@ export class WorkflowExecutor {
   constructor(
     @InjectRepository(WorkflowExecution)
     private readonly executionRepository: Repository<WorkflowExecution>,
-    @InjectRepository(DocumentSegment)
-    private readonly segmentRepository: Repository<DocumentSegment>,
+    @Inject(PipelineStepRegistry)
+    @Optional()
     private readonly stepRegistry: PipelineStepRegistry,
     private readonly nodeOutputCache: NodeOutputCacheService,
     private readonly notificationService: NotificationService,
@@ -61,25 +60,45 @@ export class WorkflowExecutor {
     const executionId = context.executionId;
     this.logger.log(`Starting workflow execution: ${executionId}`);
 
-    // Create execution record
-    const execution = this.executionRepository.create({
-      id: executionId,
-      workflowId: workflow.id,
-      documentId: context.documentId,
-      datasetId: context.datasetId,
-      status: 'running',
-      startedAt: new Date(),
-      nodeSnapshots: [],
-      metrics: this.createInitialMetrics(workflow.nodes.length),
-      executionContext: {
+    // Check if execution already exists (created by orchestrator)
+    let execution = await this.executionRepository.findOne({
+      where: { id: executionId },
+    });
+
+    if (execution) {
+      // Update existing execution to running status
+      execution.status = 'running';
+      execution.startedAt = new Date();
+      execution.metrics = this.createInitialMetrics(workflow.nodes.length);
+      execution.executionContext = {
         userId: context.userId,
         environment: process.env.NODE_ENV || 'development',
         version: '1.0.0',
         parameters: context.metadata || {},
-      },
-    });
+      };
+      await this.executionRepository.save(execution);
+    } else {
+      // Create new execution record (for direct calls)
+      execution = this.executionRepository.create({
+        id: executionId,
+        workflowId: workflow.id,
+        documentId: context.documentId,
+        datasetId: context.datasetId,
+        userId: context.userId,
+        status: 'running',
+        startedAt: new Date(),
+        nodeSnapshots: [],
+        metrics: this.createInitialMetrics(workflow.nodes.length),
+        executionContext: {
+          userId: context.userId,
+          environment: process.env.NODE_ENV || 'development',
+          version: '1.0.0',
+          parameters: context.metadata || {},
+        },
+      });
 
-    await this.executionRepository.save(execution);
+      await this.executionRepository.save(execution);
+    }
 
     try {
       // Build execution graph
@@ -125,10 +144,7 @@ export class WorkflowExecutor {
       );
 
       // Update execution with results
-      const finalMetrics = this.calculateFinalMetrics(
-        results,
-        inputData.length,
-      );
+      const finalMetrics = this.calculateFinalMetrics(results);
 
       await this.executionRepository.update(executionId, {
         status: 'completed',
@@ -151,7 +167,7 @@ export class WorkflowExecutor {
           ? result.completedAt.getTime() - result.startedAt.getTime()
           : 0;
 
-        await this.notificationService.sendWorkflowExecutionCompleted(
+        this.notificationService.sendWorkflowExecutionCompleted(
           executionId,
           workflow.id,
           {
@@ -181,7 +197,7 @@ export class WorkflowExecutor {
 
       // Send failure notification
       try {
-        await this.notificationService.sendWorkflowExecutionFailed(
+        this.notificationService.sendWorkflowExecutionFailed(
           executionId,
           workflow.id,
           error.message,
@@ -425,10 +441,38 @@ export class WorkflowExecutor {
     const startTime = new Date();
     this.logger.log(`Executing node: ${node.name} (${node.type})`);
 
+    // Send notification that node started running
+    try {
+      this.notificationService.sendWorkflowExecutionUpdate(
+        context.executionId,
+        context.workflowId,
+        {
+          status: 'running',
+          message: `Running node: ${node.name}`,
+          currentNodeId: node.id,
+          currentNodeStatus: 'running',
+          progress: null,
+        },
+      );
+    } catch (notificationError) {
+      this.logger.warn(
+        'Failed to send node start notification:',
+        notificationError,
+      );
+    }
+
     try {
       // Get step instance
+      this.logger.log(
+        `Available step types: ${this.stepRegistry.getStepTypes().join(', ')}`,
+      );
+      this.logger.log(`Looking for step type: ${node.type}`);
       const stepInstance = this.stepRegistry.createStepInstance(node.type);
       if (!stepInstance) {
+        this.logger.error(`Step type not found: ${node.type}`);
+        this.logger.error(
+          `Available step types: ${this.stepRegistry.getStepTypes().join(', ')}`,
+        );
         throw new Error(`Step type not found: ${node.type}`);
       }
 
@@ -447,6 +491,37 @@ export class WorkflowExecutor {
         },
       };
 
+      // Generic debug logging for node execution (only when debug level is enabled)
+      this.logger.debug(`Executing node: ${node.name} (${node.type})`);
+      this.logger.debug(
+        `Node ID: ${node.id}, Input data count: ${inputData.length}`,
+      );
+      if (inputData.length > 0 && typeof inputData[0] === 'object') {
+        this.logger.debug(
+          `First input item keys: ${Object.keys(inputData[0]).join(', ')}`,
+        );
+      }
+
+      // Send notification that node started (allow UI to show node immediately)
+      try {
+        this.notificationService.sendWorkflowExecutionUpdate(
+          context.executionId,
+          context.workflowId,
+          {
+            status: 'running',
+            message: `Starting node: ${node.name}`,
+            currentNodeId: node.id,
+            currentNodeStatus: 'running',
+            progress: null,
+          },
+        );
+      } catch (notificationError) {
+        this.logger.warn(
+          'Failed to send node start notification:',
+          notificationError,
+        );
+      }
+
       // Execute step
       const result = await stepInstance.execute(
         inputData,
@@ -457,18 +532,42 @@ export class WorkflowExecutor {
       const endTime = new Date();
       const duration = endTime.getTime() - startTime.getTime();
 
+      // Generic debug logging for result output
+      if (result.success) {
+        this.logger.debug(
+          `Node ${node.name} completed. Output segments: ${result.outputSegments?.length || 0}`,
+        );
+        if (result.outputSegments && result.outputSegments.length > 0) {
+          this.logger.debug(
+            `First output keys: ${Object.keys(result.outputSegments[0]).join(', ')}`,
+          );
+        }
+      }
+
       // Create snapshot
+      // Store inputData without wrapper for all node types
+      let snapshotInputData: any;
+      if (inputData.length === 1 && typeof inputData[0] === 'object') {
+        // Store single object directly without wrapper
+        snapshotInputData = inputData[0];
+      } else {
+        // Store array directly without wrapper
+        snapshotInputData = inputData;
+      }
+
+      // Use step's formatOutput method to format the output
+      const formattedOutputData = stepInstance.formatOutput(result, inputData);
+
       const snapshot: NodeExecutionSnapshot = {
         nodeId: node.id,
         nodeName: node.name,
         timestamp: endTime,
+        startedAt: startTime,
+        completedAt: endTime,
+        durationMs: duration,
         status: result.success ? 'completed' : 'failed',
-        inputData: {
-          count: inputData.length,
-          sample: inputData.slice(0, 5), // First 5 items as sample
-          schema: this.inferSchema(inputData),
-        },
-        outputData: this.transformOutputData(result, node.type),
+        inputData: snapshotInputData,
+        outputData: formattedOutputData,
         metrics: {
           processingTime: duration,
           memoryUsage: process.memoryUsage().heapUsed,
@@ -479,11 +578,66 @@ export class WorkflowExecutor {
         progress: 100,
       };
 
+      // Persist snapshot incrementally so frontend can open node details immediately
+      try {
+        const exec = await this.executionRepository.findOne({
+          where: { id: context.executionId },
+        });
+        if (exec) {
+          exec.nodeSnapshots = [...(exec.nodeSnapshots || []), snapshot];
+          await this.executionRepository.save(exec);
+        }
+      } catch (persistErr) {
+        this.logger.warn(
+          'Failed to persist node snapshot incrementally:',
+          persistErr,
+        );
+      }
+
+      // Send notification that node completed
+      try {
+        this.notificationService.sendWorkflowExecutionUpdate(
+          context.executionId,
+          context.workflowId,
+          {
+            status: 'running',
+            message: `Completed node: ${node.name}`,
+            currentNodeId: node.id,
+            currentNodeStatus: result.success ? 'completed' : 'failed',
+            progress: null,
+          },
+        );
+      } catch (notificationError) {
+        this.logger.warn(
+          'Failed to send node completion notification:',
+          notificationError,
+        );
+      }
+
+      // Use the formatted output from snapshot for storage
+      // Store the formatted output directly without wrapping
+      let outputDataForStorage: any;
+
+      if (Array.isArray(formattedOutputData)) {
+        // Already an array - use as-is
+        outputDataForStorage = formattedOutputData;
+      } else if (
+        formattedOutputData &&
+        typeof formattedOutputData === 'object'
+      ) {
+        // Object structure (e.g., { items: [...], total: X, duplicates: [...] })
+        // Store directly without wrapping
+        outputDataForStorage = formattedOutputData;
+      } else {
+        // Fallback to raw segments
+        outputDataForStorage = result.outputSegments || [];
+      }
+
       return {
         nodeId: node.id,
         status: result.success ? 'completed' : 'failed',
         inputData,
-        outputData: result.outputSegments || [],
+        outputData: outputDataForStorage,
         metrics: result.metrics || {},
         error: result.error,
         snapshot,
@@ -491,21 +645,26 @@ export class WorkflowExecutor {
     } catch (error) {
       this.logger.error(`Node execution failed: ${node.name}`, error);
 
+      // Store inputData without wrapper for all node types
+      let errorSnapshotInputData: any;
+      if (inputData.length === 1 && typeof inputData[0] === 'object') {
+        // Store single object directly without wrapper
+        errorSnapshotInputData = inputData[0];
+      } else {
+        // Store array directly without wrapper
+        errorSnapshotInputData = inputData;
+      }
+
       const snapshot: NodeExecutionSnapshot = {
         nodeId: node.id,
         nodeName: node.name,
         timestamp: new Date(),
+        startedAt: startTime,
+        completedAt: new Date(),
+        durationMs: new Date().getTime() - startTime.getTime(),
         status: 'failed',
-        inputData: {
-          count: inputData.length,
-          sample: inputData.slice(0, 5),
-          schema: this.inferSchema(inputData),
-        },
-        outputData: {
-          count: 0,
-          sample: [],
-          schema: {},
-        },
+        inputData: errorSnapshotInputData,
+        outputData: [],
         metrics: {
           processingTime: new Date().getTime() - startTime.getTime(),
           memoryUsage: process.memoryUsage().heapUsed,
@@ -515,6 +674,42 @@ export class WorkflowExecutor {
         error: error.message,
         progress: 0,
       };
+
+      // Persist failed snapshot incrementally
+      try {
+        const exec = await this.executionRepository.findOne({
+          where: { id: context.executionId },
+        });
+        if (exec) {
+          exec.nodeSnapshots = [...(exec.nodeSnapshots || []), snapshot];
+          await this.executionRepository.save(exec);
+        }
+      } catch (persistErr) {
+        this.logger.warn(
+          'Failed to persist failed node snapshot incrementally:',
+          persistErr,
+        );
+      }
+
+      // Send notification that node failed
+      try {
+        this.notificationService.sendWorkflowExecutionUpdate(
+          context.executionId,
+          context.workflowId,
+          {
+            status: 'running',
+            message: `Failed node: ${node.name}`,
+            currentNodeId: node.id,
+            currentNodeStatus: 'failed',
+            progress: null,
+          },
+        );
+      } catch (notificationError) {
+        this.logger.warn(
+          'Failed to send node failure notification:',
+          notificationError,
+        );
+      }
 
       return {
         nodeId: node.id,
@@ -568,18 +763,69 @@ export class WorkflowExecutor {
                 );
               }
 
-              if (data && data.length > 0) {
+              // Extract the actual segments array if data is a transformed object
+              let segments: any[] = [];
+              if (data) {
+                if (Array.isArray(data)) {
+                  // Pass array as-is (preserves structure if it contains objects with metadata fields)
+                  segments = data;
+                } else if (
+                  typeof data === 'object' &&
+                  'count' in data &&
+                  'sample' in data &&
+                  Array.isArray((data as any).sample) &&
+                  (data as any).sample.length > 0
+                ) {
+                  // {count, sample, schema} structure - extract sample[0] if it's a structured object
+                  // This preserves structure from previous nodes that output metadata
+                  const sampleItem = (data as any).sample[0];
+                  if (
+                    sampleItem &&
+                    typeof sampleItem === 'object' &&
+                    ('data' in sampleItem ||
+                      'total' in sampleItem ||
+                      'duplicates' in sampleItem)
+                  ) {
+                    // Structured object - extract it
+                    segments = [sampleItem];
+                  } else {
+                    // For other nodes, pass the wrapped structure
+                    segments = [data];
+                  }
+                } else if (
+                  typeof data === 'object' &&
+                  'items' in data &&
+                  Array.isArray((data as any).items)
+                ) {
+                  // Transformed output format like { items: [...], count: X, ... }
+                  // Pass the full wrapped object to preserve structure for the next node
+                  segments = [data];
+                } else if (
+                  typeof data === 'object' &&
+                  'data' in data &&
+                  Array.isArray((data as any).data)
+                ) {
+                  // Raw structure with data field like { total: X, data: [...] }
+                  // Pass the complete structure to maintain structure
+                  segments = [data];
+                } else {
+                  // Fallback: treat entire object as single item
+                  segments = [data];
+                }
+              }
+
+              if (segments && segments.length > 0) {
                 this.logger.log(
                   `Found data from previous node ${inputSource.nodeId}:`,
-                  data.length,
+                  segments.length,
                   'items',
                 );
                 if (inputSource.filters) {
                   inputData = inputData.concat(
-                    this.applyFilters(data, inputSource.filters),
+                    this.applyFilters(segments, inputSource.filters),
                   );
                 } else {
-                  inputData = inputData.concat(data);
+                  inputData = inputData.concat(segments);
                 }
                 this.logger.log(
                   `Added to input data. Current length: ${inputData.length}`,
@@ -800,10 +1046,7 @@ export class WorkflowExecutor {
   /**
    * Calculate final metrics
    */
-  private calculateFinalMetrics(
-    results: NodeExecutionResult[],
-    initialDataCount: number,
-  ): any {
+  private calculateFinalMetrics(results: NodeExecutionResult[]): any {
     const completedNodes = results.filter(
       (r) => r.status === 'completed',
     ).length;
@@ -877,8 +1120,8 @@ export class WorkflowExecutor {
             nodeName: node.name,
             timestamp: new Date(),
             status: 'failed',
-            inputData: { count: 0, sample: [], schema: {} },
-            outputData: { count: 0, sample: [], schema: {} },
+            inputData: [],
+            outputData: [],
             metrics: {
               processingTime: 0,
               memoryUsage: 0,
@@ -909,60 +1152,5 @@ export class WorkflowExecutor {
     }
 
     return mergedData;
-  }
-
-  /**
-   * Transform output data to match test output format
-   */
-  private transformOutputData(result: any, nodeType: string): any {
-    const outputSegments = result.outputSegments || [];
-
-    // Transform based on node type to match frontend test output format
-    if (nodeType === 'datasource') {
-      return {
-        count: outputSegments.length,
-        sample: outputSegments.slice(0, 5),
-        schema: this.inferSchema(outputSegments),
-        items: outputSegments,
-        meta: {
-          total: result.metrics?.outputCount || outputSegments.length,
-          loadedCount: result.metrics?.loadedCount || outputSegments.length,
-          limit: result.config?.limit || 10,
-          offset: result.config?.offset || 0,
-        },
-      };
-    }
-
-    if (nodeType === 'duplicate_segment') {
-      const uniqueSegments = outputSegments || [];
-      const duplicates = result.duplicates || [];
-
-      return {
-        count: uniqueSegments.length,
-        sample: uniqueSegments.slice(0, 5),
-        schema: this.inferSchema(uniqueSegments),
-        items: uniqueSegments,
-        duplicates: duplicates,
-        meta: {
-          totalProcessed: result.metrics?.segmentsProcessed || 0,
-          duplicatesFound: result.metrics?.duplicatesFound || 0,
-          deduplicationRate: result.metrics?.deduplicationRate || 0,
-          method: result.config?.method || 'unknown',
-          action: result.config?.action || 'unknown',
-        },
-      };
-    }
-
-    // Default transformation for other node types
-    return {
-      count: outputSegments.length,
-      sample: outputSegments.slice(0, 5),
-      schema: this.inferSchema(outputSegments),
-      items: outputSegments,
-      meta: {
-        total: outputSegments.length,
-        processed: outputSegments.length,
-      },
-    };
   }
 }

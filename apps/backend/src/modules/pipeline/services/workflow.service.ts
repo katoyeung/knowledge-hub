@@ -79,12 +79,14 @@ export class WorkflowService {
   }
 
   /**
-   * Get all workflows with filters
+   * Get all workflows with filters and pagination
    */
   async getWorkflows(
     userId: string,
     filters: WorkflowFilters = {},
-  ): Promise<Workflow[]> {
+    limit: number = 50,
+    offset: number = 0,
+  ): Promise<{ workflows: Workflow[]; total: number }> {
     const queryBuilder = this.workflowRepository
       .createQueryBuilder('workflow')
       .where('workflow.userId = :userId', { userId });
@@ -113,7 +115,13 @@ export class WorkflowService {
       });
     }
 
-    return await queryBuilder.orderBy('workflow.createdAt', 'DESC').getMany();
+    const [workflows, total] = await queryBuilder
+      .orderBy('workflow.createdAt', 'DESC')
+      .take(limit)
+      .skip(offset)
+      .getManyAndCount();
+
+    return { workflows, total };
   }
 
   /**
@@ -172,6 +180,7 @@ export class WorkflowService {
 
   /**
    * Optimize execution data by limiting large datasets
+   * Uses generic array limiting function to handle any data structure
    */
   private optimizeExecutionData(
     execution: WorkflowExecution,
@@ -183,24 +192,19 @@ export class WorkflowService {
     const optimizedSnapshots = execution.nodeSnapshots.map((snapshot) => {
       const optimizedSnapshot = { ...snapshot };
 
-      // Optimize outputData - remove large items array, keep only sample
-      if (
-        optimizedSnapshot.outputData?.items &&
-        Array.isArray(optimizedSnapshot.outputData.items)
-      ) {
-        if (optimizedSnapshot.outputData.items.length > 10) {
-          const { items, ...restOutputData } = optimizedSnapshot.outputData;
-          optimizedSnapshot.outputData = {
-            ...restOutputData,
-            meta: {
-              ...optimizedSnapshot.outputData.meta,
-              totalCount: items.length,
-              sampleCount: optimizedSnapshot.outputData.sample?.length || 10,
-              hasMoreData: true,
-              lastUpdated: new Date().toISOString(),
-            },
-          };
-        }
+      // Optimize outputData and inputData using generic array limiting
+      if (optimizedSnapshot.outputData) {
+        optimizedSnapshot.outputData = this.limitArraySizes(
+          optimizedSnapshot.outputData,
+          10,
+        );
+      }
+
+      if (optimizedSnapshot.inputData) {
+        optimizedSnapshot.inputData = this.limitArraySizes(
+          optimizedSnapshot.inputData,
+          10,
+        );
       }
 
       return optimizedSnapshot;
@@ -270,6 +274,37 @@ export class WorkflowService {
     const executionSummaries = executions.map((execution) =>
       this.createExecutionSummary(execution),
     );
+
+    return { executions: executionSummaries, total };
+  }
+
+  /**
+   * Get all executions for a user across all workflows
+   */
+  async getAllExecutions(
+    userId: string,
+    limit: number = 50,
+    offset: number = 0,
+  ): Promise<{ executions: any[]; total: number }> {
+    const [executions, total] = await this.executionRepository.findAndCount({
+      where: { userId },
+      relations: ['workflow'],
+      order: { startedAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    // Create lightweight summaries with workflow info
+    const executionSummaries = executions.map((execution) => ({
+      ...this.createExecutionSummary(execution),
+      workflow: execution.workflow
+        ? {
+            id: execution.workflow.id,
+            name: execution.workflow.name,
+            nodes: execution.workflow.nodes || [],
+          }
+        : null,
+    }));
 
     return { executions: executionSummaries, total };
   }
@@ -389,7 +424,7 @@ export class WorkflowService {
         }
 
         // Provide default configuration if empty
-        const config = this.getDefaultConfigForStepType(node.type, node.config);
+        let config = this.getDefaultConfigForStepType(node.type, node.config);
 
         // Validate node configuration
         const validation = await this.stepRegistry.validateStepConfig(
@@ -460,8 +495,9 @@ export class WorkflowService {
     switch (stepType) {
       case 'duplicate_segment':
         defaultConfig = {
-          method: 'content_hash',
-          action: 'skip',
+          method: 'hash',
+          similarityThreshold: 0.8,
+          contentField: 'content',
           caseSensitive: false,
           ignoreWhitespace: true,
           normalizeText: true,
@@ -548,6 +584,18 @@ export class WorkflowService {
         };
         break;
 
+      case 'lenx_api_datasource':
+        defaultConfig = {
+          apiUrl: 'https://prod-searcher.fasta.ai/api/raw/all',
+          authToken: '',
+          dateMode: 'dynamic',
+          query: '',
+          intervalMinutes: 30,
+          timeout: 30000,
+          maxRetries: 3,
+        };
+        break;
+
       default:
         defaultConfig = {};
     }
@@ -604,6 +652,30 @@ export class WorkflowService {
   }
 
   /**
+   * Recursively limit arrays to maxItems (default 10) for preview
+   * This prevents large arrays from being returned in test output
+   */
+  private limitArraySizes(data: any, maxItems: number = 10): any {
+    if (Array.isArray(data)) {
+      // Limit array size
+      const limited = data.slice(0, maxItems);
+      // Recursively process each item in the array
+      return limited.map((item) => this.limitArraySizes(item, maxItems));
+    } else if (data && typeof data === 'object') {
+      // Process object properties recursively
+      const limited: any = {};
+      for (const key in data) {
+        if (data.hasOwnProperty(key)) {
+          limited[key] = this.limitArraySizes(data[key], maxItems);
+        }
+      }
+      return limited;
+    }
+    // Primitive values or null/undefined - return as-is
+    return data;
+  }
+
+  /**
    * Test a workflow step with actual data
    */
   async testStep(
@@ -640,11 +712,26 @@ export class WorkflowService {
         logger: this.logger,
       };
 
-      // Use provided input segments or empty array for data source steps
+      // Use provided input segments
       const segmentsToProcess = inputSegments || [];
+
+      // Generic warning if step expects input but none provided
+      if (segmentsToProcess.length === 0) {
+        this.logger.warn(
+          `No input segments provided for ${stepType}. Please test the previous node first to provide input data.`,
+        );
+      }
+
       this.logger.log(
         `Processing ${segmentsToProcess.length} input segments for step: ${stepType}`,
       );
+
+      // Log the first input segment for debugging
+      if (segmentsToProcess.length > 0) {
+        this.logger.debug(
+          `First input segment structure: ${JSON.stringify(Object.keys(segmentsToProcess[0]))}`,
+        );
+      }
 
       // Execute the step with input segments
       const result = await stepInstance.execute(
@@ -653,48 +740,14 @@ export class WorkflowService {
         context,
       );
 
-      // Return the result with additional metadata
-      return {
-        success: result.success,
-        stepType,
-        stepName: stepInstance.getMetadata().name,
-        outputSegments:
-          result.outputSegments?.map((segment: any) => ({
-            id: segment.id,
-            content:
-              segment.content.substring(0, 200) +
-              (segment.content.length > 200 ? '...' : ''),
-            wordCount: segment.wordCount,
-            tokens: segment.tokens,
-            status: segment.status,
-            enabled: segment.enabled,
-            createdAt: segment.createdAt,
-            documentId: segment.documentId,
-            datasetId: segment.datasetId,
-          })) || [],
-        duplicates:
-          result.duplicates?.map((segment: any) => ({
-            id: segment.id,
-            content:
-              segment.content.substring(0, 200) +
-              (segment.content.length > 200 ? '...' : ''),
-            wordCount: segment.wordCount,
-            tokens: segment.tokens,
-            status: segment.status,
-            enabled: segment.enabled,
-            createdAt: segment.createdAt,
-            documentId: segment.documentId,
-            datasetId: segment.datasetId,
-          })) || [],
-        metrics: result.metrics,
-        error: result.error,
-        testMetadata: {
-          executedAt: new Date().toISOString(),
-          userId,
-          stepType,
-          config,
-        },
-      };
+      // Use step's formatOutput method to format the output
+      const formattedOutput = stepInstance.formatOutput(
+        result,
+        segmentsToProcess,
+      );
+
+      // Apply generic array size limiting to all step types (recursively limits arrays > 10 items)
+      return this.limitArraySizes(formattedOutput, 10);
     } catch (error) {
       this.logger.error(`Step test failed: ${error.message}`, error.stack);
       return {
@@ -754,7 +807,12 @@ export class WorkflowService {
   async deleteExecutions(
     executionIds: string[],
     userId: string,
-  ): Promise<{ success: boolean; message: string; deletedCount: number }> {
+  ): Promise<{
+    success: boolean;
+    message: string;
+    deletedCount: number;
+    cancelledCount?: number;
+  }> {
     this.logger.log(`Deleting ${executionIds.length} executions`);
 
     if (!executionIds || executionIds.length === 0) {
@@ -773,22 +831,57 @@ export class WorkflowService {
       throw new Error('No executions found');
     }
 
-    // Check if any execution is currently running
+    // Cancel running executions first, then delete all
     const runningExecutions = executions.filter((e) => e.status === 'running');
+
+    // Cancel running executions before deleting
     if (runningExecutions.length > 0) {
-      throw new Error(
-        `Cannot delete ${runningExecutions.length} running execution(s). Please cancel them first.`,
+      const runningIds = runningExecutions.map((e) => e.id);
+      await this.executionRepository.update(
+        { id: In(runningIds) },
+        {
+          status: 'cancelled',
+          completedAt: new Date(),
+          cancellationReason: 'Cancelled before batch deletion',
+          cancelledBy: userId,
+          cancelledAt: new Date(),
+        },
+      );
+      this.logger.log(
+        `Cancelled ${runningExecutions.length} running execution(s) before deletion`,
       );
     }
 
-    // Delete all executions
+    // Delete all executions (now all are cancellable/deletable)
     await this.executionRepository.remove(executions);
     this.logger.log(`${executions.length} executions deleted`);
 
+    const message =
+      runningExecutions.length > 0
+        ? `${executions.length} execution(s) deleted successfully (${runningExecutions.length} were cancelled first).`
+        : `${executions.length} execution(s) deleted successfully`;
+
     return {
       success: true,
-      message: `${executions.length} execution(s) deleted successfully`,
+      message,
       deletedCount: executions.length,
+      cancelledCount: runningExecutions.length,
     };
+  }
+
+  /**
+   * Infer data schema
+   */
+  private inferSchema(data: any[]): Record<string, any> {
+    if (data.length === 0) return {};
+
+    const sample = data[0];
+    const schema: Record<string, any> = {};
+
+    Object.keys(sample).forEach((key) => {
+      schema[key] = typeof sample[key];
+    });
+
+    return schema;
   }
 }

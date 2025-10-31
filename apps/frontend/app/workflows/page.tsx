@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Search, Play, Settings, History, Trash2, Edit, Copy, MoreVertical } from 'lucide-react';
+import { Plus, Search, Play, Settings, History, Trash2, Edit, Copy, MoreVertical, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Workflow, WorkflowExecution, WorkflowExecutionInput } from '@/lib/api/workflow';
 import { workflowApi } from '@/lib/api/workflow';
 import { useToast } from '@/components/ui/simple-toast';
@@ -24,6 +24,16 @@ export default function WorkflowsPage() {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [activeTab, setActiveTab] = useState('workflows');
+
+    // Pagination state for workflows
+    const [workflowPage, setWorkflowPage] = useState(0);
+    const [workflowPageSize] = useState(10); // 10 per page
+    const [workflowTotal, setWorkflowTotal] = useState(0);
+
+    // Pagination state for executions
+    const [executionPage, setExecutionPage] = useState(0);
+    const [executionPageSize] = useState(10); // 10 per page
+    const [executionTotal, setExecutionTotal] = useState(0);
 
     // Execution modal state
     const [executionModal, setExecutionModal] = useState<{
@@ -48,13 +58,20 @@ export default function WorkflowsPage() {
 
     useEffect(() => {
         loadWorkflows();
-    }, []);
+    }, [workflowPage]);
+
+    // Reset to first page when search changes
+    useEffect(() => {
+        if (workflowPage !== 0) {
+            setWorkflowPage(0);
+        }
+    }, [searchTerm]);
 
     useEffect(() => {
-        if (workflows.length > 0) {
+        if (activeTab === 'executions') {
             loadRecentExecutions();
         }
-    }, [workflows]);
+    }, [activeTab, executionPage]);
 
     // Close dropdowns when clicking outside
     useEffect(() => {
@@ -77,8 +94,13 @@ export default function WorkflowsPage() {
 
     const loadWorkflows = async () => {
         try {
-            const data = await workflowApi.getAll();
-            setWorkflows(data);
+            const offset = workflowPage * workflowPageSize;
+            const response = await workflowApi.getAll({
+                limit: workflowPageSize,
+                offset: offset,
+            });
+            setWorkflows(response.workflows);
+            setWorkflowTotal(response.total);
         } catch (error: any) {
             console.error('Failed to load workflows:', error);
             showError('Failed to load workflows');
@@ -89,15 +111,16 @@ export default function WorkflowsPage() {
 
     const loadRecentExecutions = async () => {
         try {
-            // Load recent executions from all workflows
-            const allExecutions: WorkflowExecution[] = [];
-            for (const workflow of workflows) {
-                const history = await workflowApi.getExecutionHistory(workflow.id, { limit: 5 });
-                allExecutions.push(...history.executions);
-            }
-            setExecutions(allExecutions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+            const offset = executionPage * executionPageSize;
+            const response = await workflowApi.getAllExecutions({
+                limit: executionPageSize,
+                offset: offset,
+            });
+            setExecutions(response.executions);
+            setExecutionTotal(response.total);
         } catch (error: any) {
             console.error('Failed to load executions:', error);
+            showError('Failed to load executions');
         }
     };
 
@@ -145,6 +168,23 @@ export default function WorkflowsPage() {
         }
     };
 
+    const handleToggleActive = async (workflow: Workflow) => {
+        try {
+            await workflowApi.update(workflow.id, {
+                ...workflow,
+                isActive: !workflow.isActive,
+            });
+            success(`Workflow ${workflow.isActive ? 'deactivated' : 'activated'} successfully`);
+            loadWorkflows();
+        } catch (error: any) {
+            console.error('Failed to toggle workflow active status:', error);
+            const errorMessage = error?.response?.data?.message ||
+                error?.message ||
+                'Failed to update workflow';
+            showError(errorMessage);
+        }
+    };
+
     const toggleDropdown = (workflowId: string) => {
         setOpenDropdowns(prev => {
             const newSet = new Set(prev);
@@ -182,6 +222,9 @@ export default function WorkflowsPage() {
             });
             success(`Workflow execution started: ${response.executionId}`);
             loadRecentExecutions();
+            // Close modal and redirect to execution detail page
+            setExecutionModal({ workflow: null, isOpen: false });
+            router.push(`/workflows/executions/${response.executionId}`);
         } catch (error: any) {
             console.error('Failed to execute workflow:', error);
             showError('Failed to execute workflow');
@@ -269,10 +312,15 @@ export default function WorkflowsPage() {
         }
     };
 
+    // Filter workflows client-side for search (since backend pagination is already applied)
     const filteredWorkflows = workflows.filter(workflow =>
         workflow.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         workflow.description?.toLowerCase().includes(searchTerm.toLowerCase())
     );
+
+    const totalPages = Math.ceil(workflowTotal / workflowPageSize);
+    const hasNextPage = workflowPage < totalPages - 1;
+    const hasPrevPage = workflowPage > 0;
 
     if (loading) {
         return (
@@ -468,6 +516,26 @@ export default function WorkflowsPage() {
                                                                     Duplicate
                                                                 </div>
                                                                 <div
+                                                                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleToggleActive(workflow);
+                                                                        closeDropdown(workflow.id);
+                                                                    }}
+                                                                >
+                                                                    {workflow.isActive ? (
+                                                                        <>
+                                                                            <Settings className="h-4 w-4 mr-2 inline" />
+                                                                            Deactivate
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <Play className="h-4 w-4 mr-2 inline" />
+                                                                            Activate
+                                                                        </>
+                                                                    )}
+                                                                </div>
+                                                                <div
                                                                     className="block px-4 py-2 text-sm text-red-600 hover:bg-gray-100 hover:text-red-700 cursor-pointer"
                                                                     onClick={(e) => {
                                                                         e.stopPropagation();
@@ -489,6 +557,38 @@ export default function WorkflowsPage() {
                             </Table>
                         </div>
                     )}
+
+                    {/* Pagination Controls */}
+                    {filteredWorkflows.length > 0 && (
+                        <div className="flex items-center justify-between mt-4">
+                            <div className="text-sm text-gray-600">
+                                Showing {workflowPage * workflowPageSize + 1} to {Math.min((workflowPage + 1) * workflowPageSize, workflowTotal)} of {workflowTotal} workflows
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setWorkflowPage(p => Math.max(0, p - 1))}
+                                    disabled={!hasPrevPage}
+                                >
+                                    <ChevronLeft className="h-4 w-4 mr-1" />
+                                    Previous
+                                </Button>
+                                <span className="text-sm text-gray-600">
+                                    Page {workflowPage + 1} of {totalPages || 1}
+                                </span>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setWorkflowPage(p => p + 1)}
+                                    disabled={!hasNextPage}
+                                >
+                                    Next
+                                    <ChevronRight className="h-4 w-4 ml-1" />
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </TabsContent>
 
                 <TabsContent value="executions" className="space-y-4">
@@ -506,57 +606,98 @@ export default function WorkflowsPage() {
                             </CardContent>
                         </Card>
                     ) : (
-                        <div className="space-y-4">
-                            {executions.map((execution) => (
-                                <Card key={execution.id}>
-                                    <CardContent className="p-4">
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex-1">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <h3 className="font-semibold">
-                                                        {execution.workflow?.name || 'Unknown Workflow'}
-                                                    </h3>
-                                                    <Badge className={getStatusColor(execution.status)}>
-                                                        {execution.status}
-                                                    </Badge>
-                                                </div>
-                                                <p className="text-sm text-gray-600">
-                                                    Started: {new Date(execution.startedAt || execution.createdAt).toLocaleString()}
-                                                </p>
-                                                {execution.progress && (
-                                                    <div className="mt-2">
-                                                        <div className="flex items-center justify-between text-sm mb-1">
-                                                            <span>{execution.progress.message}</span>
-                                                            <span>{execution.progress.overallProgress}%</span>
-                                                        </div>
-                                                        <div className="w-full bg-gray-200 rounded-full h-2">
-                                                            <div
-                                                                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                                                                style={{ width: `${execution.progress.overallProgress}%` }}
-                                                            />
-                                                        </div>
+                        <>
+                            <div className="space-y-4">
+                                {executions.map((execution) => (
+                                    <Card key={execution.id}>
+                                        <CardContent className="p-4">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <h3 className="font-semibold">
+                                                            {execution.workflow?.name || execution.workflowId || 'Unknown Workflow'}
+                                                        </h3>
+                                                        <Badge className={getStatusColor(execution.status)}>
+                                                            {execution.status}
+                                                        </Badge>
                                                     </div>
-                                                )}
+                                                    <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
+                                                        <span>
+                                                            Started: {new Date(execution.startedAt || execution.createdAt).toLocaleString()}
+                                                        </span>
+                                                        {execution.workflow?.nodes && (
+                                                            <span>
+                                                                Nodes: {execution.workflow.nodes.length}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {execution.progress && (
+                                                        <div className="mt-2">
+                                                            <div className="flex items-center justify-between text-sm mb-1">
+                                                                <span>{execution.progress.message}</span>
+                                                                <span>{execution.progress.overallProgress}%</span>
+                                                            </div>
+                                                            <div className="w-full bg-gray-200 rounded-full h-2">
+                                                                <div
+                                                                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                                                    style={{ width: `${execution.progress.overallProgress}%` }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    {execution.durationMs && (
+                                                        <span className="text-sm text-gray-500">
+                                                            {Math.round(execution.durationMs / 1000)}s
+                                                        </span>
+                                                    )}
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => router.push(`/workflows/executions/${execution.id}`)}
+                                                    >
+                                                        View Details
+                                                    </Button>
+                                                </div>
                                             </div>
-                                            <div className="flex items-center gap-2">
-                                                {execution.durationMs && (
-                                                    <span className="text-sm text-gray-500">
-                                                        {Math.round(execution.durationMs / 1000)}s
-                                                    </span>
-                                                )}
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    onClick={() => router.push(`/workflows/executions/${execution.id}`)}
-                                                >
-                                                    View Details
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    </CardContent>
-                                </Card>
-                            ))}
-                        </div>
+                                        </CardContent>
+                                    </Card>
+                                ))}
+                            </div>
+
+                            {/* Pagination Controls */}
+                            {executions.length > 0 && (
+                                <div className="flex items-center justify-between mt-4">
+                                    <div className="text-sm text-gray-600">
+                                        Showing {executionPage * executionPageSize + 1} to {Math.min((executionPage + 1) * executionPageSize, executionTotal)} of {executionTotal} executions
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setExecutionPage(p => Math.max(0, p - 1))}
+                                            disabled={executionPage === 0}
+                                        >
+                                            <ChevronLeft className="h-4 w-4 mr-1" />
+                                            Previous
+                                        </Button>
+                                        <span className="text-sm text-gray-600">
+                                            Page {executionPage + 1} of {Math.ceil(executionTotal / executionPageSize) || 1}
+                                        </span>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setExecutionPage(p => p + 1)}
+                                            disabled={(executionPage + 1) * executionPageSize >= executionTotal}
+                                        >
+                                            Next
+                                            <ChevronRight className="h-4 w-4 ml-1" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
                 </TabsContent>
             </Tabs>

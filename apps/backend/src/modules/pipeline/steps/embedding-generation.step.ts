@@ -28,6 +28,15 @@ export class EmbeddingGenerationStep extends BaseStep {
     super('embedding_generation', 'Embedding Generation');
   }
 
+  protected async executeStep(
+    _inputSegments: DocumentSegment[],
+    _config: any,
+    _context: any,
+  ): Promise<DocumentSegment[]> {
+    this.logger.warn('executeStep() not yet migrated - using old execute()');
+    return [];
+  }
+
   async execute(
     inputSegments: DocumentSegment[],
     config: EmbeddingGenerationConfig,

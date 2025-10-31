@@ -159,7 +159,7 @@ export default function ApiKeysPage() {
                         </Button>
                     </div>
                 ) : (
-                    <div className="overflow-hidden">
+                    <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50">
                                 <tr>
@@ -175,14 +175,14 @@ export default function ApiKeysPage() {
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Last Used
                                     </th>
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
                                         Actions
                                     </th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {apiKeys.map((key) => (
-                                    <tr key={key.id}>
+                                    <tr key={key.id} className="hover:bg-gray-50">
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="text-sm font-medium text-gray-900">{key.name}</div>
                                         </td>
@@ -207,13 +207,14 @@ export default function ApiKeysPage() {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             {key.lastUsedAt ? formatDate(key.lastUsedAt) : 'Never'}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                        <td className="px-6 py-4 whitespace-nowrap text-center">
                                             <Button
                                                 variant="ghost"
                                                 size="sm"
                                                 onClick={() => handleDeleteKey(key.id)}
                                                 disabled={deleting === key.id}
-                                                className="text-red-600 hover:text-red-900"
+                                                className="text-red-600 hover:text-red-900 hover:bg-red-50"
+                                                title="Delete API key"
                                             >
                                                 {deleting === key.id ? (
                                                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>

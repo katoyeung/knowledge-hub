@@ -50,22 +50,38 @@ export class PipelineExecutor {
     const executionId = context.executionId;
     this.logger.log(`Starting pipeline execution: ${executionId}`);
 
-    // Create execution record
-    const execution = this.executionRepository.create({
-      id: executionId,
-      pipelineConfigId: pipelineConfig.id,
-      documentId: context.documentId,
-      datasetId: context.datasetId,
-      status: 'running',
-      startedAt: new Date(),
-      stepResults: [],
-      metrics: this.createInitialMetrics(
-        pipelineConfig.steps.length,
-        inputSegments.length,
-      ),
+    // Check if execution already exists (created by orchestrator)
+    let execution = await this.executionRepository.findOne({
+      where: { id: executionId },
     });
 
-    await this.executionRepository.save(execution);
+    if (execution) {
+      // Update existing execution to running status
+      execution.status = 'running';
+      execution.startedAt = new Date();
+      execution.metrics = this.createInitialMetrics(
+        pipelineConfig.steps.length,
+        inputSegments.length,
+      );
+      await this.executionRepository.save(execution);
+    } else {
+      // Create new execution record (for direct calls)
+      execution = this.executionRepository.create({
+        id: executionId,
+        pipelineConfigId: pipelineConfig.id,
+        documentId: context.documentId,
+        datasetId: context.datasetId,
+        status: 'running',
+        startedAt: new Date(),
+        stepResults: [],
+        metrics: this.createInitialMetrics(
+          pipelineConfig.steps.length,
+          inputSegments.length,
+        ),
+      });
+
+      await this.executionRepository.save(execution);
+    }
 
     try {
       let currentSegments = [...inputSegments];

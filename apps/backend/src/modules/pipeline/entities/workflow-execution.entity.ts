@@ -10,18 +10,12 @@ export interface NodeExecutionSnapshot {
   nodeName: string;
   timestamp: Date;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
-  inputData: {
-    count: number;
-    sample: any[];
-    schema: Record<string, any>;
-  };
-  outputData: {
-    count: number;
-    sample: any[];
-    schema: Record<string, any>;
-    items?: any[]; // Full data for processing
-    meta?: Record<string, any>; // Additional metadata
-  };
+  // Optional timing fields for richer node details
+  startedAt?: Date;
+  completedAt?: Date;
+  durationMs?: number;
+  inputData: any; // Raw input passed to the node (no hardcoded structure)
+  outputData: any; // Raw output produced by the node (no hardcoded structure)
   metrics: {
     processingTime: number;
     memoryUsage: number;

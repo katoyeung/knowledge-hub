@@ -27,6 +27,15 @@ export class DataSourceStep extends BaseStep {
     super('datasource', 'Data Source');
   }
 
+  protected async executeStep(
+    _inputSegments: DocumentSegment[],
+    _config: any,
+    _context: any,
+  ): Promise<DocumentSegment[]> {
+    this.logger.warn('executeStep() not yet migrated - using old execute()');
+    return [];
+  }
+
   async execute(
     inputSegments: DocumentSegment[],
     config: DataSourceConfig,
