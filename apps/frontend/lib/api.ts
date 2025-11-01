@@ -2483,6 +2483,134 @@ export const queueApi = {
   },
 };
 
+// Posts API interface
+export interface Post {
+  id: string;
+  hash: string;
+  provider?: string;
+  source?: string;
+  title?: string;
+  meta?: Record<string, any>;
+  userId?: string;
+  datasetId?: string;
+  createdAt: string;
+  updatedAt: string;
+  user?: {
+    id: string;
+    email: string;
+  };
+  dataset?: {
+    id: string;
+    name: string;
+  };
+}
+
+export interface CreatePostDto {
+  hash: string;
+  provider?: string;
+  source?: string;
+  title?: string;
+  meta?: Record<string, any>;
+  userId?: string;
+  datasetId?: string;
+}
+
+export interface UpdatePostDto extends Partial<CreatePostDto> {}
+
+export interface PostSearchParams {
+  hash?: string;
+  provider?: string;
+  source?: string;
+  title?: string;
+  metaKey?: string;
+  metaValue?: string;
+  userId?: string;
+  datasetId?: string;
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface PaginatedPostsResponse {
+  data: Post[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+// Posts API functions
+export const postsApi = {
+  getAll: async (
+    params?: PostSearchParams
+  ): Promise<PaginatedPostsResponse> => {
+    const response = await apiClient.get("/posts/search", { params });
+    // Handle response format: { success: true, data: [], total, page, limit }
+    if (response.data.success) {
+      return {
+        data: response.data.data || [],
+        total: response.data.total || 0,
+        page: response.data.page || 1,
+        limit: response.data.limit || 20,
+      };
+    }
+    // Fallback to direct response
+    return response.data;
+  },
+
+  getById: async (id: string): Promise<Post> => {
+    const response = await apiClient.get(`/posts/${id}`);
+    return response.data;
+  },
+
+  getByHash: async (hash: string): Promise<Post | null> => {
+    try {
+      const response = await apiClient.get(`/posts/by-hash/${hash}`);
+      return response.data.data || null;
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  },
+
+  create: async (data: CreatePostDto): Promise<Post> => {
+    const response = await apiClient.post("/posts", data);
+    return response.data;
+  },
+
+  update: async (id: string, data: UpdatePostDto): Promise<Post> => {
+    const response = await apiClient.put(`/posts/${id}`, data);
+    return response.data;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await apiClient.delete(`/posts/${id}`);
+  },
+
+  upsert: async (data: CreatePostDto, strategy?: string): Promise<Post> => {
+    const response = await apiClient.post("/posts/upsert", data, {
+      params: strategy ? { strategy } : undefined,
+    });
+    return response.data.data || response.data;
+  },
+
+  bulkUpsert: async (
+    posts: CreatePostDto[],
+    strategy?: string
+  ): Promise<{ created: number; updated: number }> => {
+    const response = await apiClient.post(
+      "/posts/bulk-upsert",
+      { posts },
+      {
+        params: strategy ? { strategy } : undefined,
+      }
+    );
+    return response.data;
+  },
+};
+
 // Export workflow API
 export { workflowApi } from "./api/workflow";
 

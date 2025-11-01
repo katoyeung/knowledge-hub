@@ -26,6 +26,7 @@ import { ChatModule } from '@modules/chat/chat.module';
 import { GraphModule } from '@modules/graph/graph.module';
 import { PipelineModule } from '@modules/pipeline/pipeline.module';
 import { WorkflowModule } from '@modules/pipeline/workflow.module';
+import { PostsModule } from '@modules/posts/posts.module';
 import { Document } from './modules/dataset/entities/document.entity';
 import { DocumentSegment } from './modules/dataset/entities/document-segment.entity';
 import { QueueSharedModule } from './modules/queue/queue-shared.module';
@@ -66,6 +67,7 @@ import { CPUThrottlingInterceptor } from './common/interceptors/cpu-throttling.i
     GraphModule,
     PipelineModule,
     WorkflowModule,
+    PostsModule,
     NotificationModule,
     QueueSharedModule,
     QueueModule,

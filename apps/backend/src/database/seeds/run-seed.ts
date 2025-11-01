@@ -6,6 +6,7 @@ import { InitialAiProvidersSeed } from './initial-ai-providers.seed';
 import { seedPrompts } from './initial-prompts.seed';
 import { seedSocialMediaGraphExtractionPrompt } from './social-media-graph-extraction-prompt.seed';
 import { seedDocumentGraphExtractionPrompt } from './document-graph-extraction-prompt.seed';
+import { seedPostsIndexes } from './posts-indexes.seed';
 import Keyv from 'keyv';
 
 export class SeedRunner {
@@ -49,6 +50,10 @@ export class SeedRunner {
       // Create document graph extraction prompt
       await seedDocumentGraphExtractionPrompt(this.dataSource);
       console.log('✅ Document Graph Extraction prompt seeded successfully');
+
+      // Create posts table indexes (GIN index for JSONB)
+      await seedPostsIndexes(this.dataSource);
+      console.log('✅ Posts indexes seeded successfully');
 
       // Create graph extraction prompts
       // TODO: Re-enable when TypeScript can resolve the dynamic import

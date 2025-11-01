@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Search, Play, Settings, History, Trash2, Edit, Copy, MoreVertical, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Play, Settings, History, Trash2, Edit, Copy, MoreVertical, ChevronLeft, ChevronRight, ArrowLeft } from 'lucide-react';
 import { Workflow, WorkflowExecution, WorkflowExecutionInput } from '@/lib/api/workflow';
 import { workflowApi } from '@/lib/api/workflow';
 import { useToast } from '@/components/ui/simple-toast';
@@ -325,6 +325,17 @@ export default function WorkflowsPage() {
     if (loading) {
         return (
             <div className="container mx-auto p-6">
+                <div className="flex items-center gap-4 mb-4">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push('/')}
+                        className="flex items-center gap-2"
+                    >
+                        <ArrowLeft className="h-4 w-4" />
+                        Back to Home
+                    </Button>
+                </div>
                 <div className="flex items-center justify-center h-64">
                     <div className="text-lg">Loading workflows...</div>
                 </div>
@@ -334,6 +345,17 @@ export default function WorkflowsPage() {
 
     return (
         <div className="container mx-auto p-6">
+            <div className="flex items-center gap-4 mb-4">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.push('/')}
+                    className="flex items-center gap-2"
+                >
+                    <ArrowLeft className="h-4 w-4" />
+                    Back to Home
+                </Button>
+            </div>
             <div className="flex items-center justify-between mb-6">
                 <div>
                     <h1 className="text-3xl font-bold">Workflows</h1>

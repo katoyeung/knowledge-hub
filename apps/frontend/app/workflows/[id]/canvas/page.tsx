@@ -19,7 +19,7 @@ import { useToast } from '@/components/ui/simple-toast';
 export default function WorkflowCanvasPage() {
     const params = useParams();
     const router = useRouter();
-    const { success } = useToast();
+    const { success, error } = useToast();
     const workflowId = params.id as string;
     const [activeTab, setActiveTab] = useState('nodes');
     const executionsListRef = useRef<WorkflowExecutionListRef>(null);
@@ -75,34 +75,75 @@ export default function WorkflowCanvasPage() {
     const loadWorkflow = async () => {
         try {
             const data = await workflowApi.getById(workflowId);
-            setWorkflow(data);
+
+            // Remove manual trigger nodes and ensure schedule trigger is first if it exists
+            const nodes = data.nodes || [];
+            const scheduleTriggerNode = nodes.find(n => n.type === 'trigger_schedule');
+            const otherNodes = nodes.filter(n => n.type !== 'trigger_schedule' && n.type !== 'trigger_manual');
+
+            // If schedule trigger exists, ensure it's first
+            let finalNodes: WorkflowNode[];
+            let needsUpdate = false;
+
+            if (scheduleTriggerNode) {
+                finalNodes = [scheduleTriggerNode, ...otherNodes];
+                // Check if schedule trigger is not first (needs reordering)
+                if (nodes[0]?.id !== scheduleTriggerNode.id) {
+                    needsUpdate = true;
+                }
+            } else {
+                // No schedule trigger - keep nodes as is (just remove manual triggers)
+                finalNodes = otherNodes;
+                if (nodes.length !== otherNodes.length) {
+                    needsUpdate = true; // Manual triggers were removed
+                }
+            }
+
+            // Update workflow if changes were made
+            if (needsUpdate) {
+                const updatedWorkflow = { ...data, nodes: finalNodes };
+                try {
+                    await workflowApi.update(workflowId, updatedWorkflow);
+                    setWorkflow(updatedWorkflow);
+                } catch (updateErr) {
+                    console.error('Failed to auto-update workflow:', updateErr);
+                    // Still set workflow even if update fails
+                    setWorkflow(updatedWorkflow);
+                }
+            } else {
+                setWorkflow({ ...data, nodes: finalNodes });
+            }
+
             setTempName(data.name);
             setTempDescription(data.description || '');
-        } catch (error) {
-            console.error('Failed to load workflow:', error);
+        } catch (err) {
+            console.error('Failed to load workflow:', err);
             error('Failed to load workflow');
         } finally {
             setLoading(false);
         }
     };
 
-    const loadAvailableSteps = async () => {
+    const loadAvailableSteps = async (): Promise<void> => {
         try {
             const steps = await workflowApi.getAvailableSteps();
             setAvailableSteps(steps);
             setFilteredSteps(steps);
-        } catch (error) {
-            console.error('Failed to load available steps:', error);
+        } catch (err) {
+            console.error('Failed to load available steps:', err);
             error('Failed to load available pipeline steps');
         }
     };
 
-    // Filter steps based on search term
+    // Filter steps based on search term and remove manual trigger
     useEffect(() => {
+        // Filter out manual trigger from available steps
+        const stepsWithoutManualTrigger = availableSteps.filter(step => step.type !== 'trigger_manual');
+
         if (!stepSearchTerm.trim()) {
-            setFilteredSteps(availableSteps);
+            setFilteredSteps(stepsWithoutManualTrigger);
         } else {
-            const filtered = availableSteps.filter(step =>
+            const filtered = stepsWithoutManualTrigger.filter(step =>
                 step.name.toLowerCase().includes(stepSearchTerm.toLowerCase()) ||
                 step.description.toLowerCase().includes(stepSearchTerm.toLowerCase()) ||
                 step.type.toLowerCase().includes(stepSearchTerm.toLowerCase())
@@ -134,8 +175,8 @@ export default function WorkflowCanvasPage() {
         try {
             await workflowApi.update(workflowId, workflow);
             success('Workflow updated successfully');
-        } catch (error) {
-            console.error('Failed to update workflow:', error);
+        } catch (err) {
+            console.error('Failed to update workflow:', err);
             error('Failed to update workflow');
         } finally {
             setSaving(false);
@@ -169,9 +210,9 @@ export default function WorkflowCanvasPage() {
             success(`Workflow execution started: ${response.executionId}`);
             // Navigate to execution detail page immediately
             router.push(`/workflows/executions/${response.executionId}`);
-        } catch (error: any) {
-            console.error('Failed to execute workflow:', error);
-            error(`Failed to execute workflow: ${error?.response?.data?.message || error?.message || 'Unknown error'}`);
+        } catch (err: any) {
+            console.error('Failed to execute workflow:', err);
+            error(`Failed to execute workflow: ${err?.response?.data?.message || err?.message || 'Unknown error'}`);
         } finally {
             setExecuting(false);
         }
@@ -179,6 +220,11 @@ export default function WorkflowCanvasPage() {
 
     const handleAddNode = (stepType: string) => {
         if (!workflow) return;
+
+        // Prevent adding manual trigger
+        if (stepType === 'trigger_manual') {
+            return;
+        }
 
         const step = availableSteps.find(s => s.type === stepType);
         if (!step) return;
@@ -197,10 +243,18 @@ export default function WorkflowCanvasPage() {
             }] : [],
         };
 
-        setWorkflow(prev => ({
-            ...prev!,
-            nodes: [...prev!.nodes, newNode],
-        }));
+        // If adding schedule trigger, place it first; otherwise add to end
+        if (stepType === 'trigger_schedule') {
+            setWorkflow(prev => ({
+                ...prev!,
+                nodes: [newNode, ...prev!.nodes],
+            }));
+        } else {
+            setWorkflow(prev => ({
+                ...prev!,
+                nodes: [...prev!.nodes, newNode],
+            }));
+        }
     };
 
     const handleNodeClick = (node: WorkflowNode) => {
@@ -241,6 +295,7 @@ export default function WorkflowCanvasPage() {
     const handleNodeDelete = (nodeId: string) => {
         if (!workflow) return;
 
+        // Allow deleting any node including schedule trigger
         setWorkflow({
             ...workflow,
             nodes: workflow.nodes.filter(n => n.id !== nodeId),
@@ -283,11 +338,20 @@ export default function WorkflowCanvasPage() {
             return;
         }
 
+        const draggedNode = workflow.nodes[draggedNodeIndex];
         const newNodes = [...workflow.nodes];
-        const draggedNode = newNodes[draggedNodeIndex];
-
         newNodes.splice(draggedNodeIndex, 1);
-        newNodes.splice(dropIndex, 0, draggedNode);
+
+        // If dragging schedule trigger, force it to position 0
+        // If dropping schedule trigger at any position, force it to position 0
+        if (draggedNode.type === 'trigger_schedule') {
+            newNodes.splice(0, 0, draggedNode);
+        } else {
+            // For other nodes, prevent dropping at position 0 if schedule trigger exists at position 0
+            const scheduleTriggerAtFirst = newNodes[0]?.type === 'trigger_schedule';
+            const insertIndex = scheduleTriggerAtFirst ? Math.max(1, dropIndex) : dropIndex;
+            newNodes.splice(insertIndex, 0, draggedNode);
+        }
 
         const updatedWorkflow = {
             ...workflow,
@@ -322,7 +386,10 @@ export default function WorkflowCanvasPage() {
         e.stopPropagation();
 
         if (draggedStepType && workflow) {
-            handleAddNode(draggedStepType);
+            // Prevent dropping manual trigger
+            if (draggedStepType !== 'trigger_manual') {
+                handleAddNode(draggedStepType);
+            }
         }
 
         setDraggedStepType(null);
@@ -369,8 +436,8 @@ export default function WorkflowCanvasPage() {
                         await workflowApi.update(workflowId, updateData);
                         setWorkflow(prev => ({ ...prev!, name: trimmedValue }));
                     }
-                } catch (error) {
-                    console.error('Failed to save workflow name:', error);
+                } catch (err) {
+                    console.error('Failed to save workflow name:', err);
                     error('Failed to save workflow name');
                     // Revert to original value on error
                     setTempName(workflow.name);
@@ -388,8 +455,8 @@ export default function WorkflowCanvasPage() {
                     await workflowApi.update(workflowId, updateData);
                     setWorkflow(prev => ({ ...prev!, name: trimmedValue }));
                 }
-            } catch (error) {
-                console.error('Failed to save workflow name:', error);
+            } catch (err) {
+                console.error('Failed to save workflow name:', err);
                 error('Failed to save workflow name');
                 // Revert to original value on error
                 setTempName(workflow.name);
@@ -424,8 +491,8 @@ export default function WorkflowCanvasPage() {
                         await workflowApi.update(workflowId, updateData);
                         setWorkflow(prev => ({ ...prev!, description: trimmedValue }));
                     }
-                } catch (error) {
-                    console.error('Failed to save workflow description:', error);
+                } catch (err) {
+                    console.error('Failed to save workflow description:', err);
                     error('Failed to save workflow description');
                     // Revert to original value on error
                     setTempDescription(workflow.description || '');
@@ -443,8 +510,8 @@ export default function WorkflowCanvasPage() {
                     await workflowApi.update(workflowId, updateData);
                     setWorkflow(prev => ({ ...prev!, description: trimmedValue }));
                 }
-            } catch (error) {
-                console.error('Failed to save workflow description:', error);
+            } catch (err) {
+                console.error('Failed to save workflow description:', err);
                 error('Failed to save workflow description');
                 // Revert to original value on error
                 setTempDescription(workflow.description || '');
@@ -558,11 +625,36 @@ export default function WorkflowCanvasPage() {
                             <Card className="h-full flex flex-col">
                                 <CardHeader>
                                     <div className="flex items-center justify-between">
-                                        <div>
-                                            <CardTitle>Workflow Design</CardTitle>
-                                            <CardDescription>
-                                                {workflow?.nodes.length || 0} nodes, {workflow?.edges.length || 0} connections
-                                            </CardDescription>
+                                        <div className="flex items-center gap-3">
+                                            <div>
+                                                <CardTitle>Workflow Design</CardTitle>
+                                                <CardDescription>
+                                                    {workflow?.nodes.length || 0} nodes, {workflow?.edges.length || 0} connections
+                                                </CardDescription>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <Label htmlFor="workflow-active-toggle" className="text-sm text-gray-600">
+                                                    {workflow?.isActive ? 'Active' : 'Inactive'}
+                                                </Label>
+                                                <Switch
+                                                    id="workflow-active-toggle"
+                                                    checked={workflow?.isActive || false}
+                                                    onCheckedChange={async (checked) => {
+                                                        if (!workflow) return;
+                                                        const updatedWorkflow = { ...workflow, isActive: checked };
+                                                        setWorkflow(updatedWorkflow);
+                                                        try {
+                                                            await workflowApi.update(workflowId, { isActive: checked });
+                                                            success(checked ? 'Workflow activated' : 'Workflow deactivated');
+                                                        } catch (err) {
+                                                            console.error('Failed to update workflow status:', err);
+                                                            error('Failed to update workflow status');
+                                                            // Revert on error
+                                                            setWorkflow(prev => ({ ...prev!, isActive: !checked }));
+                                                        }
+                                                    }}
+                                                />
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <Button
@@ -607,66 +699,69 @@ export default function WorkflowCanvasPage() {
                                                 </div>
                                             ) : (
                                                 <div className="space-y-4">
-                                                    {workflow?.nodes.map((node, index) => (
-                                                        <div
-                                                            key={node.id}
-                                                            draggable
-                                                            onDragStart={(e) => handleNodeDragStart(e, index)}
-                                                            onDragEnd={handleNodeDragEnd}
-                                                            onDragOver={(e) => handleNodeDragOver(e, index)}
-                                                            onDrop={(e) => handleNodeDrop(e, index)}
-                                                            className={`p-4 border rounded-lg bg-white shadow-sm hover:shadow-md transition-all cursor-pointer ${dragOverIndex === index ? 'border-blue-500 border-2' : 'border-gray-200'
-                                                                }`}
-                                                            onClick={() => handleNodeClick(node)}
-                                                        >
-                                                            <div className="flex items-center justify-between mb-2">
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="p-1 rounded bg-blue-100">
-                                                                        {node.type.startsWith('trigger_') && <Zap className="h-4 w-4 text-blue-600" />}
-                                                                        {node.type === 'datasource' && <Database className="h-4 w-4 text-green-600" />}
-                                                                        {node.type === 'test' && <FileText className="h-4 w-4 text-purple-600" />}
-                                                                        {!node.type.startsWith('trigger_') && node.type !== 'datasource' && node.type !== 'test' && <Settings className="h-4 w-4 text-gray-600" />}
+                                                    {workflow?.nodes.map((node, index) => {
+                                                        const isScheduleTrigger = node.type === 'trigger_schedule';
+                                                        return (
+                                                            <div
+                                                                key={node.id}
+                                                                draggable
+                                                                onDragStart={(e) => handleNodeDragStart(e, index)}
+                                                                onDragEnd={handleNodeDragEnd}
+                                                                onDragOver={(e) => handleNodeDragOver(e, index)}
+                                                                onDrop={(e) => handleNodeDrop(e, index)}
+                                                                className={`p-4 border rounded-lg bg-white shadow-sm hover:shadow-md transition-all cursor-pointer ${dragOverIndex === index ? 'border-blue-500 border-2' : 'border-gray-200'
+                                                                    }`}
+                                                                onClick={() => handleNodeClick(node)}
+                                                            >
+                                                                <div className="flex items-center justify-between mb-2">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <div className="p-1 rounded bg-blue-100">
+                                                                            {node.type.startsWith('trigger_') && <Zap className="h-4 w-4 text-blue-600" />}
+                                                                            {node.type === 'datasource' && <Database className="h-4 w-4 text-green-600" />}
+                                                                            {node.type === 'test' && <FileText className="h-4 w-4 text-purple-600" />}
+                                                                            {!node.type.startsWith('trigger_') && node.type !== 'datasource' && node.type !== 'test' && <Settings className="h-4 w-4 text-gray-600" />}
+                                                                        </div>
+                                                                        <h3 className="font-medium">{node.name}</h3>
+                                                                        {!node.enabled && (
+                                                                            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
+                                                                                Disabled
+                                                                            </span>
+                                                                        )}
                                                                     </div>
-                                                                    <h3 className="font-medium">{node.name}</h3>
-                                                                    {!node.enabled && (
-                                                                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
-                                                                            Disabled
-                                                                        </span>
-                                                                    )}
+                                                                    <div className="flex items-center gap-1">
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleNodeClick(node);
+                                                                            }}
+                                                                        >
+                                                                            <Settings className="h-4 w-4" />
+                                                                        </Button>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleNodeDelete(node.id);
+                                                                            }}
+                                                                        >
+                                                                            <Trash2 className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </div>
                                                                 </div>
-                                                                <div className="flex items-center gap-1">
-                                                                    <Button
-                                                                        size="sm"
-                                                                        variant="outline"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            handleNodeClick(node);
-                                                                        }}
-                                                                    >
-                                                                        <Settings className="h-4 w-4" />
-                                                                    </Button>
-                                                                    <Button
-                                                                        size="sm"
-                                                                        variant="outline"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            handleNodeDelete(node.id);
-                                                                        }}
-                                                                    >
-                                                                        <Trash2 className="h-4 w-4" />
-                                                                    </Button>
+                                                                <div className="text-sm text-gray-600">
+                                                                    {node.type} • Position: ({node.position.x}, {node.position.y})
                                                                 </div>
+                                                                {node.conditions && (
+                                                                    <div className="text-xs text-gray-500 mt-1">
+                                                                        Conditions: {node.conditions}
+                                                                    </div>
+                                                                )}
                                                             </div>
-                                                            <div className="text-sm text-gray-600">
-                                                                {node.type} • Position: ({node.position.x}, {node.position.y})
-                                                            </div>
-                                                            {node.conditions && (
-                                                                <div className="text-xs text-gray-500 mt-1">
-                                                                    Conditions: {node.conditions}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    ))}
+                                                        );
+                                                    })}
                                                 </div>
                                             )}
                                         </div>

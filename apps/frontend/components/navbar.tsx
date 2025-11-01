@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronDown, LogOut, Settings, Bot, FileText, Workflow, Key } from 'lucide-react'
+import { ChevronDown, LogOut, Settings, Bot, FileText, Workflow, Key, Newspaper } from 'lucide-react'
 import { authUtil } from '@/lib/auth'
 import type { AuthUser } from '@knowledge-hub/shared-types'
 
@@ -68,6 +68,13 @@ export function Navbar({ onLogout }: NavbarProps) {
                     >
                         <Workflow className="w-5 h-5 text-gray-600" />
                         <span className="text-sm font-medium text-gray-700">Workflows</span>
+                    </Link>
+                    <Link
+                        href="/posts"
+                        className="flex items-center space-x-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+                    >
+                        <Newspaper className="w-5 h-5 text-gray-600" />
+                        <span className="text-sm font-medium text-gray-700">Posts</span>
                     </Link>
                 </div>
 
