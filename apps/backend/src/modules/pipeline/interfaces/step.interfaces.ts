@@ -106,9 +106,10 @@ export interface IStep {
 
   /**
    * Execute the step with given input
+   * Input can be any type - array, object, primitive - stored and passed as-is
    */
   execute(
-    input: DocumentSegment[],
+    input: any,
     config: IStepConfig,
     context: StepExecutionContext,
   ): Promise<StepExecutionResult>;

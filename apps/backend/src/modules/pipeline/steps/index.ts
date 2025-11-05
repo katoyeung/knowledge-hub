@@ -15,6 +15,10 @@ import { TriggerScheduleStep } from './trigger-schedule.step';
 import { TestStep } from './test.step';
 import { LenxApiDataSourceStep } from './lenx-api-datasource.step';
 import { DatasetInserterStep } from './dataset-inserter.step';
+import { PostUpserterStep } from './post-upserter.step';
+import { PostDataSourceStep } from './post-datasource.step';
+import { PostDeleterStep } from './post-deleter.step';
+import { DummyMockStep } from './dummy-mock.step';
 
 // Export all step classes
 export const ALL_STEP_CLASSES = [
@@ -29,6 +33,10 @@ export const ALL_STEP_CLASSES = [
   TestStep,
   LenxApiDataSourceStep,
   DatasetInserterStep,
+  PostUpserterStep,
+  PostDataSourceStep,
+  PostDeleterStep,
+  DummyMockStep,
 ];
 
 // Export types for convenience
@@ -44,4 +52,8 @@ export {
   TestStep,
   LenxApiDataSourceStep,
   DatasetInserterStep,
+  PostUpserterStep,
+  PostDataSourceStep,
+  PostDeleterStep,
+  DummyMockStep,
 };

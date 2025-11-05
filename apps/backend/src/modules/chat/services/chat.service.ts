@@ -276,17 +276,44 @@ export class ChatService {
   ): Promise<ChatConversation | null> {
     // IMPORTANT: Latest conversation is NOT filtered by model/provider
     // Returns the most recently updated conversation regardless of AI model used
-    this.logger.log(
+    this.logger.debug(
       `🔍 Getting latest conversation for dataset ${datasetId} and user ${userId}`,
     );
-    const conversation = await this.conversationRepository.findOne({
-      where: { datasetId, userId },
-      order: { updatedAt: 'DESC' },
-    });
-    this.logger.log(
-      `📋 Found conversation: ${conversation ? conversation.id : 'none'}`,
-    );
-    return conversation;
+
+    try {
+      // Optimize query: use query builder with explicit limit and no relations
+      // This avoids loading related messages which can be very slow
+      const conversation = await this.conversationRepository
+        .createQueryBuilder('conversation')
+        .select([
+          'conversation.id',
+          'conversation.title',
+          'conversation.description',
+          'conversation.selectedDocumentIds',
+          'conversation.selectedSegmentIds',
+          'conversation.metadata',
+          'conversation.userId',
+          'conversation.datasetId',
+          'conversation.createdAt',
+          'conversation.updatedAt',
+        ])
+        .where('conversation.datasetId = :datasetId', { datasetId })
+        .andWhere('conversation.userId = :userId', { userId })
+        .orderBy('conversation.updatedAt', 'DESC')
+        .limit(1)
+        .getOne();
+
+      this.logger.debug(
+        `📋 Found conversation: ${conversation ? conversation.id : 'none'}`,
+      );
+      return conversation;
+    } catch (error) {
+      this.logger.error(
+        `Failed to get latest conversation: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
   }
 
   async getConversationMessagesPaginated(

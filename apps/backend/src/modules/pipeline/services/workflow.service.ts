@@ -5,6 +5,7 @@ import { Workflow } from '../entities/workflow.entity';
 import { WorkflowExecution } from '../entities/workflow-execution.entity';
 import { CreateWorkflowDto, UpdateWorkflowDto } from '../dto/workflow.dto';
 import { PipelineStepRegistry } from './pipeline-step-registry.service';
+import { WORKFLOW_CONSTANTS } from '../constants/workflow.constants';
 
 export interface WorkflowFilters {
   datasetId?: string;
@@ -50,7 +51,7 @@ export class WorkflowService {
       tags: createDto.tags,
       userId,
       metadata: {
-        version: '1.0.0',
+        version: WORKFLOW_CONSTANTS.VERSION,
         createdBy: userId,
         lastModifiedBy: userId,
         ...createDto.metadata,
@@ -136,15 +137,50 @@ export class WorkflowService {
 
     const workflow = await this.getWorkflow(id, userId);
 
-    // Validate workflow configuration
-    await this.validateWorkflowConfiguration(updateDto);
+    // Only validate workflow configuration if nodes/edges are being updated
+    if (updateDto.nodes !== undefined || updateDto.edges !== undefined) {
+      // Create a temporary DTO with existing workflow data + updates for validation
+      const validationDto: CreateWorkflowDto = {
+        name: updateDto.name ?? workflow.name,
+        description: updateDto.description ?? workflow.description,
+        datasetId: updateDto.datasetId ?? workflow.datasetId,
+        nodes: updateDto.nodes ?? workflow.nodes,
+        edges: updateDto.edges ?? workflow.edges,
+        settings: updateDto.settings ?? workflow.settings,
+        isActive: updateDto.isActive ?? workflow.isActive,
+        isTemplate: updateDto.isTemplate ?? workflow.isTemplate,
+        tags: updateDto.tags ?? workflow.tags,
+        metadata: updateDto.metadata ?? workflow.metadata,
+      };
+      await this.validateWorkflowConfiguration(validationDto);
+    }
 
-    // Update workflow
-    Object.assign(workflow, updateDto);
+    // Update only provided fields
+    if (updateDto.name !== undefined) workflow.name = updateDto.name;
+    if (updateDto.description !== undefined)
+      workflow.description = updateDto.description;
+    if (updateDto.datasetId !== undefined)
+      workflow.datasetId = updateDto.datasetId;
+    if (updateDto.nodes !== undefined) workflow.nodes = updateDto.nodes;
+    if (updateDto.edges !== undefined) workflow.edges = updateDto.edges;
+    if (updateDto.settings !== undefined)
+      workflow.settings = updateDto.settings;
+    if (updateDto.isActive !== undefined)
+      workflow.isActive = updateDto.isActive;
+    if (updateDto.isTemplate !== undefined)
+      workflow.isTemplate = updateDto.isTemplate;
+    if (updateDto.tags !== undefined) workflow.tags = updateDto.tags;
+    if (updateDto.metadata !== undefined) {
+      workflow.metadata = {
+        ...workflow.metadata,
+        ...updateDto.metadata,
+      };
+    }
+
+    // Always update lastModifiedBy
     workflow.metadata = {
       ...workflow.metadata,
       lastModifiedBy: userId,
-      ...updateDto.metadata,
     };
 
     const updatedWorkflow = await this.workflowRepository.save(workflow);
@@ -196,14 +232,14 @@ export class WorkflowService {
       if (optimizedSnapshot.outputData) {
         optimizedSnapshot.outputData = this.limitArraySizes(
           optimizedSnapshot.outputData,
-          10,
+          WORKFLOW_CONSTANTS.MAX_ARRAY_ITEMS,
         );
       }
 
       if (optimizedSnapshot.inputData) {
         optimizedSnapshot.inputData = this.limitArraySizes(
           optimizedSnapshot.inputData,
-          10,
+          WORKFLOW_CONSTANTS.MAX_ARRAY_ITEMS,
         );
       }
 
@@ -478,8 +514,13 @@ export class WorkflowService {
       throw new Error('Error handling must be one of: stop, continue, retry');
     }
 
-    if (settings.maxRetries < 0 || settings.maxRetries > 10) {
-      throw new Error('Max retries must be between 0 and 10');
+    if (
+      settings.maxRetries < 0 ||
+      settings.maxRetries > WORKFLOW_CONSTANTS.MAX_RETRIES
+    ) {
+      throw new Error(
+        `Max retries must be between 0 and ${WORKFLOW_CONSTANTS.MAX_RETRIES}`,
+      );
     }
   }
 
@@ -516,10 +557,10 @@ export class WorkflowService {
 
       case 'ai_summarization':
         defaultConfig = {
-          maxLength: 1000,
-          minLength: 100,
+          maxLength: WORKFLOW_CONSTANTS.MAX_LENGTH,
+          minLength: WORKFLOW_CONSTANTS.MIN_LENGTH,
           temperature: 0.7,
-          batchSize: 5,
+          batchSize: WORKFLOW_CONSTANTS.BATCH_SIZE_SMALL,
           preserveOriginal: false,
         };
         break;
@@ -528,7 +569,7 @@ export class WorkflowService {
         defaultConfig = {
           model: 'Xenova/bge-m3',
           provider: 'local',
-          batchSize: 5,
+          batchSize: WORKFLOW_CONSTANTS.BATCH_SIZE_SMALL,
           useWorkerPool: true,
           maxConcurrency: 3,
           skipExisting: true,
@@ -540,7 +581,7 @@ export class WorkflowService {
         defaultConfig = {
           temperature: 0.7,
           enableDeduplication: true,
-          batchSize: 10,
+          batchSize: WORKFLOW_CONSTANTS.BATCH_SIZE_MEDIUM,
           confidenceThreshold: 0.7,
           extractRelations: true,
           extractEntities: true,
@@ -553,7 +594,7 @@ export class WorkflowService {
           description: 'Testing workflow output',
           enabled: true,
           showJsonOutput: true,
-          maxOutputItems: 10,
+          maxOutputItems: WORKFLOW_CONSTANTS.MAX_ARRAY_ITEMS,
         };
         break;
 
@@ -593,6 +634,16 @@ export class WorkflowService {
           intervalMinutes: 30,
           timeout: 30000,
           maxRetries: 3,
+        };
+        break;
+
+      case 'post_upserter':
+        // Default config: map hash field from input data
+        // If hash exists in input, use it; otherwise user must provide hashConfig
+        defaultConfig = {
+          fieldMappings: {
+            hash: 'hash', // Default to 'hash' field in input data
+          },
         };
         break;
 
@@ -636,7 +687,7 @@ export class WorkflowService {
       userId,
       metadata: {
         ...originalWorkflow.metadata,
-        version: '1.0.0',
+        version: WORKFLOW_CONSTANTS.VERSION,
         createdBy: userId,
         lastModifiedBy: userId,
         duplicatedFrom: workflowId,
@@ -652,10 +703,13 @@ export class WorkflowService {
   }
 
   /**
-   * Recursively limit arrays to maxItems (default 10) for preview
+   * Recursively limit arrays to maxItems (default MAX_ARRAY_ITEMS) for preview
    * This prevents large arrays from being returned in test output
    */
-  private limitArraySizes(data: any, maxItems: number = 10): any {
+  private limitArraySizes(
+    data: any,
+    maxItems: number = WORKFLOW_CONSTANTS.MAX_ARRAY_ITEMS,
+  ): any {
     if (Array.isArray(data)) {
       // Limit array size
       const limited = data.slice(0, maxItems);
@@ -712,8 +766,19 @@ export class WorkflowService {
         logger: this.logger,
       };
 
-      // Use provided input segments
-      const segmentsToProcess = inputSegments || [];
+      // Convert previousOutput to inputSegments if needed
+      let segmentsToProcess = inputSegments || [];
+
+      if (segmentsToProcess.length === 0 && previousOutput) {
+        this.logger.debug(
+          `Converting previousOutput to inputSegments for ${stepType}`,
+        );
+        segmentsToProcess =
+          this.convertPreviousOutputToSegments(previousOutput);
+        this.logger.debug(
+          `Converted ${segmentsToProcess.length} segments from previousOutput`,
+        );
+      }
 
       // Generic warning if step expects input but none provided
       if (segmentsToProcess.length === 0) {
@@ -746,8 +811,38 @@ export class WorkflowService {
         segmentsToProcess,
       );
 
-      // Apply generic array size limiting to all step types (recursively limits arrays > 10 items)
-      return this.limitArraySizes(formattedOutput, 10);
+      // Debug logging for post_deleter
+      if (stepType === 'post_deleter') {
+        this.logger.log(
+          `[Post Deleter Test Debug] formattedOutput type: ${Array.isArray(formattedOutput) ? 'array' : typeof formattedOutput}, value: ${JSON.stringify(formattedOutput).substring(0, 300)}`,
+        );
+        this.logger.log(
+          `[Post Deleter Test Debug] result.outputSegments length: ${result.outputSegments?.length || 0}`,
+        );
+
+        // Ensure post_deleter never returns empty array
+        if (Array.isArray(formattedOutput) && formattedOutput.length === 0) {
+          this.logger.warn(
+            `[Post Deleter Test] formatOutput returned empty array, using default structure`,
+          );
+          const defaultOutput = {
+            deleted: 0,
+            requested: 0,
+            failed: 0,
+            postIds: [],
+          };
+          return this.limitArraySizes(
+            defaultOutput,
+            WORKFLOW_CONSTANTS.MAX_ARRAY_ITEMS,
+          );
+        }
+      }
+
+      // Apply generic array size limiting to all step types (recursively limits arrays > MAX_ARRAY_ITEMS items)
+      return this.limitArraySizes(
+        formattedOutput,
+        WORKFLOW_CONSTANTS.MAX_ARRAY_ITEMS,
+      );
     } catch (error) {
       this.logger.error(`Step test failed: ${error.message}`, error.stack);
       return {
@@ -762,6 +857,87 @@ export class WorkflowService {
         },
       };
     }
+  }
+
+  /**
+   * Convert previousOutput (from previous node's testOutput) to inputSegments format
+   * Handles various output formats: { data: [] }, { items: [] }, or array directly
+   */
+  private convertPreviousOutputToSegments(previousOutput: any): any[] {
+    this.logger.debug(
+      `Converting previousOutput to segments. Type: ${typeof previousOutput}, isArray: ${Array.isArray(previousOutput)}`,
+    );
+
+    let items: any[] = [];
+
+    // Handle different output structures
+    if (Array.isArray(previousOutput)) {
+      // Direct array
+      items = previousOutput;
+    } else if (previousOutput && typeof previousOutput === 'object') {
+      // Try common structures
+      if (Array.isArray(previousOutput.data)) {
+        items = previousOutput.data;
+        this.logger.debug(`Found ${items.length} items in previousOutput.data`);
+      } else if (Array.isArray(previousOutput.items)) {
+        items = previousOutput.items;
+        this.logger.debug(
+          `Found ${items.length} items in previousOutput.items`,
+        );
+      } else if (Array.isArray(previousOutput.results)) {
+        items = previousOutput.results;
+        this.logger.debug(
+          `Found ${items.length} items in previousOutput.results`,
+        );
+      } else {
+        // Single object - wrap in array
+        items = [previousOutput];
+        this.logger.debug(`Treating previousOutput as single object`);
+      }
+    } else {
+      this.logger.warn(
+        `Unexpected previousOutput type: ${typeof previousOutput}`,
+      );
+      return [];
+    }
+
+    // Convert items to DocumentSegment format
+    const segments = items.map((item, index) => {
+      // If item is already a DocumentSegment-like object, use it as-is
+      if (item.content !== undefined || item.id !== undefined) {
+        return {
+          id: item.id || `segment-${index}`,
+          content:
+            typeof item.content === 'string'
+              ? item.content
+              : JSON.stringify(item),
+          wordCount: item.wordCount || 0,
+          tokens: item.tokens || 0,
+          status: item.status || 'pending',
+          position: item.position ?? index,
+          createdAt: item.createdAt || new Date(),
+          updatedAt: item.updatedAt || new Date(),
+        };
+      }
+
+      // Otherwise, stringify the item as content
+      return {
+        id: `segment-${index}`,
+        content: JSON.stringify(item),
+        wordCount: 0,
+        tokens: 0,
+        status: 'pending',
+        position: index,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    });
+
+    this.logger.debug(
+      `Converted ${segments.length} segments. First segment keys: ${Object.keys(segments[0] || {}).join(', ')}`,
+    );
+
+    return segments;
   }
 
   /**

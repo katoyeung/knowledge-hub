@@ -23,6 +23,7 @@ import { NotificationModule } from '../notification/notification.module';
 import { EventModule } from '../event/event.module';
 import { QueueSharedModule } from '../queue/queue-shared.module';
 import { QueueCoreModule } from '../queue/queue-core.module';
+import { PostsModule } from '../posts/posts.module';
 import { ALL_STEP_CLASSES } from './steps/index';
 
 @Module({
@@ -43,6 +44,7 @@ import { ALL_STEP_CLASSES } from './steps/index';
     EventModule,
     QueueSharedModule,
     QueueCoreModule,
+    PostsModule,
     BullModule.registerQueue({
       name: 'default',
     }),

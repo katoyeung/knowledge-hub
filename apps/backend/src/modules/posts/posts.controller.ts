@@ -7,18 +7,22 @@ import {
   Post as PostDecorator,
   Body,
   Get,
-  Put,
-  Delete,
   Param,
   Query,
   BadRequestException,
 } from '@nestjs/common';
-import { Crud, CrudController, ParsedRequest, CrudRequest } from '@dataui/crud';
+import { Crud, CrudController } from '@dataui/crud';
 import { validate } from 'class-validator';
 import { plainToInstance, classToPlain } from 'class-transformer';
 import { JwtOrApiKeyAuthGuard } from '@modules/api-key/guards/jwt-or-api-key.guard';
 import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id.interceptor';
-import { ApiTags, ApiOperation, ApiQuery, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiQuery,
+  ApiParam,
+  ApiBody,
+} from '@nestjs/swagger';
 import { PostsService, PostSearchFilters } from './posts.service';
 import { Post } from './entities/post.entity';
 import { CreatePostDto } from './dto/create-post.dto';
@@ -51,10 +55,6 @@ import { Logger } from '@nestjs/common';
         alias: 'user',
         eager: false,
       },
-      dataset: {
-        alias: 'dataset',
-        eager: false,
-      },
     },
   },
   dto: {
@@ -69,6 +69,7 @@ import { Logger } from '@nestjs/common';
 @UsePipes(
   new ValidationPipe({
     transform: true,
+    skipMissingProperties: true, // Skip validation for missing/undefined properties
     validatorPackage: { validate },
     transformerPackage: { plainToInstance, classToPlain },
   }),
@@ -194,11 +195,7 @@ export class PostsController implements CrudController<Post> {
         dedupStrategy,
         fieldMappings,
       );
-      return {
-        success: true,
-        data: result,
-        message: `Bulk upsert completed: ${result.created} created, ${result.updated} updated`,
-      };
+      return result;
     } catch (error) {
       throw new BadRequestException(
         `Failed to bulk upsert posts: ${error.message}`,
@@ -227,11 +224,7 @@ export class PostsController implements CrudController<Post> {
         config,
         strategy || DeduplicationStrategy.HASH,
       );
-      return {
-        success: true,
-        data: result,
-        message: `Bulk upsert with config completed: ${result.created} created, ${result.updated} updated`,
-      };
+      return result;
     } catch (error) {
       throw new BadRequestException(
         `Failed to bulk upsert posts with config: ${error.message}`,
@@ -259,11 +252,6 @@ export class PostsController implements CrudController<Post> {
     description: 'Filter by user ID',
   })
   @ApiQuery({
-    name: 'datasetId',
-    required: false,
-    description: 'Filter by dataset ID',
-  })
-  @ApiQuery({
     name: 'metaKey',
     required: false,
     description: 'Filter by meta key',
@@ -284,6 +272,16 @@ export class PostsController implements CrudController<Post> {
     description: 'End date for date range',
   })
   @ApiQuery({
+    name: 'postedAtStart',
+    required: false,
+    description: 'Start date for posted_at range filter',
+  })
+  @ApiQuery({
+    name: 'postedAtEnd',
+    required: false,
+    description: 'End date for posted_at range filter',
+  })
+  @ApiQuery({
     name: 'page',
     required: false,
     type: Number,
@@ -301,26 +299,54 @@ export class PostsController implements CrudController<Post> {
     @Query('source') source?: string,
     @Query('title') title?: string,
     @Query('userId') userId?: string,
-    @Query('datasetId') datasetId?: string,
     @Query('metaKey') metaKey?: string,
     @Query('metaValue') metaValue?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('postedAtStart') postedAtStart?: string,
+    @Query('postedAtEnd') postedAtEnd?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
     try {
+      // Parse metaValue safely - handle both JSON strings and plain values
+      let parsedMetaValue: any = undefined;
+      if (metaValue) {
+        try {
+          // First, try parsing as JSON (handles quoted strings, booleans, numbers, objects, arrays)
+          parsedMetaValue = JSON.parse(metaValue);
+        } catch {
+          // If JSON parsing fails, treat as plain string value
+          // Also handle common boolean/number string representations
+          const trimmed = metaValue.trim();
+          if (trimmed === 'true') {
+            parsedMetaValue = true;
+          } else if (trimmed === 'false') {
+            parsedMetaValue = false;
+          } else if (trimmed === 'null') {
+            parsedMetaValue = null;
+          } else if (!isNaN(Number(trimmed)) && trimmed !== '') {
+            // Numeric string
+            parsedMetaValue = Number(trimmed);
+          } else {
+            // Plain string value
+            parsedMetaValue = metaValue;
+          }
+        }
+      }
+
       const filters: PostSearchFilters = {
         hash,
         provider,
         source,
         title,
         userId,
-        datasetId,
         metaKey,
-        metaValue: metaValue ? JSON.parse(metaValue) : undefined,
+        metaValue: parsedMetaValue,
         startDate: startDate ? new Date(startDate) : undefined,
         endDate: endDate ? new Date(endDate) : undefined,
+        postedAtStart: postedAtStart ? new Date(postedAtStart) : undefined,
+        postedAtEnd: postedAtEnd ? new Date(postedAtEnd) : undefined,
         page: page ? Number(page) : undefined,
         limit: limit ? Number(limit) : undefined,
       };
@@ -377,6 +403,143 @@ export class PostsController implements CrudController<Post> {
     } catch (error) {
       throw new BadRequestException(
         `Failed to get posts by meta: ${error.message}`,
+      );
+    }
+  }
+
+  @PostDecorator('batch-delete')
+  @ApiOperation({ summary: 'Delete multiple posts by IDs' })
+  async batchDelete(@Body() body: { postIds: string[] }) {
+    try {
+      const result = await this.service.batchDelete(body.postIds);
+      return {
+        success: true,
+        ...result,
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to batch delete posts: ${error.message}`,
+      );
+    }
+  }
+
+  @PostDecorator('delete-all')
+  @ApiOperation({ summary: 'Delete all posts matching current filters' })
+  @ApiBody({ required: false })
+  @ApiQuery({ name: 'hash', required: false, description: 'Filter by hash' })
+  @ApiQuery({
+    name: 'provider',
+    required: false,
+    description: 'Filter by provider',
+  })
+  @ApiQuery({
+    name: 'source',
+    required: false,
+    description: 'Filter by source',
+  })
+  @ApiQuery({ name: 'title', required: false, description: 'Filter by title' })
+  @ApiQuery({
+    name: 'userId',
+    required: false,
+    description: 'Filter by user ID',
+  })
+  @ApiQuery({
+    name: 'metaKey',
+    required: false,
+    description: 'Filter by meta key',
+  })
+  @ApiQuery({
+    name: 'metaValue',
+    required: false,
+    description: 'Filter by meta value',
+  })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    description: 'Start date for date range',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    description: 'End date for date range',
+  })
+  @ApiQuery({
+    name: 'postedAtStart',
+    required: false,
+    description: 'Start date for posted_at range filter',
+  })
+  @ApiQuery({
+    name: 'postedAtEnd',
+    required: false,
+    description: 'End date for posted_at range filter',
+  })
+  async deleteAll(
+    @Query('hash') hash?: string,
+    @Query('provider') provider?: string,
+    @Query('source') source?: string,
+    @Query('title') title?: string,
+    @Query('userId') userId?: string,
+    @Query('metaKey') metaKey?: string,
+    @Query('metaValue') metaValue?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('postedAtStart') postedAtStart?: string,
+    @Query('postedAtEnd') postedAtEnd?: string,
+    @Body() body?: any, // Accept optional body to prevent parsing errors
+  ) {
+    // Ignore body content - all filtering is done via query parameters
+    // Body can be null, undefined, empty object, or the string "null" - all are acceptable
+    if (
+      body === null ||
+      body === 'null' ||
+      (typeof body === 'object' && Object.keys(body).length === 0)
+    ) {
+      body = undefined;
+    }
+    try {
+      // Parse metaValue safely
+      let parsedMetaValue: any = undefined;
+      if (metaValue) {
+        try {
+          parsedMetaValue = JSON.parse(metaValue);
+        } catch {
+          const trimmed = metaValue.trim();
+          if (trimmed === 'true') {
+            parsedMetaValue = true;
+          } else if (trimmed === 'false') {
+            parsedMetaValue = false;
+          } else if (trimmed === 'null') {
+            parsedMetaValue = null;
+          } else if (!isNaN(Number(trimmed)) && trimmed !== '') {
+            parsedMetaValue = Number(trimmed);
+          } else {
+            parsedMetaValue = metaValue;
+          }
+        }
+      }
+
+      const filters: PostSearchFilters = {
+        hash,
+        provider,
+        source,
+        title,
+        userId,
+        metaKey,
+        metaValue: parsedMetaValue,
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+        postedAtStart: postedAtStart ? new Date(postedAtStart) : undefined,
+        postedAtEnd: postedAtEnd ? new Date(postedAtEnd) : undefined,
+      };
+
+      const result = await this.service.deleteAllByFilters(filters);
+      return {
+        success: true,
+        ...result,
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to delete all posts: ${error.message}`,
       );
     }
   }

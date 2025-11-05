@@ -35,7 +35,6 @@ export class DuplicateSegmentStep extends BaseStep {
       `Starting duplicate detection for ${inputSegments.length} segments`,
     );
 
-
     // Handle case where input is a wrapper structure containing an array
     let segmentsToProcess: any[] = inputSegments;
     let adjustedContentField = config.contentField;
@@ -50,7 +49,6 @@ export class DuplicateSegmentStep extends BaseStep {
       // Look for any array property in the wrapper
       for (const [key, value] of Object.entries(wrapper)) {
         if (Array.isArray(value) && value.length > 0) {
-
           // Check if this array contains objects (not primitives)
           if (
             value.length > 0 &&
@@ -135,10 +133,8 @@ export class DuplicateSegmentStep extends BaseStep {
       for (const segment of batch) {
         segmentsProcessed++;
 
-
         const content = this.extractContent(segment, config);
         const normalizedContent = this.normalizeContent(content, config);
-
 
         if (!content || content.trim() === '') {
           this.logger.warn(
@@ -152,8 +148,8 @@ export class DuplicateSegmentStep extends BaseStep {
           config,
           seenHashes,
           seenContents,
+          undefined, // seenWordSets not used in old executeStep path
         );
-
 
         if (isDuplicate) {
           duplicatesFound++;
@@ -206,72 +202,103 @@ export class DuplicateSegmentStep extends BaseStep {
       `Starting duplicate detection for ${inputSegments.length} segments`,
     );
 
-
-    // Handle case where input is a wrapper structure containing an array
-    let segmentsToProcess: any[] = inputSegments;
-    let adjustedContentField = config.contentField;
-
+    // Normalize similarityThreshold to number if it's a string
     if (
-      inputSegments.length === 1 &&
-      inputSegments[0] &&
-      typeof inputSegments[0] === 'object'
+      config.method === 'similarity' &&
+      config.similarityThreshold !== undefined
     ) {
-      const wrapper = inputSegments[0];
+      if (typeof config.similarityThreshold === 'string') {
+        const parsed = parseFloat(config.similarityThreshold);
+        if (!isNaN(parsed)) {
+          const originalValue = config.similarityThreshold;
+          config.similarityThreshold = parsed;
+          this.logger.log(
+            `Converted similarityThreshold from string "${originalValue}" to number: ${parsed}`,
+          );
+        } else {
+          this.logger.warn(
+            `Invalid similarityThreshold string: "${config.similarityThreshold}", using default 0.8`,
+          );
+          config.similarityThreshold = 0.8;
+        }
+      }
+      // Ensure it's within valid range
+      if (config.similarityThreshold < 0 || config.similarityThreshold > 1) {
+        this.logger.warn(
+          `Similarity threshold ${config.similarityThreshold} out of range, clamping to [0, 1]`,
+        );
+        config.similarityThreshold = Math.max(
+          0,
+          Math.min(1, config.similarityThreshold),
+        );
+      }
+      this.logger.log(
+        `Using similarity method with threshold: ${config.similarityThreshold} (type: ${typeof config.similarityThreshold})`,
+      );
+    }
 
-      // Look for any array property in the wrapper
-      for (const [key, value] of Object.entries(wrapper)) {
-        if (Array.isArray(value) && value.length > 0) {
+    // Use shared unwrapInput utility from BaseStep
+    const unwrapResult = this.unwrapInput(inputSegments, config.contentField);
+    let segmentsToProcess = unwrapResult.segments;
+    let adjustedContentField =
+      unwrapResult.adjustedFieldPath || config.contentField;
+    const extractedArrayKey = unwrapResult.extractedKey;
 
-          // Check if this array contains objects (not primitives)
-          if (
-            value.length > 0 &&
-            typeof value[0] === 'object' &&
-            value[0] !== null
-          ) {
-            // Special case: if array[0] has a 'data' array, extract that
-            if (
-              'data' in value[0] &&
-              Array.isArray(value[0].data) &&
-              value[0].data.length > 0
-            ) {
-              segmentsToProcess = value[0].data;
+    // Additional adjustment: if segments are already extracted (multiple segments),
+    // try to detect which array property they came from and remove its prefix
+    // This handles the case where convertPreviousOutputToSegments already extracted items/data/results
+    if (
+      segmentsToProcess.length > 1 &&
+      adjustedContentField &&
+      !extractedArrayKey // Only do this if we didn't already extract from a wrapper
+    ) {
+      // Common array property names that might be in contentField paths
+      const commonArrayKeys = [
+        'items',
+        'data',
+        'results',
+        'segments',
+        'output',
+      ];
 
-              // Adjust content field if it starts with "data."
-              if (
-                adjustedContentField &&
-                adjustedContentField.startsWith('data.')
-              ) {
-                const originalField = adjustedContentField;
-                adjustedContentField = adjustedContentField.substring(5); // Remove "data." prefix
-              }
-              break;
-            }
-
-            segmentsToProcess = value;
-
-            // Adjust content field by removing the array property prefix
-            if (
-              adjustedContentField &&
-              adjustedContentField.startsWith(`${key}.`)
-            ) {
-              const originalField = adjustedContentField;
-              adjustedContentField = adjustedContentField.substring(
-                key.length + 1,
-              ); // Remove "key." prefix
-            }
-            break;
-          }
+      for (const arrayKey of commonArrayKeys) {
+        if (adjustedContentField.startsWith(`${arrayKey}.`)) {
+          const beforeAdjust = adjustedContentField;
+          adjustedContentField = adjustedContentField.substring(
+            arrayKey.length + 1,
+          ); // Remove "arrayKey." prefix
+          this.logger.log(
+            `Content field adjusted from "${beforeAdjust}" to "${adjustedContentField}" (segments already extracted from ${arrayKey} array)`,
+          );
+          break;
         }
       }
     }
 
     // Update the config with adjusted content field
+    const originalContentField = config.contentField;
     config.contentField = adjustedContentField;
+
+    if (originalContentField !== adjustedContentField) {
+      this.logger.log(
+        `Content field adjusted from "${originalContentField}" to "${adjustedContentField}" (processing ${segmentsToProcess.length} segments)`,
+      );
+    } else {
+      this.logger.log(
+        `Using content field: "${adjustedContentField}" (processing ${segmentsToProcess.length} segments)`,
+      );
+    }
 
     if (segmentsToProcess.length > 0) {
       const firstSegment = segmentsToProcess[0];
+      this.logger.log(
+        `First segment keys: ${Object.keys(firstSegment).join(', ')}`,
+      );
 
       const extractedContent = this.extractContent(firstSegment, config);
+      this.logger.log(
+        `First segment extracted content length: ${extractedContent?.length || 0}`,
+      );
 
       if (extractedContent.length < 100) {
       } else {
@@ -288,6 +315,8 @@ export class DuplicateSegmentStep extends BaseStep {
       const duplicateSegments: any[] = [];
       const seenHashes = new Set<string>();
       const seenContents = new Set<string>();
+      // Cache word sets for similarity method to avoid recomputing
+      const seenWordSets = new Map<string, Set<string>>();
       let duplicatesFound = 0;
       let segmentsProcessed = 0;
 
@@ -304,11 +333,9 @@ export class DuplicateSegmentStep extends BaseStep {
         for (const segment of batch) {
           segmentsProcessed++;
 
-
           // Extract content using the specified field path
           const content = this.extractContent(segment, config);
           const normalizedContent = this.normalizeContent(content, config);
-
 
           // Log if content is empty
           if (!content || content.trim() === '') {
@@ -323,8 +350,8 @@ export class DuplicateSegmentStep extends BaseStep {
             config,
             seenHashes,
             seenContents,
+            seenWordSets,
           );
-
 
           if (isDuplicate) {
             duplicatesFound++;
@@ -338,6 +365,9 @@ export class DuplicateSegmentStep extends BaseStep {
               seenHashes.add(hash);
             } else if (config.method === 'similarity') {
               seenContents.add(normalizedContent);
+              // Cache word set for faster future comparisons
+              const words = this.extractWords(normalizedContent);
+              seenWordSets.set(normalizedContent, words);
             }
 
             outputSegments.push(segment);
@@ -569,9 +599,14 @@ export class DuplicateSegmentStep extends BaseStep {
   /**
    * Extract content from segment using the specified field path
    * Supports nested paths like "data.post_message" or "post_message"
+   * Also handles paths that start with array keys (items, data, etc.) when segments are already extracted
    */
   private extractContent(segment: any, config: DuplicateSegmentConfig): string {
-    const fieldPath = config.contentField || 'content';
+    let fieldPath = config.contentField || 'content';
+
+    this.logger.debug(
+      `Extracting content with fieldPath="${fieldPath}", segment keys: ${Object.keys(segment).join(', ')}`,
+    );
 
     // If it's a simple field (no dots), just get it directly
     if (!fieldPath.includes('.')) {
@@ -585,17 +620,46 @@ export class DuplicateSegmentStep extends BaseStep {
       return String(value);
     }
 
-    // For nested paths like "data.post_message", traverse the object
+    // Check if path starts with common array keys that might not exist in already-extracted segments
+    // Common array property names: items, data, results, segments, output
+    const commonArrayKeys = ['items', 'data', 'results', 'segments', 'output'];
     const parts = fieldPath.split('.');
+
+    // If the first part is a common array key and doesn't exist in the segment, skip it
+    if (parts.length > 1 && commonArrayKeys.includes(parts[0])) {
+      if (!(parts[0] in segment)) {
+        this.logger.debug(
+          `Content field path starts with array key '${parts[0]}' which doesn't exist in segment. Removing prefix.`,
+        );
+        // Remove the array key prefix and try again
+        fieldPath = parts.slice(1).join('.');
+        this.logger.debug(`Adjusted content field path to: "${fieldPath}"`);
+      }
+    }
+
+    // For nested paths like "data.post_message" or "meta.post_message", traverse the object
+    const adjustedParts = fieldPath.split('.');
     let value: any = segment;
 
-    for (const part of parts) {
+    for (let i = 0; i < adjustedParts.length; i++) {
+      const part = adjustedParts[i];
       if (value && typeof value === 'object') {
         if (part in value) {
           value = value[part];
         } else {
-          // Field not found - try to find the last part at the top level
-          const lastPart = parts[parts.length - 1];
+          // Field not found - try to find the last part at the current level or top level
+          const lastPart = adjustedParts[adjustedParts.length - 1];
+
+          // Try to find the last part at current level
+          if (value && typeof value === 'object' && lastPart in value) {
+            this.logger.log(
+              `Content field '${part}' not found, but found '${lastPart}' at current level. Using that instead.`,
+            );
+            value = value[lastPart];
+            break;
+          }
+
+          // Try to find the last part at the top level
           if (lastPart in segment) {
             this.logger.log(
               `Content field '${part}' not found, but found '${lastPart}' at top level. Using that instead.`,
@@ -663,6 +727,7 @@ export class DuplicateSegmentStep extends BaseStep {
     config: DuplicateSegmentConfig,
     seenHashes: Set<string>,
     seenContents: Set<string>,
+    seenWordSets?: Map<string, Set<string>>,
   ): boolean {
     switch (config.method) {
       case 'hash': {
@@ -672,31 +737,148 @@ export class DuplicateSegmentStep extends BaseStep {
 
       case 'similarity': {
         // Check similarity against all seen contents
-        const threshold =
+        // Ensure threshold is a number (handle string conversion from frontend)
+        let threshold =
           config.similarityThreshold !== undefined
             ? config.similarityThreshold
             : 0.8;
+
+        // Convert to number if it's a string (common issue from frontend form inputs)
+        if (typeof threshold === 'string') {
+          threshold = parseFloat(threshold);
+          if (isNaN(threshold)) {
+            this.logger.warn(
+              `Invalid similarity threshold: ${config.similarityThreshold}, using default 0.8`,
+            );
+            threshold = 0.8;
+          }
+        }
+
+        // Validate threshold is between 0 and 1
+        if (threshold < 0 || threshold > 1) {
+          this.logger.warn(
+            `Similarity threshold ${threshold} out of range [0, 1], clamping to valid range`,
+          );
+          threshold = Math.max(0, Math.min(1, threshold));
+        }
+
+        this.logger.debug(
+          `Checking similarity with threshold: ${threshold} (type: ${typeof threshold})`,
+        );
 
         // Special case: threshold 0 means everything is a duplicate
         if (threshold === 0) {
           return seenContents.size > 0; // First item is not duplicate, rest are
         }
 
-        for (const seenContent of seenContents) {
-          const similarity = this.calculateSimilarity(
-            normalizedContent,
-            seenContent,
-          );
+        // Pre-compute word set for current content
+        const currentWords = this.extractWords(normalizedContent);
+        const currentWordCount = currentWords.size;
+
+        // Quick optimization: if current content is empty, skip similarity check
+        if (currentWordCount === 0) {
+          return seenContents.size > 0;
+        }
+
+        // For high thresholds (>0.8), we can use length-based filtering first
+        // If texts are very different in length, similarity will be low
+        const useLengthFilter = threshold > 0.8;
+        const currentLength = normalizedContent.length;
+
+        let comparisons = 0;
+        const maxComparisons = 100; // Limit comparisons for performance
+        const seenContentsArray = Array.from(seenContents);
+
+        // Process in batches and limit comparisons for very large datasets
+        for (
+          let i = 0;
+          i < seenContentsArray.length && comparisons < maxComparisons;
+          i++
+        ) {
+          const seenContent = seenContentsArray[i];
+          comparisons++;
+
+          // Quick length-based filter for high thresholds
+          if (useLengthFilter) {
+            const seenLength = seenContent.length;
+            const lengthRatio =
+              Math.min(currentLength, seenLength) /
+              Math.max(currentLength, seenLength);
+            // If length ratio is too different, similarity will be low
+            if (lengthRatio < threshold * 0.7) {
+              continue;
+            }
+          }
+
+          // Use cached word sets if available for faster comparison
+          let similarity: number;
+          if (seenWordSets && seenWordSets.has(seenContent)) {
+            const seenWords = seenWordSets.get(seenContent)!;
+            similarity = this.calculateSimilarityFast(currentWords, seenWords);
+          } else {
+            similarity = this.calculateSimilarity(
+              normalizedContent,
+              seenContent,
+            );
+          }
+
+          // Log first few comparisons for debugging
+          if (seenContents.size <= 3) {
+            this.logger.log(
+              `Comparing with seen content (${seenContents.size} total): similarity=${similarity.toFixed(4)}, threshold=${threshold}, isDuplicate=${similarity >= threshold}`,
+            );
+          }
+
           if (similarity >= threshold) {
+            this.logger.debug(
+              `Duplicate found: similarity ${similarity.toFixed(4)} >= threshold ${threshold}`,
+            );
             return true;
           }
         }
+
+        // If we hit the comparison limit, sample remaining items
+        if (
+          seenContentsArray.length > maxComparisons &&
+          comparisons >= maxComparisons
+        ) {
+          const remainingItems = seenContentsArray.slice(maxComparisons);
+          // Sample every Nth item for very large datasets
+          const sampleRate = Math.ceil(remainingItems.length / 50); // Sample ~50 more items
+          for (let i = 0; i < remainingItems.length; i += sampleRate) {
+            const seenContent = remainingItems[i];
+            const similarity =
+              seenWordSets && seenWordSets.has(seenContent)
+                ? this.calculateSimilarityFast(
+                    currentWords,
+                    seenWordSets.get(seenContent)!,
+                  )
+                : this.calculateSimilarity(normalizedContent, seenContent);
+
+            if (similarity >= threshold) {
+              return true;
+            }
+          }
+        }
+
         return false;
       }
 
       default:
         return false;
     }
+  }
+
+  /**
+   * Extract words from text for similarity calculation
+   */
+  private extractWords(text: string): Set<string> {
+    if (!text) return new Set();
+    const words = text
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((word) => word.length > 0);
+    return new Set(words);
   }
 
   /**
@@ -709,26 +891,42 @@ export class DuplicateSegmentStep extends BaseStep {
     if (text1 === text2) return 1.0;
     if (!text1 || !text2) return 0.0;
 
-    // Convert to lowercase and split into words
-    const words1 = text1
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((word) => word.length > 0);
-    const words2 = text2
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((word) => word.length > 0);
+    const set1 = this.extractWords(text1);
+    const set2 = this.extractWords(text2);
 
-    // Create sets of unique words
-    const set1 = new Set(words1);
-    const set2 = new Set(words2);
+    return this.calculateSimilarityFast(set1, set2);
+  }
 
-    // Calculate Jaccard similarity: |A ∩ B| / |A ∪ B|
-    const intersection = new Set([...set1].filter((word) => set2.has(word)));
-    const union = new Set([...set1, ...set2]);
+  /**
+   * Fast similarity calculation using pre-computed word sets
+   * @param set1 First word set
+   * @param set2 Second word set
+   * @returns Similarity score between 0 and 1
+   */
+  private calculateSimilarityFast(
+    set1: Set<string>,
+    set2: Set<string>,
+  ): number {
+    if (set1.size === 0 && set2.size === 0) return 1.0;
+    if (set1.size === 0 || set2.size === 0) return 0.0;
 
-    if (union.size === 0) return 0.0;
+    // Use the smaller set for iteration to optimize
+    const [smallerSet, largerSet] =
+      set1.size <= set2.size ? [set1, set2] : [set2, set1];
 
-    return intersection.size / union.size;
+    // Calculate intersection efficiently
+    let intersection = 0;
+    for (const word of smallerSet) {
+      if (largerSet.has(word)) {
+        intersection++;
+      }
+    }
+
+    // Union size = set1.size + set2.size - intersection
+    const union = set1.size + set2.size - intersection;
+
+    if (union === 0) return 0.0;
+
+    return intersection / union;
   }
 }

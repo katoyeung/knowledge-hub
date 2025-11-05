@@ -30,10 +30,9 @@ export class CreatePostDto {
   meta?: Record<string, any>; // Content should be stored in meta.content
 
   @IsOptional()
-  @IsUUID()
-  userId?: string;
+  postedAt?: Date | string;
 
   @IsOptional()
   @IsUUID()
-  datasetId?: string;
+  userId?: string;
 }

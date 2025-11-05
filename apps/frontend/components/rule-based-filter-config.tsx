@@ -28,6 +28,7 @@ export interface FilterRule {
 export interface RuleBasedFilterConfig {
     rules: FilterRule[];
     defaultAction: 'keep' | 'remove';
+    contentField?: string;
     caseSensitive?: boolean;
     wholeWord?: boolean;
     minContentLength?: number;
@@ -37,6 +38,9 @@ export interface RuleBasedFilterConfig {
 
 interface RuleBasedFilterConfigProps {
     config: RuleBasedFilterConfig;
+    previousOutput?: any;
+    previousOutputFields?: string[];
+    getFieldValue?: (fieldPath: string) => unknown;
     onChange: (config: RuleBasedFilterConfig) => void;
     onValidate?: (isValid: boolean, errors: string[]) => void;
 }
@@ -100,7 +104,14 @@ const EXAMPLE_CONFIG: RuleBasedFilterConfig = {
     preserveEmptySegments: false
 };
 
-export function RuleBasedFilterConfig({ config, onChange, onValidate }: RuleBasedFilterConfigProps) {
+export function RuleBasedFilterConfig({
+    config,
+    previousOutput,
+    previousOutputFields = [],
+    getFieldValue,
+    onChange,
+    onValidate
+}: RuleBasedFilterConfigProps) {
     const [rules, setRules] = useState<FilterRule[]>(config.rules || []);
     const [jsonInput, setJsonInput] = useState('');
     const [showJsonEditor, setShowJsonEditor] = useState(false);
@@ -418,6 +429,7 @@ export function RuleBasedFilterConfig({ config, onChange, onValidate }: RuleBase
                 </TabsContent>
 
                 <TabsContent value="settings" className="space-y-4">
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <Label>Default Action</Label>

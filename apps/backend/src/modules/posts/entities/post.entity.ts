@@ -1,7 +1,6 @@
 import { Entity, Column, Index, ManyToOne, RelationId } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { User } from '../../user/user.entity';
-import { Dataset } from '../../dataset/entities/dataset.entity';
 
 @Entity({ name: 'posts' })
 export class Post extends BaseEntity {
@@ -24,18 +23,15 @@ export class Post extends BaseEntity {
   @Column('jsonb', { nullable: true })
   meta: Record<string, any>; // Content is stored in meta.content
 
+  @Column({ type: 'timestamp', nullable: true })
+  @Index('idx_posts_posted_at')
+  postedAt: Date;
+
   // Optional relationships
   @Column('uuid', { nullable: true })
   @RelationId((post: Post) => post.user)
   userId: string;
 
-  @Column('uuid', { nullable: true })
-  @RelationId((post: Post) => post.dataset)
-  datasetId: string;
-
   @ManyToOne(() => User, { nullable: true })
   user: User;
-
-  @ManyToOne(() => Dataset, { nullable: true })
-  dataset: Dataset;
 }

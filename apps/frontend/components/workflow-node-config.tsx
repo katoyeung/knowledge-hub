@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-    Play, Settings, Zap, Database, ArrowLeft, X, Trash2, FileText, Search, Copy, ChevronRight, ChevronDown
+    Play, Settings, Zap, Database, ArrowLeft, X, Trash2, FileText, Search, Copy, ChevronRight, ChevronDown, Plus
 } from 'lucide-react';
 import { WorkflowNode, PipelineStep } from '@/lib/api/workflow';
 import { datasetApi, Dataset, apiClient } from '@/lib/api';
@@ -610,6 +610,15 @@ export function WorkflowNodeConfig({
                 }
             }
 
+            // Validate contentField for rule-based filter
+            if (nodeData.type === 'rule_based_filter') {
+                if (!mappedConfig.contentField) {
+                    setValidationError('contentField');
+                    setTestOutput(null);
+                    return;
+                }
+            }
+
             // Call the step test API to get actual data using current node configuration
             const requestBody: any = {
                 stepType: nodeData.type,
@@ -627,6 +636,22 @@ export function WorkflowNodeConfig({
                 } else if (previousOutput.data && Array.isArray(previousOutput.data)) {
                     // Handle Lenx API datasource output format 
                     // Pass the complete structure so data.post_message path works
+                    requestBody.inputSegments = [previousOutput];
+                }
+            }
+
+            // For Rule-Based Filter, pass previous output as input segments
+            if (nodeData.type === 'rule_based_filter' && previousOutput) {
+                if (previousOutput.items) {
+                    requestBody.inputSegments = previousOutput.items;
+                } else if (previousOutput.outputSegments) {
+                    requestBody.inputSegments = previousOutput.outputSegments;
+                } else if (previousOutput.data && Array.isArray(previousOutput.data)) {
+                    // Handle Lenx API datasource output format 
+                    // Pass the complete structure so data.post_message path works
+                    requestBody.inputSegments = [previousOutput];
+                } else {
+                    // Fallback: pass the entire previous output
                     requestBody.inputSegments = [previousOutput];
                 }
             }
@@ -830,9 +855,15 @@ export function WorkflowNodeConfig({
                 return field;
             }
 
-            // Object fields
-            if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) {
-                return field;
+            // Object fields - special handling for hashConfig
+            if (typeof value === 'object' && !Array.isArray(value)) {
+                if (Object.keys(value).length === 0) {
+                    return field;
+                }
+                // For hashConfig, check if fields array is empty
+                if (field === 'hashConfig' && (!value.fields || !Array.isArray(value.fields) || value.fields.length === 0)) {
+                    return field;
+                }
             }
         }
 
@@ -1014,6 +1045,96 @@ export function WorkflowNodeConfig({
                                                         </div>
                                                     )
                                                 )}
+
+                                                {/* Show previous node test output for Post Upserter */}
+                                                {nodeData?.type === 'post_upserter' && (
+                                                    getPreviousNode(nodeData?.id || '', workflowNodes)?.testOutput ? (
+                                                        <div className="p-3 bg-green-50 rounded-lg flex flex-col max-h-96">
+                                                            <div className="flex items-center gap-2 mb-2 flex-shrink-0">
+                                                                <Database className="h-4 w-4 text-green-600" />
+                                                                <span className="text-sm font-medium">Input Data</span>
+                                                            </div>
+                                                            <p className="text-xs text-gray-600 mb-2">
+                                                                Preview of data that will be processed by Post Upserter. Use this to configure field mappings.
+                                                            </p>
+                                                            <JsonViewer
+                                                                data={getPreviousNode(nodeData?.id || '', workflowNodes)?.testOutput}
+                                                                maxHeight="max-h-80"
+                                                                maxLevel={2}
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="p-3 bg-amber-50 rounded-lg">
+                                                            <div className="flex items-center gap-2 mb-2">
+                                                                <Database className="h-4 w-4 text-amber-600" />
+                                                                <span className="text-sm font-medium">No Input Data</span>
+                                                            </div>
+                                                            <p className="text-xs text-amber-700">
+                                                                Run the previous step first to see available fields for field mappings
+                                                            </p>
+                                                        </div>
+                                                    )
+                                                )}
+
+                                                {/* Show previous node test output for Post Deleter */}
+                                                {nodeData?.type === 'post_deleter' && (
+                                                    getPreviousNode(nodeData?.id || '', workflowNodes)?.testOutput ? (
+                                                        <div className="p-3 bg-green-50 rounded-lg flex flex-col max-h-96">
+                                                            <div className="flex items-center gap-2 mb-2 flex-shrink-0">
+                                                                <Database className="h-4 w-4 text-green-600" />
+                                                                <span className="text-sm font-medium">Input Data</span>
+                                                            </div>
+                                                            <p className="text-xs text-gray-600 mb-2">
+                                                                Preview of data that will be processed by Post Deleter. Use this to select the ID field for deletion.
+                                                            </p>
+                                                            <JsonViewer
+                                                                data={getPreviousNode(nodeData?.id || '', workflowNodes)?.testOutput}
+                                                                maxHeight="max-h-80"
+                                                                maxLevel={2}
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="p-3 bg-amber-50 rounded-lg">
+                                                            <div className="flex items-center gap-2 mb-2">
+                                                                <Database className="h-4 w-4 text-amber-600" />
+                                                                <span className="text-sm font-medium">No Input Data</span>
+                                                            </div>
+                                                            <p className="text-xs text-amber-700">
+                                                                Run the previous step first to see available fields for ID field mapping
+                                                            </p>
+                                                        </div>
+                                                    )
+                                                )}
+
+                                                {/* Show previous node test output for Rule-Based Filter */}
+                                                {nodeData?.type === 'rule_based_filter' && (
+                                                    getPreviousNode(nodeData?.id || '', workflowNodes)?.testOutput ? (
+                                                        <div className="p-3 bg-green-50 rounded-lg flex flex-col max-h-96">
+                                                            <div className="flex items-center gap-2 mb-2 flex-shrink-0">
+                                                                <Database className="h-4 w-4 text-green-600" />
+                                                                <span className="text-sm font-medium">Input Data</span>
+                                                            </div>
+                                                            <p className="text-xs text-gray-600 mb-2">
+                                                                Preview of data that will be processed by Rule-Based Filter. Use this to select the content field for filtering.
+                                                            </p>
+                                                            <JsonViewer
+                                                                data={getPreviousNode(nodeData?.id || '', workflowNodes)?.testOutput}
+                                                                maxHeight="max-h-80"
+                                                                maxLevel={2}
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="p-3 bg-amber-50 rounded-lg">
+                                                            <div className="flex items-center gap-2 mb-2">
+                                                                <Database className="h-4 w-4 text-amber-600" />
+                                                                <span className="text-sm font-medium">No Input Data</span>
+                                                            </div>
+                                                            <p className="text-xs text-amber-700">
+                                                                Run the previous step first to see available fields for content field selection
+                                                            </p>
+                                                        </div>
+                                                    )
+                                                )}
                                             </div>
                                         ) : (
                                             <div className="p-3 bg-gray-50 rounded-lg">
@@ -1098,7 +1219,7 @@ export function WorkflowNodeConfig({
     function renderNodeConfiguration() {
         if (!nodeData) return null;
 
-        // Special handling for Rule-Based Filter node
+        // Special handling for Rule-Based Filter node - render rules configuration
         if (nodeData.type === 'rule_based_filter') {
             const filterConfig = {
                 rules: nodeData.config?.rules || [],
@@ -1111,19 +1232,86 @@ export function WorkflowNodeConfig({
             };
 
             return (
-                <RuleBasedFilterConfig
-                    config={filterConfig}
-                    onChange={(newConfig) => {
-                        handleNodeDataChange({ config: newConfig });
-                    }}
-                    onValidate={(isValid, errors) => {
-                        if (!isValid && errors.length > 0) {
-                            setValidationError('rule_config');
-                        } else {
-                            setValidationError(null);
+                <div className="space-y-4">
+                    {/* Render contentField from enhanced schema first */}
+                    {(() => {
+                        const previousOutputFields = getPreviousOutputFields();
+                        if (previousOutputFields.length > 0 && nodeData.config) {
+                            const contentFieldSchema = {
+                                type: 'string',
+                                title: 'Content Field',
+                                description: 'Field from previous output to use for content filtering',
+                                mappingField: true
+                            };
+                            return (
+                                <div className="space-y-2">
+                                    <Label htmlFor="contentField" className="text-sm font-medium">
+                                        Content Field
+                                        <span className="text-red-500 ml-1">*</span>
+                                    </Label>
+                                    <Select
+                                        name="contentField"
+                                        value={nodeData.config?.contentField || ''}
+                                        onValueChange={(val) => updateConfig('contentField', val)}
+                                    >
+                                        <SelectTrigger className={validationError === 'contentField' ? 'border-red-500 focus:border-red-500' : ''}>
+                                            <SelectValue placeholder="Select content field from previous output" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {previousOutputFields.map((field) => {
+                                                const fieldValue = getPreviousOutputFieldValue(field);
+                                                const preview = fieldValue ?
+                                                    (typeof fieldValue === 'string' ?
+                                                        fieldValue.substring(0, 50) + (fieldValue.length > 50 ? '...' : '') :
+                                                        JSON.stringify(fieldValue).substring(0, 50) + '...') :
+                                                    'No preview available';
+                                                return (
+                                                    <SelectItem key={field} value={field}>
+                                                        <div className="flex flex-col">
+                                                            <span className="font-medium">{field}</span>
+                                                            <span className="text-xs text-gray-500">{preview}</span>
+                                                        </div>
+                                                    </SelectItem>
+                                                );
+                                            })}
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-xs text-gray-500">
+                                        Select which field from the previous output contains the content to filter.
+                                        <br />
+                                        <strong>Note:</strong> Do not include wrapper fields like "data" or "items". Only select fields that exist in each item (e.g., "post_message", not "data.post_message").
+                                    </p>
+                                    {validationError === 'contentField' && (
+                                        <p className="text-sm text-red-500">Content Field is required</p>
+                                    )}
+                                </div>
+                            );
                         }
-                    }}
-                />
+                        return null;
+                    })()}
+
+                    {/* Render rules configuration */}
+                    <RuleBasedFilterConfig
+                        config={filterConfig}
+                        onChange={(newConfig) => {
+                            handleNodeDataChange({
+                                config: {
+                                    ...nodeData.config,
+                                    ...newConfig,
+                                    // Preserve contentField if it exists
+                                    contentField: nodeData.config?.contentField
+                                }
+                            });
+                        }}
+                        onValidate={(isValid, errors) => {
+                            if (!isValid && errors.length > 0) {
+                                setValidationError('rule_config');
+                            } else {
+                                setValidationError(null);
+                            }
+                        }}
+                    />
+                </div>
             );
         }
 
@@ -1137,9 +1325,11 @@ export function WorkflowNodeConfig({
             );
         }
 
-        // Add content field mapping for Duplicate Segment Detection if there's previous output
+        // Add content field mapping for Duplicate Segment Detection and Rule-Based Filter if there's previous output
         const enhancedSchema = { ...stepInfo.configSchema };
-        if (nodeData.type === 'duplicate_segment' && getPreviousOutputFields().length > 0) {
+        const previousOutputFields = getPreviousOutputFields();
+
+        if (nodeData.type === 'duplicate_segment' && previousOutputFields.length > 0) {
             enhancedSchema.properties = {
                 ...enhancedSchema.properties,
                 contentField: {
@@ -1149,6 +1339,25 @@ export function WorkflowNodeConfig({
                     mappingField: true
                 }
             };
+        }
+
+        if (nodeData.type === 'rule_based_filter' && previousOutputFields.length > 0) {
+            enhancedSchema.properties = {
+                ...enhancedSchema.properties,
+                contentField: {
+                    type: 'string',
+                    title: 'Content Field',
+                    description: 'Field from previous output to use for content filtering',
+                    mappingField: true
+                }
+            };
+            // Make contentField required for rule-based filter
+            if (!enhancedSchema.required) {
+                enhancedSchema.required = [];
+            }
+            if (!enhancedSchema.required.includes('contentField')) {
+                enhancedSchema.required.push('contentField');
+            }
         }
 
         return (
@@ -1170,6 +1379,144 @@ export function WorkflowNodeConfig({
 
                         // Show hash-specific fields only for hash method
                         if ((key === 'caseSensitive' || key === 'normalizeText' || key === 'ignoreWhitespace') && method !== 'hash') {
+                            return null;
+                        }
+                    }
+
+                    // Conditional rendering for Post Upserter
+                    if (nodeData?.type === 'post_upserter') {
+                        // Hide deduplicationStrategy and deduplicationFields - always use hash strategy
+                        if (key === 'deduplicationStrategy' || key === 'deduplicationFields') {
+                            return null;
+                        }
+                    }
+
+                    // Conditional rendering for Lenx API Data Source based on dateMode
+                    if (nodeData?.type === 'lenx_api_datasource') {
+                        const dateMode = nodeData.config?.dateMode;
+
+                        // For fixed mode: show startDate, endDate, dateIntervalMinutes
+                        // For dynamic mode: show intervalMinutes
+                        if (dateMode === 'fixed') {
+                            // Hide dynamic mode fields
+                            if (key === 'intervalMinutes') {
+                                return null;
+                            }
+                        } else if (dateMode === 'dynamic') {
+                            // Hide fixed mode fields
+                            if (key === 'startDate' || key === 'endDate' || key === 'dateIntervalMinutes') {
+                                return null;
+                            }
+                        } else {
+                            // If dateMode is not set yet, hide both sets of fields
+                            if (key === 'startDate' || key === 'endDate' || key === 'dateIntervalMinutes' || key === 'intervalMinutes') {
+                                return null;
+                            }
+                        }
+                    }
+
+                    // Special rendering for Post Upserter nested objects
+                    if (nodeData?.type === 'post_upserter') {
+                        if (key === 'fieldMappings') {
+                            return renderFieldMappingsConfig(key, schema);
+                        }
+                        if (key === 'hashConfig') {
+                            return renderHashConfig(key, schema);
+                        }
+                        if (key === 'defaults') {
+                            return renderDefaultsConfig(key, schema);
+                        }
+                    }
+
+                    // Special rendering for Post Deleter nested objects
+                    if (nodeData?.type === 'post_deleter') {
+                        if (key === 'fieldMappings') {
+                            return renderPostDeleterFieldMappingsConfig(key, schema);
+                        }
+                    }
+
+                    // Special handling for Post Data Source - only show postedAtStart and postedAtEnd by default
+                    if (nodeData?.type === 'post_datasource') {
+                        // Hide userId field
+                        if (key === 'userId') {
+                            return null;
+                        }
+
+                        // Only show postedAtStart and postedAtEnd by default
+                        // Other fields are in advanced section
+                        const advancedFields = ['hash', 'provider', 'source', 'title', 'metaKey', 'metaValue', 'startDate', 'endDate', 'page', 'limit'];
+                        const isAdvancedField = advancedFields.includes(key);
+                        const isAdvancedOpen = nodeData.config?._advancedOpen || false;
+
+                        // Render advanced section header before the first advanced field (when closed)
+                        if (isAdvancedField && key === 'hash' && !isAdvancedOpen) {
+                            return (
+                                <div key="advanced-options-header" className="border-t pt-4 mt-4">
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                            handleNodeDataChange({
+                                                config: {
+                                                    ...nodeData.config,
+                                                    _advancedOpen: true,
+                                                },
+                                            });
+                                        }}
+                                        className="w-full justify-between p-0 h-auto"
+                                    >
+                                        <span className="text-xs font-medium text-gray-700">Advanced Options</span>
+                                        <ChevronRight className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                            );
+                        }
+
+                        // Render advanced section header with collapse button (when open) before first advanced field
+                        // When section is open, render header and the hash field together
+                        if (isAdvancedField && key === 'hash' && isAdvancedOpen) {
+                            return (
+                                <div key="advanced-options-section" className="space-y-2">
+                                    <div className="border-t pt-4 mt-4">
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                                handleNodeDataChange({
+                                                    config: {
+                                                        ...nodeData.config,
+                                                        _advancedOpen: false,
+                                                    },
+                                                });
+                                            }}
+                                            className="w-full justify-between p-0 h-auto"
+                                        >
+                                            <span className="text-xs font-medium text-gray-700">Advanced Options</span>
+                                            <ChevronDown className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor={key} className="text-sm font-medium">
+                                            {schema.title || key}
+                                            {enhancedSchema.required?.includes(key) && (
+                                                <span className="text-red-500 ml-1">*</span>
+                                            )}
+                                        </Label>
+                                        {schema.description && (
+                                            <p className="text-xs text-gray-500">{schema.description}</p>
+                                        )}
+                                        <div className="mt-2">
+                                            {renderConfigField(key, schema)}
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        if (isAdvancedField && !isAdvancedOpen) {
+                            // Don't render advanced fields when section is closed
                             return null;
                         }
                     }
@@ -1266,6 +1613,49 @@ export function WorkflowNodeConfig({
                                 Select which field from the previous output contains the content to compare for duplicates.
                                 <br />
                                 <strong>Note:</strong> Do not include wrapper fields like "data". Only select fields that exist in each item (e.g., "post_message", not "data.post_message").
+                            </p>
+                            {hasError && (
+                                <p className="text-sm text-red-500">{errorMessage}</p>
+                            )}
+                        </div>
+                    );
+                }
+
+                // Special handling for Rule-Based Filter content field mapping
+                if (nodeData?.type === 'rule_based_filter' && key === 'contentField' && previousOutputFields.length > 0) {
+                    return (
+                        <div className="space-y-1">
+                            <Select
+                                name={key}
+                                value={value || ''}
+                                onValueChange={(val) => updateConfig(key, val)}
+                            >
+                                <SelectTrigger className={hasError ? 'border-red-500 focus:border-red-500' : ''}>
+                                    <SelectValue placeholder="Select content field from previous output" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {previousOutputFields.map((field) => {
+                                        const fieldValue = getPreviousOutputFieldValue(field);
+                                        const preview = fieldValue ?
+                                            (typeof fieldValue === 'string' ?
+                                                fieldValue.substring(0, 50) + (fieldValue.length > 50 ? '...' : '') :
+                                                JSON.stringify(fieldValue).substring(0, 50) + '...') :
+                                            'No preview available';
+                                        return (
+                                            <SelectItem key={field} value={field}>
+                                                <div className="flex flex-col">
+                                                    <span className="font-medium">{field}</span>
+                                                    <span className="text-xs text-gray-500">{preview}</span>
+                                                </div>
+                                            </SelectItem>
+                                        );
+                                    })}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-gray-500">
+                                Select which field from the previous output contains the content to filter.
+                                <br />
+                                <strong>Note:</strong> Do not include wrapper fields like "data" or "items". Only select fields that exist in each item (e.g., "post_message", not "data.post_message").
                             </p>
                             {hasError && (
                                 <p className="text-sm text-red-500">{errorMessage}</p>
@@ -1556,6 +1946,112 @@ export function WorkflowNodeConfig({
                     }
                 }
 
+                // Special handling for date-time fields in Lenx API Data Source
+                if (nodeData?.type === 'lenx_api_datasource' && (key === 'startDate' || key === 'endDate') && schema.format === 'date-time') {
+                    // Convert ISO 8601 to datetime-local format (YYYY-MM-DDTHH:mm)
+                    const convertToLocalDateTime = (isoString: string | undefined): string => {
+                        if (!isoString) return '';
+                        try {
+                            const date = new Date(isoString);
+                            // Format as YYYY-MM-DDTHH:mm (datetime-local format)
+                            const year = date.getFullYear();
+                            const month = String(date.getMonth() + 1).padStart(2, '0');
+                            const day = String(date.getDate()).padStart(2, '0');
+                            const hours = String(date.getHours()).padStart(2, '0');
+                            const minutes = String(date.getMinutes()).padStart(2, '0');
+                            return `${year}-${month}-${day}T${hours}:${minutes}`;
+                        } catch {
+                            return '';
+                        }
+                    };
+
+                    // Convert datetime-local format back to ISO 8601
+                    const convertFromLocalDateTime = (localDateTime: string): string => {
+                        if (!localDateTime) return '';
+                        try {
+                            // Parse the local datetime and convert to ISO string
+                            const date = new Date(localDateTime);
+                            return date.toISOString();
+                        } catch {
+                            return '';
+                        }
+                    };
+
+                    const localValue = convertToLocalDateTime(value as string);
+
+                    return (
+                        <div className="space-y-1">
+                            <Input
+                                type="datetime-local"
+                                name={key}
+                                value={localValue}
+                                onChange={(e) => {
+                                    const isoValue = convertFromLocalDateTime(e.target.value);
+                                    updateConfig(key, isoValue || undefined);
+                                }}
+                                placeholder={schema.description || 'Select date and time'}
+                                className={hasError ? 'border-red-500 focus:border-red-500' : ''}
+                            />
+                            {hasError && (
+                                <p className="text-sm text-red-500">{errorMessage}</p>
+                            )}
+                        </div>
+                    );
+                }
+
+                // Special handling for date-time fields in Post Data Source
+                if (nodeData?.type === 'post_datasource' && (key === 'startDate' || key === 'endDate' || key === 'postedAtStart' || key === 'postedAtEnd') && schema.format === 'date-time') {
+                    // Convert ISO 8601 to datetime-local format (YYYY-MM-DDTHH:mm)
+                    const convertToLocalDateTime = (isoString: string | undefined): string => {
+                        if (!isoString) return '';
+                        try {
+                            const date = new Date(isoString);
+                            // Format as YYYY-MM-DDTHH:mm (datetime-local format)
+                            const year = date.getFullYear();
+                            const month = String(date.getMonth() + 1).padStart(2, '0');
+                            const day = String(date.getDate()).padStart(2, '0');
+                            const hours = String(date.getHours()).padStart(2, '0');
+                            const minutes = String(date.getMinutes()).padStart(2, '0');
+                            return `${year}-${month}-${day}T${hours}:${minutes}`;
+                        } catch {
+                            return '';
+                        }
+                    };
+
+                    // Convert datetime-local format back to ISO 8601
+                    const convertFromLocalDateTime = (localDateTime: string): string => {
+                        if (!localDateTime) return '';
+                        try {
+                            // Parse the local datetime and convert to ISO string
+                            const date = new Date(localDateTime);
+                            return date.toISOString();
+                        } catch {
+                            return '';
+                        }
+                    };
+
+                    const localValue = convertToLocalDateTime(value as string);
+
+                    return (
+                        <div className="space-y-1">
+                            <Input
+                                type="datetime-local"
+                                name={key}
+                                value={localValue}
+                                onChange={(e) => {
+                                    const isoValue = convertFromLocalDateTime(e.target.value);
+                                    updateConfig(key, isoValue || undefined);
+                                }}
+                                placeholder={schema.description || 'Select date and time'}
+                                className={hasError ? 'border-red-500 focus:border-red-500' : ''}
+                            />
+                            {hasError && (
+                                <p className="text-sm text-red-500">{errorMessage}</p>
+                            )}
+                        </div>
+                    );
+                }
+
                 return (
                     <div className="space-y-1">
                         <Input
@@ -1687,6 +2183,507 @@ export function WorkflowNodeConfig({
                     </div>
                 );
         }
+    }
+
+    // Special renderer for Post Upserter field mappings
+    function renderFieldMappingsConfig(key: string, schema: Record<string, any>) {
+        if (!nodeData) return null;
+        const previousOutputFields = getPreviousOutputFields();
+        const fieldMappings = nodeData.config?.fieldMappings || {};
+
+        const updateFieldMapping = (fieldKey: string, fieldValue: string | Record<string, any>) => {
+            const newFieldMappings = {
+                ...fieldMappings,
+                [fieldKey]: fieldValue || undefined
+            };
+            // Remove undefined values
+            Object.keys(newFieldMappings).forEach(k => {
+                if (newFieldMappings[k] === undefined) {
+                    delete newFieldMappings[k];
+                }
+            });
+            updateConfig(key, Object.keys(newFieldMappings).length > 0 ? newFieldMappings : undefined);
+        };
+
+        return (
+            <div key={key} className="space-y-3 p-4 border rounded-lg bg-gray-50">
+                <div>
+                    <Label className="text-sm font-medium">
+                        {schema.title || 'Field Mappings'}
+                    </Label>
+                    {schema.description && (
+                        <p className="text-xs text-gray-500 mt-1">{schema.description}</p>
+                    )}
+                </div>
+                <div className="space-y-3">
+                    {/* Title - Must select from input data */}
+                    <div className="space-y-1">
+                        <Label htmlFor={`${key}.title`} className="text-xs font-medium text-gray-700">
+                            Title <span className="text-red-500">*</span>
+                        </Label>
+                        {previousOutputFields.length > 0 ? (
+                            <div className="flex gap-2">
+                                <Select
+                                    value={fieldMappings.title || ''}
+                                    onValueChange={(val) => updateFieldMapping('title', val)}
+                                    required
+                                >
+                                    <SelectTrigger className="h-8 text-sm flex-1">
+                                        <SelectValue placeholder="Select title field from input data" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {previousOutputFields.map((field) => (
+                                            <SelectItem key={field} value={field}>
+                                                {field}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                {fieldMappings.title && (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => updateFieldMapping('title', '')}
+                                        className="h-8"
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </Button>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="p-2 bg-amber-50 rounded text-xs text-amber-700">
+                                Run the previous step first to see available fields for title mapping
+                            </div>
+                        )}
+                        <p className="text-xs text-gray-500">Select which field from input data contains the title</p>
+                    </div>
+
+                    {/* Provider - Free text input */}
+                    <div className="space-y-1">
+                        <Label htmlFor={`${key}.provider`} className="text-xs font-medium text-gray-700">
+                            Provider (Field Path)
+                        </Label>
+                        <Input
+                            id={`${key}.provider`}
+                            value={fieldMappings.provider || ''}
+                            onChange={(e) => updateFieldMapping('provider', e.target.value)}
+                            placeholder="Enter provider field path or leave empty"
+                            className="h-8 text-sm"
+                        />
+                        <p className="text-xs text-gray-500">Enter the field path from input data, or leave empty to use default value</p>
+                    </div>
+
+                    {/* Source - Select from input data */}
+                    <div className="space-y-1">
+                        <Label htmlFor={`${key}.source`} className="text-xs font-medium text-gray-700">
+                            Source
+                        </Label>
+                        {previousOutputFields.length > 0 ? (
+                            <div className="flex gap-2">
+                                <Select
+                                    value={fieldMappings.source || ''}
+                                    onValueChange={(val) => updateFieldMapping('source', val)}
+                                >
+                                    <SelectTrigger className="h-8 text-sm flex-1">
+                                        <SelectValue placeholder="Select source field from input data" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {previousOutputFields.map((field) => (
+                                            <SelectItem key={field} value={field}>
+                                                {field}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                {fieldMappings.source && (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => updateFieldMapping('source', '')}
+                                        className="h-8"
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </Button>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="p-2 bg-amber-50 rounded text-xs text-amber-700">
+                                Run the previous step first to see available fields for source mapping
+                            </div>
+                        )}
+                        <p className="text-xs text-gray-500">Select which field from input data contains the source</p>
+                    </div>
+
+                    {/* Posted At - Select from input data */}
+                    <div className="space-y-1">
+                        <Label htmlFor={`${key}.postedAt`} className="text-xs font-medium text-gray-700">
+                            Posted At
+                        </Label>
+                        {previousOutputFields.length > 0 ? (
+                            <div className="flex gap-2">
+                                <Select
+                                    value={fieldMappings.postedAt || ''}
+                                    onValueChange={(val) => updateFieldMapping('postedAt', val)}
+                                >
+                                    <SelectTrigger className="h-8 text-sm flex-1">
+                                        <SelectValue placeholder="Select posted_at field from input data" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {previousOutputFields.map((field) => (
+                                            <SelectItem key={field} value={field}>
+                                                {field}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                {fieldMappings.postedAt && (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => updateFieldMapping('postedAt', '')}
+                                        className="h-8"
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </Button>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="p-2 bg-amber-50 rounded text-xs text-amber-700">
+                                Run the previous step first to see available fields for posted_at mapping
+                            </div>
+                        )}
+                        <p className="text-xs text-gray-500">Select which field from input data contains the posted_at date (supports ISO strings, Unix timestamps, or Date objects)</p>
+                    </div>
+
+                    {/* Meta field mappings */}
+                    <div className="space-y-2 pt-2 border-t">
+                        <Label className="text-xs font-medium text-gray-700">Meta Field Mappings</Label>
+                        <p className="text-xs text-gray-500">
+                            Map additional fields to post meta. Format: JSON object like {"{"}"metaKey": "inputFieldPath"{"}"}
+                        </p>
+                        <Textarea
+                            value={fieldMappings.meta ? JSON.stringify(fieldMappings.meta, null, 2) : ''}
+                            onChange={(e) => {
+                                try {
+                                    const metaValue = e.target.value.trim() ? JSON.parse(e.target.value) : undefined;
+                                    updateFieldMapping('meta', metaValue);
+                                } catch {
+                                    // Invalid JSON, keep as is
+                                }
+                            }}
+                            placeholder='{"site": "site", "channel": "channel", "author": "author_name"}'
+                            rows={3}
+                            className="text-sm font-mono"
+                        />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Special renderer for Post Deleter Field Mappings (simplified - only ID field)
+    function renderPostDeleterFieldMappingsConfig(key: string, schema: Record<string, any>) {
+        if (!nodeData) return null;
+        const previousOutputFields = getPreviousOutputFields();
+        const fieldMappings = nodeData.config?.fieldMappings || {};
+
+        const updateFieldMapping = (fieldKey: string, fieldValue: string) => {
+            const newFieldMappings = {
+                ...fieldMappings,
+                [fieldKey]: fieldValue || undefined
+            };
+            // Remove undefined values
+            Object.keys(newFieldMappings).forEach(k => {
+                if (newFieldMappings[k] === undefined) {
+                    delete newFieldMappings[k];
+                }
+            });
+            updateConfig(key, Object.keys(newFieldMappings).length > 0 ? newFieldMappings : undefined);
+        };
+
+        return (
+            <div key={key} className="space-y-3 p-4 border rounded-lg bg-gray-50">
+                <div>
+                    <Label className="text-sm font-medium">
+                        {schema.title || 'Field Mappings'}
+                    </Label>
+                    {schema.description && (
+                        <p className="text-xs text-gray-500 mt-1">{schema.description}</p>
+                    )}
+                </div>
+                <div className="space-y-3">
+                    {/* ID Field - Select from input data */}
+                    <div className="space-y-1">
+                        <Label htmlFor={`${key}.id`} className="text-xs font-medium text-gray-700">
+                            Post ID Field
+                        </Label>
+                        {previousOutputFields.length > 0 ? (
+                            <div className="flex gap-2">
+                                <Select
+                                    value={fieldMappings.id || 'id'}
+                                    onValueChange={(val) => updateFieldMapping('id', val)}
+                                >
+                                    <SelectTrigger className="h-8 text-sm flex-1">
+                                        <SelectValue placeholder="Select ID field from input data" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {previousOutputFields.map((field) => (
+                                            <SelectItem key={field} value={field}>
+                                                {field}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                {fieldMappings.id && fieldMappings.id !== 'id' && (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => updateFieldMapping('id', 'id')}
+                                        className="h-8"
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </Button>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="p-2 bg-amber-50 rounded text-xs text-amber-700">
+                                Run the previous step first to see available fields for ID mapping
+                            </div>
+                        )}
+                        <p className="text-xs text-gray-500">Select which field from input data contains the post ID. Defaults to "id" if not specified.</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Special renderer for Hash Config
+    function renderHashConfig(key: string, schema: Record<string, any>) {
+        if (!nodeData) return null;
+        const previousOutputFields = getPreviousOutputFields();
+        const hashConfig = nodeData.config?.hashConfig || {};
+
+        const updateHashConfig = (fieldKey: string, value: any) => {
+            const newHashConfig = {
+                ...hashConfig,
+                [fieldKey]: value
+            };
+            updateConfig(key, newHashConfig);
+        };
+
+        const hasError = validationError === key || (!hashConfig.fields || hashConfig.fields.length === 0);
+        const errorMessage = hasError ? 'Hash configuration is required. Please add at least one field for hash calculation.' : '';
+
+        return (
+            <div key={key} className={`space-y-3 p-4 border rounded-lg ${hasError ? 'border-red-500 bg-red-50' : 'bg-gray-50'}`}>
+                <div>
+                    <Label className="text-sm font-medium">
+                        {schema.title || 'Hash Configuration'}
+                        <span className="text-red-500 ml-1">*</span>
+                    </Label>
+                    {schema.description && (
+                        <p className="text-xs text-gray-500 mt-1">{schema.description}</p>
+                    )}
+                    <p className="text-xs text-red-600 mt-1 font-medium">Required: Hash configuration is required for post deduplication</p>
+                    {hasError && (
+                        <p className="text-sm text-red-600 mt-2 font-medium">{errorMessage}</p>
+                    )}
+                </div>
+                <div className="space-y-3">
+                    <div className="space-y-1">
+                        <Label className="text-xs font-medium text-gray-700">
+                            Fields <span className="text-red-500">*</span>
+                        </Label>
+                        <p className="text-xs text-gray-500">Select fields from input data to use for hash calculation</p>
+                        {previousOutputFields.length > 0 ? (
+                            <div className="space-y-2">
+                                {Array.isArray(hashConfig.fields) && hashConfig.fields.length > 0 ? hashConfig.fields.map((field: string, idx: number) => (
+                                    <div key={idx} className="flex gap-2">
+                                        <Select
+                                            value={field || ''}
+                                            onValueChange={(val) => {
+                                                const newFields = [...hashConfig.fields];
+                                                newFields[idx] = val;
+                                                updateHashConfig('fields', newFields.filter(f => f && f.trim()));
+                                            }}
+                                        >
+                                            <SelectTrigger className="h-8 text-sm flex-1">
+                                                <SelectValue placeholder="Select field" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {previousOutputFields.map((f) => (
+                                                    <SelectItem key={f} value={f}>{f}</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => {
+                                                const newFields = hashConfig.fields.filter((_: any, i: number) => i !== idx);
+                                                updateHashConfig('fields', newFields.length > 0 ? newFields.filter((f: string) => f && f.trim()) : undefined);
+                                            }}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                )) : (
+                                    <p className="text-xs text-gray-400">No fields added</p>
+                                )}
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                        const firstField = previousOutputFields[0] || '';
+                                        if (firstField) {
+                                            const newFields = [...(hashConfig.fields || []), firstField];
+                                            updateHashConfig('fields', newFields);
+                                        }
+                                    }}
+                                    className="w-full"
+                                >
+                                    <Plus className="h-3 w-3 mr-1" />
+                                    Add Field
+                                </Button>
+                            </div>
+                        ) : (
+                            <Textarea
+                                value={Array.isArray(hashConfig.fields) ? hashConfig.fields.join('\n') : ''}
+                                onChange={(e) => updateHashConfig('fields', e.target.value.split('\n').filter(Boolean))}
+                                placeholder="Enter field names, one per line"
+                                rows={3}
+                                className="text-sm"
+                            />
+                        )}
+                    </div>
+
+                    {/* Advanced Options - Collapsed by default */}
+                    <div className="border-t pt-3">
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                                const newState = !(nodeData.config?.hashConfig?._advancedOpen || false);
+                                updateHashConfig('_advancedOpen', newState);
+                            }}
+                            className="w-full justify-between p-0 h-auto"
+                        >
+                            <span className="text-xs font-medium text-gray-700">Advanced Options</span>
+                            {(hashConfig._advancedOpen || false) ? (
+                                <ChevronDown className="h-4 w-4" />
+                            ) : (
+                                <ChevronRight className="h-4 w-4" />
+                            )}
+                        </Button>
+                        {(hashConfig._advancedOpen || false) && (
+                            <div className="space-y-3 mt-3">
+                                <div className="space-y-1">
+                                    <Label className="text-xs font-medium text-gray-700">Algorithm</Label>
+                                    <Select
+                                        value={hashConfig.algorithm || 'md5'}
+                                        onValueChange={(val) => updateHashConfig('algorithm', val)}
+                                    >
+                                        <SelectTrigger className="h-8 text-sm">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="md5">MD5 (Fastest/Shortest)</SelectItem>
+                                            <SelectItem value="sha256">SHA-256</SelectItem>
+                                            <SelectItem value="sha512">SHA-512</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-xs text-gray-500">Default: MD5 (fastest and shortest)</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs font-medium text-gray-700">Separator</Label>
+                                    <Input
+                                        value={hashConfig.separator || '|'}
+                                        onChange={(e) => updateHashConfig('separator', e.target.value)}
+                                        placeholder="|"
+                                        className="h-8 text-sm"
+                                    />
+                                    <p className="text-xs text-gray-500">Separator used when combining fields for hash calculation</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs font-medium text-gray-700">Prefix (Optional)</Label>
+                                    <Input
+                                        value={hashConfig.prefix || ''}
+                                        onChange={(e) => updateHashConfig('prefix', e.target.value || undefined)}
+                                        placeholder="Optional prefix for hash"
+                                        className="h-8 text-sm"
+                                    />
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Special renderer for Defaults Config
+    function renderDefaultsConfig(key: string, schema: Record<string, any>) {
+        if (!nodeData) return null;
+        const defaults = nodeData.config?.defaults || {};
+
+        const updateDefault = (fieldKey: string, value: any) => {
+            const newDefaults = {
+                ...defaults,
+                [fieldKey]: value || undefined
+            };
+            // Remove undefined values
+            Object.keys(newDefaults).forEach(k => {
+                if (newDefaults[k] === undefined) {
+                    delete newDefaults[k];
+                }
+            });
+            updateConfig(key, Object.keys(newDefaults).length > 0 ? newDefaults : undefined);
+        };
+
+        return (
+            <div key={key} className="space-y-3 p-4 border rounded-lg bg-gray-50">
+                <div>
+                    <Label className="text-sm font-medium">
+                        {schema.title || 'Default Values'}
+                    </Label>
+                    {schema.description && (
+                        <p className="text-xs text-gray-500 mt-1">{schema.description}</p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                        These values will be used if field mappings are empty. User ID will automatically use the authenticated user.
+                    </p>
+                </div>
+                <div className="space-y-3">
+                    <div className="space-y-1">
+                        <Label className="text-xs font-medium text-gray-700">Provider</Label>
+                        <Input
+                            value={defaults.provider || ''}
+                            onChange={(e) => updateDefault('provider', e.target.value)}
+                            placeholder="Default provider value"
+                            className="h-8 text-sm"
+                        />
+                        <p className="text-xs text-gray-500">Used when provider field mapping is empty</p>
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-medium text-gray-700">Source</Label>
+                        <Input
+                            value={defaults.source || ''}
+                            onChange={(e) => updateDefault('source', e.target.value)}
+                            placeholder="Default source value"
+                            className="h-8 text-sm"
+                        />
+                        <p className="text-xs text-gray-500">Used when source field mapping is empty</p>
+                    </div>
+                </div>
+            </div>
+        );
     }
 
     function renderAdvancedConfiguration() {

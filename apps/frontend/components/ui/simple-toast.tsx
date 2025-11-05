@@ -60,14 +60,19 @@ interface ToastWithConfirmContextType extends ToastContextType {
   confirm: (options: ConfirmOptions) => Promise<boolean>
 }
 
-const ToastContext = createContext<ToastWithConfirmContextType | undefined>(undefined)
+// Default no-op context for SSR
+const defaultContext: ToastWithConfirmContextType = {
+  success: () => { },
+  error: () => { },
+  warning: () => { },
+  info: () => { },
+  confirm: async () => false,
+}
+
+const ToastContext = createContext<ToastWithConfirmContextType>(defaultContext)
 
 export function useToast() {
-  const context = useContext(ToastContext)
-  if (!context) {
-    throw new Error('useToast must be used within a ToastProvider')
-  }
-  return context
+  return useContext(ToastContext)
 }
 
 interface ToastItemProps {
@@ -202,6 +207,7 @@ interface ToastProviderProps {
 }
 
 export function ToastProvider({ children }: ToastProviderProps) {
+  const [mounted, setMounted] = useState(false)
   const [toasts, setToasts] = useState<ToastData[]>([])
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean
@@ -212,6 +218,10 @@ export function ToastProvider({ children }: ToastProviderProps) {
     options: { title: '', description: '' },
     resolve: () => { }
   })
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(toast => toast.id !== id))
@@ -276,29 +286,33 @@ export function ToastProvider({ children }: ToastProviderProps) {
     <ToastContext.Provider value={contextValue}>
       {children}
 
-      {/* Toast Container */}
-      <div
-        className="fixed top-0 right-0 z-50 p-6 pointer-events-none"
-        style={{ zIndex: 9999 }}
-      >
-        <div className="flex flex-col space-y-4">
-          {toasts.map((toast) => (
-            <ToastItem
-              key={toast.id}
-              toast={toast}
-              onRemove={removeToast}
-            />
-          ))}
-        </div>
-      </div>
+      {/* Toast Container - only render after client-side mount */}
+      {mounted && (
+        <>
+          <div
+            className="fixed top-0 right-0 z-50 p-6 pointer-events-none"
+            style={{ zIndex: 9999 }}
+          >
+            <div className="flex flex-col space-y-4">
+              {toasts.map((toast) => (
+                <ToastItem
+                  key={toast.id}
+                  toast={toast}
+                  onRemove={removeToast}
+                />
+              ))}
+            </div>
+          </div>
 
-      {/* Confirmation Dialog */}
-      <ConfirmDialog
-        isOpen={confirmDialog.isOpen}
-        options={confirmDialog.options}
-        onConfirm={handleConfirm}
-        onCancel={handleCancel}
-      />
+          {/* Confirmation Dialog */}
+          <ConfirmDialog
+            isOpen={confirmDialog.isOpen}
+            options={confirmDialog.options}
+            onConfirm={handleConfirm}
+            onCancel={handleCancel}
+          />
+        </>
+      )}
     </ToastContext.Provider>
   )
 } 

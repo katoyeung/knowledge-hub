@@ -25,6 +25,7 @@ import { QueueSharedModule } from '../queue/queue-shared.module';
 import { QueueCoreModule } from '../queue/queue-core.module';
 import { AiProviderModule } from '../ai-provider/ai-provider.module';
 import { GraphModule } from '../graph/graph.module';
+import { PostsModule } from '../posts/posts.module';
 import { ALL_STEP_CLASSES } from './steps/index';
 
 @Module({
@@ -43,6 +44,7 @@ import { ALL_STEP_CLASSES } from './steps/index';
     forwardRef(() => DatasetModule),
     forwardRef(() => AiProviderModule),
     forwardRef(() => GraphModule),
+    PostsModule,
     EventModule,
     NotificationModule,
     QueueSharedModule,

@@ -398,10 +398,69 @@ export class CreateWorkflowDto {
   metadata?: Record<string, any>;
 }
 
-export class UpdateWorkflowDto extends CreateWorkflowDto {
+export class UpdateWorkflowDto {
   @ApiProperty({ description: 'Workflow ID' })
+  @IsOptional()
   @IsUUID()
-  id: string;
+  id?: string;
+
+  @ApiPropertyOptional({ description: 'Workflow name' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  name?: string;
+
+  @ApiPropertyOptional({ description: 'Workflow description' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Dataset ID' })
+  @IsOptional()
+  @IsUUID()
+  datasetId?: string;
+
+  @ApiPropertyOptional({ description: 'Workflow nodes' })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SimpleWorkflowNodeDto)
+  nodes?: SimpleWorkflowNodeDto[];
+
+  @ApiPropertyOptional({ description: 'Node edges' })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SimpleWorkflowEdgeDto)
+  edges?: SimpleWorkflowEdgeDto[];
+
+  @ApiPropertyOptional({ description: 'Workflow settings' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SimpleWorkflowSettingsDto)
+  settings?: SimpleWorkflowSettingsDto;
+
+  @ApiPropertyOptional({ description: 'Whether workflow is active' })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Whether workflow is a template' })
+  @IsOptional()
+  @IsBoolean()
+  isTemplate?: boolean;
+
+  @ApiPropertyOptional({ description: 'Workflow tags' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  tags?: string;
+
+  @ApiPropertyOptional({ description: 'Workflow metadata' })
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, any>;
 }
 
 export class ExecuteWorkflowDto {

@@ -2,11 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { WorkflowExecution } from '../entities/workflow-execution.entity';
+import { WORKFLOW_CONSTANTS } from '../constants/workflow.constants';
 
 export interface NodeOutputData {
   executionId: string;
   nodeId: string;
-  outputData: any[];
+  outputData: any; // Can be array, object, or anything - store as-is
   metadata: {
     count: number;
     size: number;
@@ -19,12 +20,12 @@ export interface NodeOutputData {
 export class NodeOutputCacheService {
   private readonly logger = new Logger(NodeOutputCacheService.name);
 
-  // In-memory cache for active executions
-  private readonly memoryCache = new Map<string, Map<string, any[]>>();
+  // In-memory cache for active executions - stores data as-is (array, object, anything)
+  private readonly memoryCache = new Map<string, Map<string, any>>();
 
   // Configuration
-  private readonly CACHE_THRESHOLD = 1000; // Items per node
-  private readonly MAX_MEMORY_NODES = 10; // Max nodes in memory per execution
+  private readonly CACHE_THRESHOLD = WORKFLOW_CONSTANTS.CACHE_THRESHOLD; // Items per node
+  private readonly MAX_MEMORY_NODES = WORKFLOW_CONSTANTS.MAX_MEMORY_NODES; // Max nodes in memory per execution
 
   constructor(
     @InjectRepository(WorkflowExecution)
@@ -38,14 +39,14 @@ export class NodeOutputCacheService {
   async storeNodeOutput(
     executionId: string,
     nodeId: string,
-    outputData: any[],
+    outputData: any, // Accept anything - array, object, etc. Store as-is
     nodeType: string,
   ): Promise<void> {
     const dataSize = JSON.stringify(outputData).length;
-    const itemCount = outputData.length;
+    const itemCount = Array.isArray(outputData) ? outputData.length : 1;
 
     this.logger.log(
-      `Storing output for node ${nodeId}: ${itemCount} items, ${Math.round(dataSize / 1024)}KB`,
+      `Storing output for node ${nodeId}: ${itemCount} items, ${Math.round(dataSize / WORKFLOW_CONSTANTS.BYTES_TO_KB)}KB`,
     );
 
     // Decide storage strategy based on data size
@@ -65,26 +66,28 @@ export class NodeOutputCacheService {
   async getNodeOutput(executionId: string, nodeId: string): Promise<any> {
     // Try memory cache first
     const memoryData = this.getFromMemory(executionId, nodeId);
-    if (memoryData) {
+    if (memoryData !== null && memoryData !== undefined) {
+      const itemCount = Array.isArray(memoryData) ? memoryData.length : 1;
       this.logger.log(
-        `Retrieved ${memoryData.length} items from memory cache for node ${nodeId}`,
+        `Retrieved ${itemCount} item(s) from memory cache for node ${nodeId} (type: ${Array.isArray(memoryData) ? 'array' : typeof memoryData})`,
       );
-      return memoryData;
+      return memoryData; // Return exactly as stored - no wrapping
     }
 
     // Fallback to database
     const dbData = await this.getFromDatabase(executionId, nodeId);
-    if (dbData) {
+    if (dbData !== null && dbData !== undefined) {
+      const itemCount = Array.isArray(dbData) ? dbData.length : 1;
       this.logger.log(
-        `Retrieved ${dbData.length} items from database for node ${nodeId}`,
+        `Retrieved ${itemCount} item(s) from database for node ${nodeId} (type: ${Array.isArray(dbData) ? 'array' : typeof dbData})`,
       );
-      return dbData;
+      return dbData; // Return exactly as stored - no wrapping
     }
 
     this.logger.warn(
       `No output data found for node ${nodeId} in execution ${executionId}`,
     );
-    return [];
+    return null; // Return null instead of empty array
   }
 
   /**
@@ -93,7 +96,7 @@ export class NodeOutputCacheService {
   private async storeInMemory(
     executionId: string,
     nodeId: string,
-    outputData: any[],
+    outputData: any, // Store as-is - can be array, object, anything
   ): Promise<void> {
     if (!this.memoryCache.has(executionId)) {
       this.memoryCache.set(executionId, new Map());
@@ -116,7 +119,7 @@ export class NodeOutputCacheService {
   private async storeInDatabase(
     executionId: string,
     nodeId: string,
-    outputData: any[],
+    outputData: any, // Store as-is - can be array, object, anything
     nodeType: string,
   ): Promise<void> {
     try {
@@ -201,8 +204,29 @@ export class NodeOutputCacheService {
           (s) => s.nodeId === nodeId,
         );
         if (snapshot && snapshot.outputData) {
-          // If outputData is an array (raw data), return it directly
+          // Special handling for post_deleter - never return empty array
+          // Infer node type from snapshot structure (outputData shape)
+          const isPostDeleter =
+            typeof snapshot.outputData === 'object' &&
+            snapshot.outputData !== null &&
+            ('deleted' in snapshot.outputData ||
+              'requested' in snapshot.outputData ||
+              'postIds' in snapshot.outputData);
+
+          // If outputData is an array (raw data)
           if (Array.isArray(snapshot.outputData)) {
+            // For post_deleter, empty array should be converted to structured object
+            if (isPostDeleter && snapshot.outputData.length === 0) {
+              this.logger.warn(
+                `[Post Deleter Cache] Found empty array in stored output, converting to structured object`,
+              );
+              return {
+                deleted: 0,
+                requested: 0,
+                failed: 0,
+                postIds: [],
+              };
+            }
             return snapshot.outputData;
           }
           // If outputData has items (structured object), return the structure as-is
@@ -222,6 +246,15 @@ export class NodeOutputCacheService {
             if (
               'data' in snapshot.outputData ||
               'total' in snapshot.outputData
+            ) {
+              return snapshot.outputData;
+            }
+
+            // Check if it's post_deleter structure
+            if (
+              'deleted' in snapshot.outputData ||
+              'requested' in snapshot.outputData ||
+              'postIds' in snapshot.outputData
             ) {
               return snapshot.outputData;
             }
@@ -280,34 +313,8 @@ export class NodeOutputCacheService {
 
     return {
       memoryNodes,
-      totalDataSize: Math.round(totalDataSize / 1024), // KB
+      totalDataSize: Math.round(totalDataSize / WORKFLOW_CONSTANTS.BYTES_TO_KB), // KB
       nodeCounts,
     };
-  }
-
-  /**
-   * Infer schema from data
-   */
-  private inferSchema(data: any[]): any {
-    if (data.length === 0) return {};
-
-    const sample = data[0];
-    const schema: any = {};
-
-    for (const key in sample) {
-      if (typeof sample[key] === 'string') {
-        schema[key] = 'string';
-      } else if (typeof sample[key] === 'number') {
-        schema[key] = 'number';
-      } else if (typeof sample[key] === 'boolean') {
-        schema[key] = 'boolean';
-      } else if (Array.isArray(sample[key])) {
-        schema[key] = 'array';
-      } else if (typeof sample[key] === 'object') {
-        schema[key] = 'object';
-      }
-    }
-
-    return schema;
   }
 }

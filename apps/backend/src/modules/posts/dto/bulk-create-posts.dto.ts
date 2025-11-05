@@ -35,10 +35,6 @@ class BulkPostItemDto {
   @IsOptional()
   @IsUUID()
   userId?: string;
-
-  @IsOptional()
-  @IsUUID()
-  datasetId?: string;
 }
 
 export class BulkCreatePostsDto {

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Fragment } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -10,15 +11,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Search, Play, Settings, History, Trash2, Edit, Copy, MoreVertical, ChevronLeft, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Plus, Search, Play, Settings, History, Trash2, Edit, Copy, MoreVertical, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Workflow, WorkflowExecution, WorkflowExecutionInput } from '@/lib/api/workflow';
 import { workflowApi } from '@/lib/api/workflow';
 import { useToast } from '@/components/ui/simple-toast';
 import { WorkflowExecutionModal } from '@/components/workflow-execution-modal';
+import { Navbar } from '@/components/navbar';
 
 export default function WorkflowsPage() {
     const router = useRouter();
     const { success, error: showError } = useToast();
+
+    const handleLogout = () => {
+        // The navbar handles the actual logout logic
+    };
     const [workflows, setWorkflows] = useState<Workflow[]>([]);
     const [executions, setExecutions] = useState<WorkflowExecution[]>([]);
     const [loading, setLoading] = useState(true);
@@ -47,6 +53,8 @@ export default function WorkflowsPage() {
     // Dropdown state for each workflow
     const [openDropdowns, setOpenDropdowns] = useState<Set<string>>(new Set());
     const dropdownRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+    const buttonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+    const [dropdownPositions, setDropdownPositions] = useState<Map<string, { top: number; left: number }>>(new Map());
 
     // Delete confirmation dialog state
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -190,8 +198,26 @@ export default function WorkflowsPage() {
             const newSet = new Set(prev);
             if (newSet.has(workflowId)) {
                 newSet.delete(workflowId);
+                setDropdownPositions(prevPos => {
+                    const newPos = new Map(prevPos);
+                    newPos.delete(workflowId);
+                    return newPos;
+                });
             } else {
                 newSet.add(workflowId);
+                // Calculate position
+                const button = buttonRefs.current.get(workflowId);
+                if (button) {
+                    const rect = button.getBoundingClientRect();
+                    setDropdownPositions(prevPos => {
+                        const newPos = new Map(prevPos);
+                        newPos.set(workflowId, {
+                            top: rect.bottom + 8, // 8px margin (mt-2), using fixed positioning
+                            left: rect.right - 224, // 224px = w-56, align to right, using fixed positioning
+                        });
+                        return newPos;
+                    });
+                }
             }
             return newSet;
         });
@@ -202,6 +228,11 @@ export default function WorkflowsPage() {
             const newSet = new Set(prev);
             newSet.delete(workflowId);
             return newSet;
+        });
+        setDropdownPositions(prevPos => {
+            const newPos = new Map(prevPos);
+            newPos.delete(workflowId);
+            return newPos;
         });
     };
 
@@ -324,465 +355,478 @@ export default function WorkflowsPage() {
 
     if (loading) {
         return (
-            <div className="container mx-auto p-6">
-                <div className="flex items-center gap-4 mb-4">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => router.push('/')}
-                        className="flex items-center gap-2"
-                    >
-                        <ArrowLeft className="h-4 w-4" />
-                        Back to Home
-                    </Button>
-                </div>
-                <div className="flex items-center justify-center h-64">
-                    <div className="text-lg">Loading workflows...</div>
+            <div className="min-h-screen bg-gray-50">
+                <Navbar onLogout={handleLogout} />
+                <div className="container mx-auto p-6">
+                    <div className="flex items-center justify-center h-64">
+                        <div className="text-lg">Loading workflows...</div>
+                    </div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="container mx-auto p-6">
-            <div className="flex items-center gap-4 mb-4">
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => router.push('/')}
-                    className="flex items-center gap-2"
-                >
-                    <ArrowLeft className="h-4 w-4" />
-                    Back to Home
-                </Button>
-            </div>
-            <div className="flex items-center justify-between mb-6">
-                <div>
-                    <h1 className="text-3xl font-bold">Workflows</h1>
-                    <p className="text-gray-600">Manage and execute your data processing workflows</p>
+        <div className="min-h-screen bg-gray-50">
+            <Navbar onLogout={handleLogout} />
+            <div className="container mx-auto p-6">
+                <div className="flex items-center justify-between mb-6">
+                    <div>
+                        <h1 className="text-3xl font-bold">Workflows</h1>
+                        <p className="text-gray-600">Manage and execute your data processing workflows</p>
+                    </div>
+                    <Button onClick={handleCreateWorkflow} className="flex items-center gap-2">
+                        <Plus className="h-4 w-4" />
+                        Create Workflow
+                    </Button>
                 </div>
-                <Button onClick={handleCreateWorkflow} className="flex items-center gap-2">
-                    <Plus className="h-4 w-4" />
-                    Create Workflow
-                </Button>
-            </div>
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="workflows">Workflows</TabsTrigger>
-                    <TabsTrigger value="executions">Recent Executions</TabsTrigger>
-                </TabsList>
+                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                    <TabsList className="grid w-full grid-cols-2">
+                        <TabsTrigger value="workflows">Workflows</TabsTrigger>
+                        <TabsTrigger value="executions">Recent Executions</TabsTrigger>
+                    </TabsList>
 
-                <TabsContent value="workflows" className="space-y-4">
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="relative flex-1 max-w-md">
-                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                            <Input
-                                placeholder="Search workflows..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                className="pl-10"
-                            />
-                        </div>
-                        {selectedWorkflows.size > 0 && (
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm text-gray-600">
-                                    {selectedWorkflows.size} selected
-                                </span>
-                                <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={handleBulkDelete}
-                                    className="flex items-center gap-2"
-                                >
-                                    <Trash2 className="h-4 w-4" />
-                                    Delete Selected
-                                </Button>
+                    <TabsContent value="workflows" className="space-y-4">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="relative flex-1 max-w-md">
+                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                                <Input
+                                    placeholder="Search workflows..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="pl-10"
+                                />
                             </div>
-                        )}
-                    </div>
-
-                    {filteredWorkflows.length === 0 ? (
-                        <Card>
-                            <CardContent className="flex flex-col items-center justify-center py-12">
-                                <Settings className="h-12 w-12 text-gray-400 mb-4" />
-                                <h3 className="text-lg font-semibold mb-2">No workflows found</h3>
-                                <p className="text-gray-600 mb-4">
-                                    {searchTerm ? 'No workflows match your search.' : 'Create your first workflow to get started.'}
-                                </p>
-                                {!searchTerm && (
-                                    <Button onClick={handleCreateWorkflow} className="flex items-center gap-2">
-                                        <Plus className="h-4 w-4" />
-                                        Create Workflow
+                            {selectedWorkflows.size > 0 && (
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm text-gray-600">
+                                        {selectedWorkflows.size} selected
+                                    </span>
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={handleBulkDelete}
+                                        className="flex items-center gap-2"
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                        Delete Selected
                                     </Button>
-                                )}
-                            </CardContent>
-                        </Card>
-                    ) : (
-                        <div className="border rounded-lg">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead className="w-12">
-                                            <Checkbox
-                                                checked={selectedWorkflows.size === filteredWorkflows.length && filteredWorkflows.length > 0}
-                                                onCheckedChange={handleSelectAll}
-                                                aria-label="Select all workflows"
-                                            />
-                                        </TableHead>
-                                        <TableHead>Name</TableHead>
-                                        <TableHead>Description</TableHead>
-                                        <TableHead>Status</TableHead>
-                                        <TableHead>Nodes</TableHead>
-                                        <TableHead>Created</TableHead>
-                                        <TableHead className="w-12">Actions</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {filteredWorkflows.map((workflow) => (
-                                        <TableRow
-                                            key={workflow.id}
-                                            className="hover:bg-gray-50 cursor-pointer"
-                                            onClick={() => handleViewWorkflow(workflow.id)}
-                                        >
-                                            <TableCell onClick={(e) => e.stopPropagation()}>
-                                                <Checkbox
-                                                    checked={selectedWorkflows.has(workflow.id)}
-                                                    onCheckedChange={(checked) => handleSelectWorkflow(workflow.id, checked as boolean)}
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="font-medium">{workflow.name}</div>
-                                                    {workflow.isTemplate && (
-                                                        <Badge variant="secondary" className="text-xs">
-                                                            Template
-                                                        </Badge>
-                                                    )}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="text-sm text-gray-600 max-w-xs truncate">
-                                                    {workflow.description || 'No description'}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge
-                                                    variant={workflow.isActive ? 'default' : 'secondary'}
-                                                    className="text-xs"
-                                                >
-                                                    {workflow.isActive ? 'Active' : 'Inactive'}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="text-sm text-gray-600">
-                                                    {workflow.nodes.length} nodes, {workflow.edges.length} edges
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="text-sm text-gray-600">
-                                                    {new Date(workflow.createdAt).toLocaleDateString()}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell onClick={(e) => e.stopPropagation()}>
-                                                <div className="relative">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        className="h-8 w-8 p-0"
-                                                        onClick={() => toggleDropdown(workflow.id)}
-                                                    >
-                                                        <MoreVertical className="h-4 w-4" />
-                                                    </Button>
-                                                    {openDropdowns.has(workflow.id) && (
-                                                        <div
-                                                            ref={(el) => {
-                                                                if (el) {
-                                                                    dropdownRefs.current.set(workflow.id, el);
-                                                                }
-                                                            }}
-                                                            className="absolute right-0 mt-2 w-56 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none z-50"
-                                                        >
-                                                            <div className="py-1">
-                                                                <div
-                                                                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleViewWorkflow(workflow.id);
-                                                                        closeDropdown(workflow.id);
-                                                                    }}
-                                                                >
-                                                                    <Edit className="h-4 w-4 mr-2 inline" />
-                                                                    View/Edit
-                                                                </div>
-                                                                <div
-                                                                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleExecuteWorkflow(workflow);
-                                                                        closeDropdown(workflow.id);
-                                                                    }}
-                                                                >
-                                                                    <Play className="h-4 w-4 mr-2 inline" />
-                                                                    Execute
-                                                                </div>
-                                                                <div
-                                                                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleDuplicateWorkflow(workflow.id);
-                                                                        closeDropdown(workflow.id);
-                                                                    }}
-                                                                >
-                                                                    <Copy className="h-4 w-4 mr-2 inline" />
-                                                                    Duplicate
-                                                                </div>
-                                                                <div
-                                                                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleToggleActive(workflow);
-                                                                        closeDropdown(workflow.id);
-                                                                    }}
-                                                                >
-                                                                    {workflow.isActive ? (
-                                                                        <>
-                                                                            <Settings className="h-4 w-4 mr-2 inline" />
-                                                                            Deactivate
-                                                                        </>
-                                                                    ) : (
-                                                                        <>
-                                                                            <Play className="h-4 w-4 mr-2 inline" />
-                                                                            Activate
-                                                                        </>
-                                                                    )}
-                                                                </div>
-                                                                <div
-                                                                    className="block px-4 py-2 text-sm text-red-600 hover:bg-gray-100 hover:text-red-700 cursor-pointer"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleDeleteWorkflow(workflow);
-                                                                        closeDropdown(workflow.id);
-                                                                    }}
-                                                                >
-                                                                    <Trash2 className="h-4 w-4 mr-2 inline" />
-                                                                    Delete
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    )}
-
-                    {/* Pagination Controls */}
-                    {filteredWorkflows.length > 0 && (
-                        <div className="flex items-center justify-between mt-4">
-                            <div className="text-sm text-gray-600">
-                                Showing {workflowPage * workflowPageSize + 1} to {Math.min((workflowPage + 1) * workflowPageSize, workflowTotal)} of {workflowTotal} workflows
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setWorkflowPage(p => Math.max(0, p - 1))}
-                                    disabled={!hasPrevPage}
-                                >
-                                    <ChevronLeft className="h-4 w-4 mr-1" />
-                                    Previous
-                                </Button>
-                                <span className="text-sm text-gray-600">
-                                    Page {workflowPage + 1} of {totalPages || 1}
-                                </span>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setWorkflowPage(p => p + 1)}
-                                    disabled={!hasNextPage}
-                                >
-                                    Next
-                                    <ChevronRight className="h-4 w-4 ml-1" />
-                                </Button>
-                            </div>
-                        </div>
-                    )}
-                </TabsContent>
-
-                <TabsContent value="executions" className="space-y-4">
-                    <div className="flex items-center gap-4 mb-4">
-                        <History className="h-5 w-5" />
-                        <h2 className="text-xl font-semibold">Recent Executions</h2>
-                    </div>
-
-                    {executions.length === 0 ? (
-                        <Card>
-                            <CardContent className="flex flex-col items-center justify-center py-12">
-                                <History className="h-12 w-12 text-gray-400 mb-4" />
-                                <h3 className="text-lg font-semibold mb-2">No executions yet</h3>
-                                <p className="text-gray-600">Execute a workflow to see execution history here.</p>
-                            </CardContent>
-                        </Card>
-                    ) : (
-                        <>
-                            <div className="space-y-4">
-                                {executions.map((execution) => (
-                                    <Card key={execution.id}>
-                                        <CardContent className="p-4">
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex-1">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <h3 className="font-semibold">
-                                                            {execution.workflow?.name || execution.workflowId || 'Unknown Workflow'}
-                                                        </h3>
-                                                        <Badge className={getStatusColor(execution.status)}>
-                                                            {execution.status}
-                                                        </Badge>
-                                                    </div>
-                                                    <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
-                                                        <span>
-                                                            Started: {new Date(execution.startedAt || execution.createdAt).toLocaleString()}
-                                                        </span>
-                                                        {execution.workflow?.nodes && (
-                                                            <span>
-                                                                Nodes: {execution.workflow.nodes.length}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    {execution.progress && (
-                                                        <div className="mt-2">
-                                                            <div className="flex items-center justify-between text-sm mb-1">
-                                                                <span>{execution.progress.message}</span>
-                                                                <span>{execution.progress.overallProgress}%</span>
-                                                            </div>
-                                                            <div className="w-full bg-gray-200 rounded-full h-2">
-                                                                <div
-                                                                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                                                                    style={{ width: `${execution.progress.overallProgress}%` }}
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    {execution.durationMs && (
-                                                        <span className="text-sm text-gray-500">
-                                                            {Math.round(execution.durationMs / 1000)}s
-                                                        </span>
-                                                    )}
-                                                    <Button
-                                                        size="sm"
-                                                        variant="outline"
-                                                        onClick={() => router.push(`/workflows/executions/${execution.id}`)}
-                                                    >
-                                                        View Details
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                ))}
-                            </div>
-
-                            {/* Pagination Controls */}
-                            {executions.length > 0 && (
-                                <div className="flex items-center justify-between mt-4">
-                                    <div className="text-sm text-gray-600">
-                                        Showing {executionPage * executionPageSize + 1} to {Math.min((executionPage + 1) * executionPageSize, executionTotal)} of {executionTotal} executions
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => setExecutionPage(p => Math.max(0, p - 1))}
-                                            disabled={executionPage === 0}
-                                        >
-                                            <ChevronLeft className="h-4 w-4 mr-1" />
-                                            Previous
-                                        </Button>
-                                        <span className="text-sm text-gray-600">
-                                            Page {executionPage + 1} of {Math.ceil(executionTotal / executionPageSize) || 1}
-                                        </span>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => setExecutionPage(p => p + 1)}
-                                            disabled={(executionPage + 1) * executionPageSize >= executionTotal}
-                                        >
-                                            Next
-                                            <ChevronRight className="h-4 w-4 ml-1" />
-                                        </Button>
-                                    </div>
                                 </div>
                             )}
-                        </>
-                    )}
-                </TabsContent>
-            </Tabs>
+                        </div>
 
-            {/* Workflow Execution Modal */}
-            <WorkflowExecutionModal
-                workflow={executionModal.workflow}
-                isOpen={executionModal.isOpen}
-                onClose={() => setExecutionModal({ workflow: null, isOpen: false })}
-                onExecute={handleExecuteWithInput}
-            />
+                        {filteredWorkflows.length === 0 ? (
+                            <Card>
+                                <CardContent className="flex flex-col items-center justify-center py-12">
+                                    <Settings className="h-12 w-12 text-gray-400 mb-4" />
+                                    <h3 className="text-lg font-semibold mb-2">No workflows found</h3>
+                                    <p className="text-gray-600 mb-4">
+                                        {searchTerm ? 'No workflows match your search.' : 'Create your first workflow to get started.'}
+                                    </p>
+                                    {!searchTerm && (
+                                        <Button onClick={handleCreateWorkflow} className="flex items-center gap-2">
+                                            <Plus className="h-4 w-4" />
+                                            Create Workflow
+                                        </Button>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        ) : (
+                            <div className="border rounded-lg">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead className="w-12">
+                                                <Checkbox
+                                                    checked={selectedWorkflows.size === filteredWorkflows.length && filteredWorkflows.length > 0}
+                                                    onCheckedChange={handleSelectAll}
+                                                    aria-label="Select all workflows"
+                                                />
+                                            </TableHead>
+                                            <TableHead>Name</TableHead>
+                                            <TableHead>Description</TableHead>
+                                            <TableHead>Status</TableHead>
+                                            <TableHead>Nodes</TableHead>
+                                            <TableHead>Created</TableHead>
+                                            <TableHead className="w-12">Actions</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {filteredWorkflows.map((workflow) => (
+                                            <TableRow
+                                                key={workflow.id}
+                                                className="hover:bg-gray-50 cursor-pointer"
+                                                onClick={() => handleViewWorkflow(workflow.id)}
+                                            >
+                                                <TableCell onClick={(e) => e.stopPropagation()}>
+                                                    <Checkbox
+                                                        checked={selectedWorkflows.has(workflow.id)}
+                                                        onCheckedChange={(checked) => handleSelectWorkflow(workflow.id, checked as boolean)}
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="font-medium">{workflow.name}</div>
+                                                        {workflow.isTemplate && (
+                                                            <Badge variant="secondary" className="text-xs">
+                                                                Template
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="text-sm text-gray-600 max-w-xs truncate">
+                                                        {workflow.description || 'No description'}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Badge
+                                                        variant={workflow.isActive ? 'default' : 'secondary'}
+                                                        className="text-xs"
+                                                    >
+                                                        {workflow.isActive ? 'Active' : 'Inactive'}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="text-sm text-gray-600">
+                                                        {workflow.nodes.length} nodes, {workflow.edges.length} edges
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="text-sm text-gray-600">
+                                                        {new Date(workflow.createdAt).toLocaleDateString()}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell onClick={(e) => e.stopPropagation()} className="relative">
+                                                    <div
+                                                        ref={(el) => {
+                                                            if (el) {
+                                                                const button = el.querySelector('button');
+                                                                if (button) {
+                                                                    buttonRefs.current.set(workflow.id, button);
+                                                                }
+                                                            }
+                                                        }}
+                                                        className="relative inline-block"
+                                                    >
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="h-8 w-8 p-0"
+                                                            onClick={() => toggleDropdown(workflow.id)}
+                                                        >
+                                                            <MoreVertical className="h-4 w-4" />
+                                                        </Button>
+                                                    </div>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        )}
 
-            {/* Delete Confirmation Dialog */}
-            <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Delete Workflow</DialogTitle>
-                        <DialogDescription>
-                            Are you sure you want to delete &quot;{workflowToDelete?.name}&quot;? This action cannot be undone and will also delete all associated executions.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button
-                            variant="outline"
-                            onClick={() => setDeleteDialogOpen(false)}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            onClick={confirmDeleteWorkflow}
-                        >
-                            Delete
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+                        {/* Pagination Controls */}
+                        {filteredWorkflows.length > 0 && (
+                            <div className="flex items-center justify-between mt-4">
+                                <div className="text-sm text-gray-600">
+                                    Showing {workflowPage * workflowPageSize + 1} to {Math.min((workflowPage + 1) * workflowPageSize, workflowTotal)} of {workflowTotal} workflows
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setWorkflowPage(p => Math.max(0, p - 1))}
+                                        disabled={!hasPrevPage}
+                                    >
+                                        <ChevronLeft className="h-4 w-4 mr-1" />
+                                        Previous
+                                    </Button>
+                                    <span className="text-sm text-gray-600">
+                                        Page {workflowPage + 1} of {totalPages || 1}
+                                    </span>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setWorkflowPage(p => p + 1)}
+                                        disabled={!hasNextPage}
+                                    >
+                                        Next
+                                        <ChevronRight className="h-4 w-4 ml-1" />
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                    </TabsContent>
 
-            {/* Bulk Delete Confirmation Dialog */}
-            <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Delete Multiple Workflows</DialogTitle>
-                        <DialogDescription>
-                            Are you sure you want to delete {selectedWorkflows.size} workflow{selectedWorkflows.size > 1 ? 's' : ''}? This action cannot be undone and will also delete all associated executions.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button
-                            variant="outline"
-                            onClick={() => setBulkDeleteDialogOpen(false)}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            onClick={confirmBulkDelete}
-                        >
-                            Delete {selectedWorkflows.size} Workflow{selectedWorkflows.size > 1 ? 's' : ''}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+                    <TabsContent value="executions" className="space-y-4">
+                        <div className="flex items-center gap-4 mb-4">
+                            <History className="h-5 w-5" />
+                            <h2 className="text-xl font-semibold">Recent Executions</h2>
+                        </div>
+
+                        {executions.length === 0 ? (
+                            <Card>
+                                <CardContent className="flex flex-col items-center justify-center py-12">
+                                    <History className="h-12 w-12 text-gray-400 mb-4" />
+                                    <h3 className="text-lg font-semibold mb-2">No executions yet</h3>
+                                    <p className="text-gray-600">Execute a workflow to see execution history here.</p>
+                                </CardContent>
+                            </Card>
+                        ) : (
+                            <>
+                                <div className="space-y-4">
+                                    {executions.map((execution) => (
+                                        <Card key={execution.id}>
+                                            <CardContent className="p-4">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <h3 className="font-semibold">
+                                                                {execution.workflow?.name || execution.workflowId || 'Unknown Workflow'}
+                                                            </h3>
+                                                            <Badge className={getStatusColor(execution.status)}>
+                                                                {execution.status}
+                                                            </Badge>
+                                                        </div>
+                                                        <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
+                                                            <span>
+                                                                Started: {new Date(execution.startedAt || execution.createdAt).toLocaleString()}
+                                                            </span>
+                                                            {execution.workflow?.nodes && (
+                                                                <span>
+                                                                    Nodes: {execution.workflow.nodes.length}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {execution.progress && (
+                                                            <div className="mt-2">
+                                                                <div className="flex items-center justify-between text-sm mb-1">
+                                                                    <span>{execution.progress.message}</span>
+                                                                    <span>{execution.progress.overallProgress}%</span>
+                                                                </div>
+                                                                <div className="w-full bg-gray-200 rounded-full h-2">
+                                                                    <div
+                                                                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                                                        style={{ width: `${execution.progress.overallProgress}%` }}
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        {execution.durationMs && (
+                                                            <span className="text-sm text-gray-500">
+                                                                {Math.round(execution.durationMs / 1000)}s
+                                                            </span>
+                                                        )}
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            onClick={() => router.push(`/workflows/executions/${execution.id}`)}
+                                                        >
+                                                            View Details
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    ))}
+                                </div>
+
+                                {/* Pagination Controls */}
+                                {executions.length > 0 && (
+                                    <div className="flex items-center justify-between mt-4">
+                                        <div className="text-sm text-gray-600">
+                                            Showing {executionPage * executionPageSize + 1} to {Math.min((executionPage + 1) * executionPageSize, executionTotal)} of {executionTotal} executions
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setExecutionPage(p => Math.max(0, p - 1))}
+                                                disabled={executionPage === 0}
+                                            >
+                                                <ChevronLeft className="h-4 w-4 mr-1" />
+                                                Previous
+                                            </Button>
+                                            <span className="text-sm text-gray-600">
+                                                Page {executionPage + 1} of {Math.ceil(executionTotal / executionPageSize) || 1}
+                                            </span>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setExecutionPage(p => p + 1)}
+                                                disabled={(executionPage + 1) * executionPageSize >= executionTotal}
+                                            >
+                                                Next
+                                                <ChevronRight className="h-4 w-4 ml-1" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </TabsContent>
+                </Tabs>
+
+                {/* Workflow Execution Modal */}
+                <WorkflowExecutionModal
+                    workflow={executionModal.workflow}
+                    isOpen={executionModal.isOpen}
+                    onClose={() => setExecutionModal({ workflow: null, isOpen: false })}
+                    onExecute={handleExecuteWithInput}
+                />
+
+                {/* Delete Confirmation Dialog */}
+                <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Delete Workflow</DialogTitle>
+                            <DialogDescription>
+                                Are you sure you want to delete &quot;{workflowToDelete?.name}&quot;? This action cannot be undone and will also delete all associated executions.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <DialogFooter>
+                            <Button
+                                variant="outline"
+                                onClick={() => setDeleteDialogOpen(false)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                onClick={confirmDeleteWorkflow}
+                            >
+                                Delete
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+
+                {/* Bulk Delete Confirmation Dialog */}
+                <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Delete Multiple Workflows</DialogTitle>
+                            <DialogDescription>
+                                Are you sure you want to delete {selectedWorkflows.size} workflow{selectedWorkflows.size > 1 ? 's' : ''}? This action cannot be undone and will also delete all associated executions.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <DialogFooter>
+                            <Button
+                                variant="outline"
+                                onClick={() => setBulkDeleteDialogOpen(false)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                onClick={confirmBulkDelete}
+                            >
+                                Delete {selectedWorkflows.size} Workflow{selectedWorkflows.size > 1 ? 's' : ''}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+
+                {/* Dropdown menus rendered via portal */}
+                {typeof window !== 'undefined' && (
+                    <Fragment>
+                        {Array.from(openDropdowns).map((workflowId) => {
+                            const workflow = workflows.find(w => w.id === workflowId);
+                            if (!workflow) return null;
+                            const position = dropdownPositions.get(workflowId);
+                            if (!position) return null;
+
+                            const dropdownContent = (
+                                <div
+                                    ref={(el) => {
+                                        if (el) {
+                                            dropdownRefs.current.set(workflowId, el);
+                                        }
+                                    }}
+                                    className="fixed w-56 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none z-[100]"
+                                    style={{
+                                        top: `${position.top}px`,
+                                        left: `${position.left}px`,
+                                    }}
+                                >
+                                    <div className="py-1">
+                                        <div
+                                            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleViewWorkflow(workflow.id);
+                                                closeDropdown(workflow.id);
+                                            }}
+                                        >
+                                            <Edit className="h-4 w-4 mr-2 inline" />
+                                            View/Edit
+                                        </div>
+                                        <div
+                                            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleExecuteWorkflow(workflow);
+                                                closeDropdown(workflow.id);
+                                            }}
+                                        >
+                                            <Play className="h-4 w-4 mr-2 inline" />
+                                            Execute
+                                        </div>
+                                        <div
+                                            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDuplicateWorkflow(workflow.id);
+                                                closeDropdown(workflow.id);
+                                            }}
+                                        >
+                                            <Copy className="h-4 w-4 mr-2 inline" />
+                                            Duplicate
+                                        </div>
+                                        <div
+                                            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleToggleActive(workflow);
+                                                closeDropdown(workflow.id);
+                                            }}
+                                        >
+                                            {workflow.isActive ? (
+                                                <>
+                                                    <Settings className="h-4 w-4 mr-2 inline" />
+                                                    Deactivate
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Play className="h-4 w-4 mr-2 inline" />
+                                                    Activate
+                                                </>
+                                            )}
+                                        </div>
+                                        <div
+                                            className="block px-4 py-2 text-sm text-red-600 hover:bg-gray-100 hover:text-red-700 cursor-pointer"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDeleteWorkflow(workflow);
+                                                closeDropdown(workflow.id);
+                                            }}
+                                        >
+                                            <Trash2 className="h-4 w-4 mr-2 inline" />
+                                            Delete
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+
+                            return createPortal(dropdownContent, document.body);
+                        })}
+                    </Fragment>
+                )}
+            </div>
         </div>
     );
 }

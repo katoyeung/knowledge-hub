@@ -1,10 +1,22 @@
-import { Entity, Column, OneToMany, ManyToOne, RelationId } from 'typeorm';
+import {
+  Entity,
+  Column,
+  OneToMany,
+  ManyToOne,
+  RelationId,
+  Index,
+} from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { User } from '../../user/user.entity';
 import { Dataset } from '../../dataset/entities/dataset.entity';
 import { ChatMessage } from './chat-message.entity';
 
 @Entity({ name: 'chat_conversations' })
+@Index('IDX_chat_conversations_dataset_user_updated', [
+  'datasetId',
+  'userId',
+  'updatedAt',
+])
 export class ChatConversation extends BaseEntity {
   @Column({ length: 255, nullable: false })
   title: string;

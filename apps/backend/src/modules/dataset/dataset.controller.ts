@@ -83,7 +83,7 @@ import { Logger } from '@nestjs/common';
     join: {
       user: {
         alias: 'user',
-        eager: true,
+        eager: false,
       },
       documents: {
         alias: 'documents',

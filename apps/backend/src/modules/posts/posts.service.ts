@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere, ILike } from 'typeorm';
@@ -21,7 +22,6 @@ import {
   HashConfigDto,
   HashAlgorithm,
 } from './dto/upsert-config.dto';
-import { Logger } from '@nestjs/common';
 
 export interface PostSearchFilters {
   hash?: string;
@@ -30,11 +30,12 @@ export interface PostSearchFilters {
   title?: string;
   meta?: Record<string, any>;
   userId?: string;
-  datasetId?: string;
   metaKey?: string;
   metaValue?: string;
   startDate?: Date;
   endDate?: Date;
+  postedAtStart?: Date;
+  postedAtEnd?: Date;
   page?: number;
   limit?: number;
 }
@@ -524,20 +525,66 @@ export class PostsService extends TypeOrmCrudService<Post> {
 
       return updatedPost;
     } else {
-      // Create new post
+      // Create new post - handle duplicate key errors gracefully
       const post = this.postRepository.create(postData);
-      const savedPost = await this.postRepository.save(post);
-
-      // Store in cache after creation
-      const cacheKey = this.getHashCacheKey(savedPost.hash);
       try {
-        await this.cacheManager.set(cacheKey, savedPost, this.hashCacheTTL);
-        this.logger.debug(`Cached newly upserted post hash: ${savedPost.hash}`);
-      } catch (error) {
-        this.logger.warn(`Failed to cache post after upsert: ${error.message}`);
-      }
+        const savedPost = await this.postRepository.save(post);
 
-      return savedPost;
+        // Store in cache after creation
+        const cacheKey = this.getHashCacheKey(savedPost.hash);
+        try {
+          await this.cacheManager.set(cacheKey, savedPost, this.hashCacheTTL);
+          this.logger.debug(
+            `Cached newly upserted post hash: ${savedPost.hash}`,
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Failed to cache post after upsert: ${error.message}`,
+          );
+        }
+
+        return savedPost;
+      } catch (error: any) {
+        // Handle unique constraint violation (duplicate hash)
+        if (
+          error.code === '23505' ||
+          error.message?.includes('duplicate key') ||
+          error.message?.includes('unique constraint')
+        ) {
+          this.logger.warn(
+            `Duplicate key detected for hash ${postData.hash}, attempting to update existing post`,
+          );
+
+          // Try to find existing post by hash and update it
+          const existing = await this.findByHash(postData.hash);
+          if (existing) {
+            await this.postRepository.update(existing.id, postData);
+            const updatedPost = await this.findById(existing.id);
+
+            // Update cache
+            const cacheKey = this.getHashCacheKey(updatedPost.hash);
+            try {
+              await this.cacheManager.set(
+                cacheKey,
+                updatedPost,
+                this.hashCacheTTL,
+              );
+              this.logger.debug(
+                `Updated cache after duplicate key recovery for hash: ${updatedPost.hash}`,
+              );
+            } catch (cacheError) {
+              this.logger.warn(
+                `Failed to update cache after duplicate key recovery: ${cacheError.message}`,
+              );
+            }
+
+            return updatedPost;
+          }
+        }
+
+        // Re-throw if not a duplicate key error
+        throw error;
+      }
     }
   }
 
@@ -586,26 +633,79 @@ export class PostsService extends TypeOrmCrudService<Post> {
 
       return updatedPost;
     } else {
-      // Create new post
+      // Create new post - handle duplicate key errors gracefully
       const post = this.postRepository.create(postData);
-      const savedPost = await this.postRepository.save(post);
+      try {
+        const savedPost = await this.postRepository.save(post);
 
-      // Cache new post if hash exists
-      if (postData.hash) {
-        const cacheKey = this.getHashCacheKey(savedPost.hash);
-        try {
-          await this.cacheManager.set(cacheKey, savedPost, this.hashCacheTTL);
-          this.logger.debug(
-            `Cached newly upserted post hash: ${savedPost.hash}`,
-          );
-        } catch (error) {
-          this.logger.warn(
-            `Failed to cache post after upsert: ${error.message}`,
-          );
+        // Cache new post if hash exists
+        if (postData.hash) {
+          const cacheKey = this.getHashCacheKey(savedPost.hash);
+          try {
+            await this.cacheManager.set(cacheKey, savedPost, this.hashCacheTTL);
+            this.logger.debug(
+              `Cached newly upserted post hash: ${savedPost.hash}`,
+            );
+          } catch (error) {
+            this.logger.warn(
+              `Failed to cache post after upsert: ${error.message}`,
+            );
+          }
         }
-      }
 
-      return savedPost;
+        return savedPost;
+      } catch (error: any) {
+        // Handle unique constraint violation (duplicate hash)
+        if (
+          error.code === '23505' ||
+          error.message?.includes('duplicate key') ||
+          error.message?.includes('unique constraint')
+        ) {
+          this.logger.warn(
+            `Duplicate key detected for hash ${postData.hash}, attempting to update existing post`,
+          );
+
+          // Try to find existing post by hash and update it
+          if (postData.hash) {
+            const existing = await this.findByHash(postData.hash);
+            if (existing) {
+              await this.postRepository.update(existing.id, postData);
+              const updatedPost = await this.findById(existing.id);
+
+              // Update cache
+              if (postData.hash) {
+                const cacheKey = this.getHashCacheKey(updatedPost.hash);
+                try {
+                  await this.cacheManager.set(
+                    cacheKey,
+                    updatedPost,
+                    this.hashCacheTTL,
+                  );
+                  this.logger.debug(
+                    `Updated cache after duplicate key recovery for hash: ${updatedPost.hash}`,
+                  );
+                } catch (cacheError) {
+                  this.logger.warn(
+                    `Failed to update cache after duplicate key recovery: ${cacheError.message}`,
+                  );
+                }
+              }
+
+              return updatedPost;
+            }
+          }
+
+          // Fallback: try finding by other strategy
+          const fallbackExisting = await this.findDuplicate(postData, strategy);
+          if (fallbackExisting) {
+            await this.postRepository.update(fallbackExisting.id, postData);
+            return await this.findById(fallbackExisting.id);
+          }
+        }
+
+        // Re-throw if not a duplicate key error
+        throw error;
+      }
     }
   }
 
@@ -637,7 +737,8 @@ export class PostsService extends TypeOrmCrudService<Post> {
     sourceDataArray: Record<string, any>[],
     config: UpsertConfigDto,
     strategy: DeduplicationStrategy = DeduplicationStrategy.HASH,
-  ): Promise<{ created: number; updated: number }> {
+  ): Promise<{ items: string[]; total: number; lastUpdated: string }> {
+    const items: string[] = [];
     let created = 0;
     let updated = 0;
 
@@ -682,28 +783,98 @@ export class PostsService extends TypeOrmCrudService<Post> {
             }
           }
 
+          items.push(existing.id);
           updated++;
         } else {
+          // Create new post - handle duplicate key errors gracefully
           const post = this.postRepository.create(postData);
-          const savedPost = await this.postRepository.save(post);
+          try {
+            const savedPost = await this.postRepository.save(post);
 
-          // Cache new post if hash exists
-          if (postData.hash) {
-            const cacheKey = this.getHashCacheKey(savedPost.hash);
-            try {
-              await this.cacheManager.set(
-                cacheKey,
-                savedPost,
-                this.hashCacheTTL,
-              );
-            } catch (error) {
+            // Cache new post if hash exists
+            if (postData.hash) {
+              const cacheKey = this.getHashCacheKey(savedPost.hash);
+              try {
+                await this.cacheManager.set(
+                  cacheKey,
+                  savedPost,
+                  this.hashCacheTTL,
+                );
+              } catch (error) {
+                this.logger.warn(
+                  `Failed to cache in bulk upsert with config: ${error.message}`,
+                );
+              }
+            }
+
+            items.push(savedPost.id);
+            created++;
+          } catch (error: any) {
+            // Handle unique constraint violation (duplicate hash)
+            if (
+              error.code === '23505' ||
+              error.message?.includes('duplicate key') ||
+              error.message?.includes('unique constraint')
+            ) {
               this.logger.warn(
-                `Failed to cache in bulk upsert with config: ${error.message}`,
+                `Duplicate key detected for hash ${postData.hash} in bulk upsert, attempting to update existing post`,
               );
+
+              // Try to find existing post by hash and update it
+              let existingPost: Post | null = null;
+              if (postData.hash) {
+                existingPost = await this.findByHash(postData.hash);
+              }
+              if (
+                !existingPost &&
+                strategy === DeduplicationStrategy.CUSTOM &&
+                config.fieldMappings
+              ) {
+                const dedupFields = config.hashConfig
+                  ? config.hashConfig.fields
+                  : ['hash'];
+                existingPost = await this.findDuplicateByFieldMapping(
+                  postData,
+                  dedupFields,
+                );
+              }
+              if (!existingPost) {
+                existingPost = await this.findDuplicate(postData, strategy);
+              }
+
+              if (existingPost) {
+                await this.postRepository.update(existingPost.id, postData);
+                const updatedPost = await this.findById(existingPost.id);
+
+                // Update cache if hash exists
+                if (postData.hash) {
+                  const cacheKey = this.getHashCacheKey(updatedPost.hash);
+                  try {
+                    await this.cacheManager.set(
+                      cacheKey,
+                      updatedPost,
+                      this.hashCacheTTL,
+                    );
+                  } catch (cacheError) {
+                    this.logger.warn(
+                      `Failed to update cache after duplicate key recovery: ${cacheError.message}`,
+                    );
+                  }
+                }
+
+                items.push(updatedPost.id);
+                updated++;
+              } else {
+                // Could not find existing post, log error and skip
+                this.logger.error(
+                  `Duplicate key error but could not find existing post for hash ${postData.hash}`,
+                );
+              }
+            } else {
+              // Re-throw if not a duplicate key error
+              throw error;
             }
           }
-
-          created++;
         }
       } catch (error) {
         this.logger.error(
@@ -713,14 +884,19 @@ export class PostsService extends TypeOrmCrudService<Post> {
       }
     }
 
-    return { created, updated };
+    return {
+      items,
+      total: items.length,
+      lastUpdated: new Date().toISOString(),
+    };
   }
 
   async bulkUpsert(
     postsData: BulkCreatePostsDto,
     strategy: DeduplicationStrategy = DeduplicationStrategy.HASH,
     fieldMappings?: string[],
-  ): Promise<{ created: number; updated: number }> {
+  ): Promise<{ items: string[]; total: number; lastUpdated: string }> {
+    const items: string[] = [];
     let created = 0;
     let updated = 0;
 
@@ -739,10 +915,12 @@ export class PostsService extends TypeOrmCrudService<Post> {
 
         if (existing) {
           await this.postRepository.update(existing.id, postData);
+          items.push(existing.id);
           updated++;
         } else {
           const post = this.postRepository.create(postData);
-          await this.postRepository.save(post);
+          const savedPost = await this.postRepository.save(post);
+          items.push(savedPost.id);
           created++;
         }
       } catch (error) {
@@ -753,7 +931,11 @@ export class PostsService extends TypeOrmCrudService<Post> {
       }
     }
 
-    return { created, updated };
+    return {
+      items,
+      total: items.length,
+      lastUpdated: new Date().toISOString(),
+    };
   }
 
   /**
@@ -823,7 +1005,7 @@ export class PostsService extends TypeOrmCrudService<Post> {
   async findById(id: string): Promise<Post> {
     const post = await this.postRepository.findOne({
       where: { id },
-      relations: ['user', 'dataset'],
+      relations: ['user'],
     });
 
     if (!post) {
@@ -865,10 +1047,6 @@ export class PostsService extends TypeOrmCrudService<Post> {
       where.userId = filters.userId;
     }
 
-    if (filters.datasetId) {
-      where.datasetId = filters.datasetId;
-    }
-
     // Build query builder for complex queries
     const queryBuilder = this.postRepository.createQueryBuilder('post');
 
@@ -888,10 +1066,6 @@ export class PostsService extends TypeOrmCrudService<Post> {
     // Content is stored in meta.content - use metaKey filter to search it
     if (where.userId)
       queryBuilder.andWhere('post.user_id = :userId', { userId: where.userId });
-    if (where.datasetId)
-      queryBuilder.andWhere('post.dataset_id = :datasetId', {
-        datasetId: where.datasetId,
-      });
 
     // Handle date range filtering on meta field
     if (filters.startDate || filters.endDate) {
@@ -914,12 +1088,76 @@ export class PostsService extends TypeOrmCrudService<Post> {
       }
     }
 
+    // Handle posted_at date range filtering
+    if (filters.postedAtStart || filters.postedAtEnd) {
+      if (filters.postedAtStart && filters.postedAtEnd) {
+        queryBuilder.andWhere(
+          'post.posted_at >= :postedAtStart AND post.posted_at <= :postedAtEnd',
+          {
+            postedAtStart: filters.postedAtStart,
+            postedAtEnd: filters.postedAtEnd,
+          },
+        );
+      } else if (filters.postedAtStart) {
+        queryBuilder.andWhere('post.posted_at >= :postedAtStart', {
+          postedAtStart: filters.postedAtStart,
+        });
+      } else if (filters.postedAtEnd) {
+        queryBuilder.andWhere('post.posted_at <= :postedAtEnd', {
+          postedAtEnd: filters.postedAtEnd,
+        });
+      }
+    }
+
     // Handle meta field queries
     if (filters.metaKey && filters.metaValue) {
-      queryBuilder.andWhere(`post.meta->>:metaKey = :metaValue`, {
-        metaKey: filters.metaKey,
-        metaValue: JSON.stringify(filters.metaValue),
-      });
+      const metaValueStr = String(filters.metaValue);
+
+      // Check if metaValue is a regex pattern (format: /pattern/flags)
+      const regexPattern = /^\/(.+)\/([gimsuvy]*)$/;
+      const regexMatch = metaValueStr.match(regexPattern);
+
+      // Also check if the value contains regex metacharacters (indicating it's likely a regex pattern)
+      const hasRegexMetacharacters = /[()|\[\]*+?{}^$\.]/.test(metaValueStr);
+      const isRegexFormat = regexMatch !== null;
+
+      if (isRegexFormat) {
+        // Extract pattern and flags from /pattern/flags format
+        const pattern = regexMatch[1];
+        const flags = regexMatch[2];
+
+        // Determine case sensitivity from flags
+        const caseInsensitive = flags.includes('i');
+        const regexOperator = caseInsensitive ? '~*' : '~';
+
+        // Use PostgreSQL regex matching on the JSONB text value
+        // Convert JSONB to text for regex matching
+        queryBuilder.andWhere(
+          `CAST(post.meta->>:metaKey AS TEXT) ${regexOperator} :regexPattern`,
+          {
+            metaKey: filters.metaKey,
+            regexPattern: pattern,
+          },
+        );
+      } else if (hasRegexMetacharacters && !metaValueStr.includes('/')) {
+        // If it contains regex metacharacters but isn't in /pattern/flags format,
+        // treat it as a regex pattern (for backward compatibility and ease of use)
+        const regexOperator = '~*'; // Default to case-insensitive for better matching
+
+        queryBuilder.andWhere(
+          `CAST(post.meta->>:metaKey AS TEXT) ${regexOperator} :regexPattern`,
+          {
+            metaKey: filters.metaKey,
+            regexPattern: metaValueStr,
+          },
+        );
+      } else {
+        // Exact match (original behavior)
+        queryBuilder.andWhere(`post.meta->>:metaKey = :metaValue`, {
+          metaKey: filters.metaKey,
+          metaValue: JSON.stringify(filters.metaValue),
+        });
+      }
     } else if (filters.metaKey) {
       queryBuilder.andWhere(`post.meta ? :metaKey`, {
         metaKey: filters.metaKey,
@@ -935,9 +1173,7 @@ export class PostsService extends TypeOrmCrudService<Post> {
     // Order by created date descending
     queryBuilder.orderBy('post.createdAt', 'DESC');
 
-    // Load relations
-    queryBuilder.leftJoinAndSelect('post.user', 'user');
-    queryBuilder.leftJoinAndSelect('post.dataset', 'dataset');
+    // Don't load user relation - userId is sufficient and user data should not be exposed
 
     const data = await queryBuilder.getMany();
 
@@ -1016,5 +1252,190 @@ export class PostsService extends TypeOrmCrudService<Post> {
     if (post.hash) {
       await this.invalidateHashCache(post.hash);
     }
+  }
+
+  async batchDelete(postIds: string[]): Promise<{ deleted: number }> {
+    this.logger.log(`🗑️ Bulk deleting ${postIds.length} posts`);
+
+    if (!postIds || postIds.length === 0) {
+      throw new BadRequestException('No post IDs provided');
+    }
+
+    // Get posts before deletion to invalidate cache
+    const posts = await this.postRepository.find({
+      where: postIds.map((id) => ({ id })),
+      select: ['id', 'hash'],
+    });
+
+    if (posts.length === 0) {
+      this.logger.warn('No posts found for bulk delete');
+      return { deleted: 0 };
+    }
+
+    // Delete posts
+    const deleteResult = await this.postRepository.delete(
+      posts.map((p) => p.id),
+    );
+
+    // Invalidate cache for all deleted posts
+    for (const post of posts) {
+      if (post.hash) {
+        await this.invalidateHashCache(post.hash);
+      }
+    }
+
+    this.logger.log(`✅ Deleted ${deleteResult.affected || 0} posts`);
+    return { deleted: deleteResult.affected || 0 };
+  }
+
+  async deleteAllByFilters(
+    filters: PostSearchFilters,
+  ): Promise<{ deleted: number }> {
+    this.logger.log(`🗑️ Deleting all posts matching filters`);
+
+    // Build the same query as search but without pagination
+    const queryBuilder = this.postRepository.createQueryBuilder('post');
+
+    // Apply filters (same logic as search method)
+    if (filters.hash)
+      queryBuilder.andWhere('post.hash = :hash', { hash: filters.hash });
+    if (filters.provider)
+      queryBuilder.andWhere('post.provider = :provider', {
+        provider: filters.provider,
+      });
+    if (filters.source)
+      queryBuilder.andWhere('post.source = :source', {
+        source: filters.source,
+      });
+    if (filters.title)
+      queryBuilder.andWhere('post.title ILIKE :title', {
+        title: `%${filters.title}%`,
+      });
+    if (filters.userId)
+      queryBuilder.andWhere('post.user_id = :userId', {
+        userId: filters.userId,
+      });
+
+    // Handle date range filtering
+    if (filters.startDate || filters.endDate) {
+      if (filters.startDate && filters.endDate) {
+        queryBuilder.andWhere(
+          "(post.meta->>'post_timestamp' >= :startDate AND post.meta->>'post_timestamp' <= :endDate)",
+          {
+            startDate: filters.startDate.toISOString(),
+            endDate: filters.endDate.toISOString(),
+          },
+        );
+      } else if (filters.startDate) {
+        queryBuilder.andWhere("post.meta->>'post_timestamp' >= :startDate", {
+          startDate: filters.startDate.toISOString(),
+        });
+      } else if (filters.endDate) {
+        queryBuilder.andWhere("post.meta->>'post_timestamp' <= :endDate", {
+          endDate: filters.endDate.toISOString(),
+        });
+      }
+    }
+
+    // Handle posted_at date range filtering
+    if (filters.postedAtStart || filters.postedAtEnd) {
+      if (filters.postedAtStart && filters.postedAtEnd) {
+        queryBuilder.andWhere(
+          'post.posted_at >= :postedAtStart AND post.posted_at <= :postedAtEnd',
+          {
+            postedAtStart: filters.postedAtStart,
+            postedAtEnd: filters.postedAtEnd,
+          },
+        );
+      } else if (filters.postedAtStart) {
+        queryBuilder.andWhere('post.posted_at >= :postedAtStart', {
+          postedAtStart: filters.postedAtStart,
+        });
+      } else if (filters.postedAtEnd) {
+        queryBuilder.andWhere('post.posted_at <= :postedAtEnd', {
+          postedAtEnd: filters.postedAtEnd,
+        });
+      }
+    }
+
+    // Handle meta field queries
+    if (filters.metaKey && filters.metaValue) {
+      const metaValueStr = String(filters.metaValue);
+
+      // Check if metaValue is a regex pattern (format: /pattern/flags)
+      const regexPattern = /^\/(.+)\/([gimsuvy]*)$/;
+      const regexMatch = metaValueStr.match(regexPattern);
+
+      // Also check if the value contains regex metacharacters (indicating it's likely a regex pattern)
+      const hasRegexMetacharacters = /[()|\[\]*+?{}^$\.]/.test(metaValueStr);
+      const isRegexFormat = regexMatch !== null;
+
+      if (isRegexFormat) {
+        // Extract pattern and flags from /pattern/flags format
+        const pattern = regexMatch[1];
+        const flags = regexMatch[2];
+
+        // Determine case sensitivity from flags
+        const caseInsensitive = flags.includes('i');
+        const regexOperator = caseInsensitive ? '~*' : '~';
+
+        // Use PostgreSQL regex matching on the JSONB text value
+        // Convert JSONB to text for regex matching
+        queryBuilder.andWhere(
+          `CAST(post.meta->>:metaKey AS TEXT) ${regexOperator} :regexPattern`,
+          {
+            metaKey: filters.metaKey,
+            regexPattern: pattern,
+          },
+        );
+      } else if (hasRegexMetacharacters && !metaValueStr.includes('/')) {
+        // If it contains regex metacharacters but isn't in /pattern/flags format,
+        // treat it as a regex pattern (for backward compatibility and ease of use)
+        const regexOperator = '~*'; // Default to case-insensitive for better matching
+
+        queryBuilder.andWhere(
+          `CAST(post.meta->>:metaKey AS TEXT) ${regexOperator} :regexPattern`,
+          {
+            metaKey: filters.metaKey,
+            regexPattern: metaValueStr,
+          },
+        );
+      } else {
+        // Exact match (original behavior)
+        queryBuilder.andWhere(`post.meta->>:metaKey = :metaValue`, {
+          metaKey: filters.metaKey,
+          metaValue: JSON.stringify(filters.metaValue),
+        });
+      }
+    } else if (filters.metaKey) {
+      queryBuilder.andWhere(`post.meta ? :metaKey`, {
+        metaKey: filters.metaKey,
+      });
+    }
+
+    // Get posts to invalidate cache
+    const postsToDelete = await queryBuilder
+      .select(['post.id', 'post.hash'])
+      .getMany();
+
+    if (postsToDelete.length === 0) {
+      this.logger.warn('No posts found matching filters');
+      return { deleted: 0 };
+    }
+
+    // Delete posts
+    const deleteResult = await this.postRepository.delete(
+      postsToDelete.map((p) => p.id),
+    );
+
+    // Invalidate cache for all deleted posts
+    for (const post of postsToDelete) {
+      if (post.hash) {
+        await this.invalidateHashCache(post.hash);
+      }
+    }
+
+    this.logger.log(`✅ Deleted ${deleteResult.affected || 0} posts`);
+    return { deleted: deleteResult.affected || 0 };
   }
 }

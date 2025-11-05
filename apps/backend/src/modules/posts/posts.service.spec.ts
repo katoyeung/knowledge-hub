@@ -402,15 +402,18 @@ describe('PostsService', () => {
         id: `post-${dto.hash}`,
         ...dto,
       }));
-      mockRepository.save.mockResolvedValue({});
+      mockRepository.save.mockImplementation((post: any) =>
+        Promise.resolve(post),
+      );
 
       const result = await service.bulkUpsert(
         bulkData,
         DeduplicationStrategy.HASH,
       );
 
-      expect(result.created).toBe(2);
-      expect(result.updated).toBe(0);
+      expect(result.items).toHaveLength(2);
+      expect(result.total).toBe(2);
+      expect(result.lastUpdated).toBeDefined();
     });
 
     it('should update existing posts in bulk upsert', async () => {
@@ -445,15 +448,20 @@ describe('PostsService', () => {
         id: 'post-id-2',
         hash: 'new-hash-2',
       });
-      mockRepository.save.mockResolvedValue({});
+      mockRepository.save.mockImplementation((post: any) =>
+        Promise.resolve(post),
+      );
 
       const result = await service.bulkUpsert(
         bulkData,
         DeduplicationStrategy.HASH,
       );
 
-      expect(result.created).toBe(1);
-      expect(result.updated).toBe(1);
+      expect(result.items).toHaveLength(2);
+      expect(result.items).toContain('post-id-1');
+      expect(result.items).toContain('post-id-2');
+      expect(result.total).toBe(2);
+      expect(result.lastUpdated).toBeDefined();
     });
   });
 

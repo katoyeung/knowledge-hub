@@ -97,6 +97,7 @@ export class Dataset extends BaseEntity {
   userId: string;
 
   // Relationships
+  @Exclude({ toPlainOnly: true })
   @ManyToOne(() => User, (user) => user.datasets)
   user: User;
 

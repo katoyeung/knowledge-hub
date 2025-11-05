@@ -85,15 +85,38 @@ export class LenxApiDataSourceStep extends BaseStep {
         this.logger.log(
           `Dynamic mode: Fetched ${allSegments.length} items from last ${config.intervalMinutes} minutes`,
         );
-      } else {
+      } else if (config.dateMode === 'fixed') {
         // Fixed mode: chunked requests
-        const chunks = this.calculateDateChunks(config);
-        this.logger.log(`Fixed mode: Processing ${chunks.length} time chunks`);
+        // Validate that both dates are provided at execution time
+        if (!config.startDate || !config.endDate) {
+          throw new Error(
+            'Fixed mode requires both startDate and endDate to be set. Please configure both dates in the node settings.',
+          );
+        }
 
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i];
+        const chunks = this.calculateDateChunks(config);
+
+        // In test mode (detected by executionId starting with "test_"), only process first chunk
+        const isTestMode = context.executionId?.startsWith('test_') ?? false;
+        const chunksToProcess = isTestMode ? chunks.slice(0, 1) : chunks;
+
+        if (isTestMode) {
           this.logger.log(
-            `Processing chunk ${i + 1}/${chunks.length}: ${new Date(chunk.from).toISOString()} to ${new Date(chunk.to).toISOString()}`,
+            `Fixed mode (TEST): Processing only first chunk of ${chunks.length} total chunks`,
+          );
+        } else {
+          this.logger.log(
+            `Fixed mode: Processing ${chunks.length} time chunks`,
+          );
+        }
+
+        // Collect all chunk responses
+        const chunkResponses: any[] = [];
+
+        for (let i = 0; i < chunksToProcess.length; i++) {
+          const chunk = chunksToProcess[i];
+          this.logger.log(
+            `Processing chunk ${i + 1}/${chunksToProcess.length}${isTestMode ? ` (of ${chunks.length} total in full run)` : ''}: ${new Date(chunk.from).toISOString()} to ${new Date(chunk.to).toISOString()}`,
           );
 
           try {
@@ -112,26 +135,58 @@ export class LenxApiDataSourceStep extends BaseStep {
                 (!rawResponse.data || rawResponse.data.length === 0))
             ) {
               this.logger.warn(
-                `Chunk ${i + 1} returned no results, stopping chunk processing`,
+                `Chunk ${i + 1} returned no results, continuing to next chunk`,
               );
-              break;
+              continue; // Continue to next chunk instead of breaking
             }
 
-            // Return raw response as single segment
-            allSegments.push(rawResponse);
+            chunkResponses.push(rawResponse);
             this.logger.log(
               `Chunk ${i + 1} completed: ${rawResponse.total || 0} items in raw response`,
             );
           } catch (error) {
             this.logger.error(`Chunk ${i + 1} failed: ${error.message}`);
-            // Stop processing on error in fixed mode
-            break;
+            // Continue to next chunk instead of breaking on error
+            continue;
           }
         }
 
-        this.logger.log(
-          `Fixed mode: Total ${allSegments.length} items fetched from ${chunks.length} chunks`,
-        );
+        // Merge all chunk responses into a single response
+        if (chunkResponses.length > 0) {
+          const mergedData: any[] = [];
+          let totalCount = 0;
+
+          for (const chunkResponse of chunkResponses) {
+            if (chunkResponse.data && Array.isArray(chunkResponse.data)) {
+              mergedData.push(...chunkResponse.data);
+            }
+            // Sum up totals if available
+            if (typeof chunkResponse.total === 'number') {
+              totalCount += chunkResponse.total;
+            }
+          }
+
+          // Create merged response
+          const mergedResponse = {
+            ...chunkResponses[0], // Keep metadata from first response
+            data: mergedData,
+            total: totalCount || mergedData.length,
+          };
+
+          allSegments = [mergedResponse];
+          if (isTestMode) {
+            this.logger.log(
+              `Fixed mode (TEST): Processed ${chunkResponses.length} chunk(s) into ${mergedData.length} total items (limited for testing)`,
+            );
+          } else {
+            this.logger.log(
+              `Fixed mode: Merged ${chunkResponses.length} chunks into ${mergedData.length} total items`,
+            );
+          }
+        } else {
+          this.logger.warn('Fixed mode: No data returned from any chunks');
+          allSegments = [];
+        }
       }
 
       const endTime = new Date();
@@ -151,14 +206,28 @@ export class LenxApiDataSourceStep extends BaseStep {
 
       if (allSegments.length > 0) {
         this.logger.log('Sample Output Segments:');
-        allSegments.slice(0, 3).forEach((seg, i) => {
+        const firstResponse = allSegments[0];
+        if (
+          firstResponse &&
+          firstResponse.data &&
+          Array.isArray(firstResponse.data)
+        ) {
           this.logger.log(
-            `  [${i + 1}] Position: ${seg.position}, Words: ${seg.wordCount}, Tokens: ${seg.tokens}`,
+            `  Total items: ${firstResponse.total || firstResponse.data.length}`,
           );
           this.logger.log(
-            `       Content preview: ${seg.content?.substring(0, 100) || 'N/A'}...`,
+            `  Sample items: ${firstResponse.data.slice(0, 3).length}`,
           );
-        });
+        } else {
+          allSegments.slice(0, 3).forEach((seg, i) => {
+            this.logger.log(
+              `  [${i + 1}] Position: ${seg.position}, Words: ${seg.wordCount}, Tokens: ${seg.tokens}`,
+            );
+            this.logger.log(
+              `       Content preview: ${seg.content?.substring(0, 100) || 'N/A'}...`,
+            );
+          });
+        }
       }
       this.logger.log('='.repeat(80));
 
@@ -216,21 +285,22 @@ export class LenxApiDataSourceStep extends BaseStep {
     }
 
     if (config.dateMode === 'fixed') {
-      // Only validate if dates are provided (allow partial configuration during editing)
-      if (!config.startDate && !config.endDate) {
-        // Both empty - this is okay during configuration
-      } else if (!config.startDate) {
-        errors.push('Start date is required for fixed mode');
-      } else if (!config.endDate) {
-        errors.push('End date is required for fixed mode');
-      } else {
+      // Allow partial configuration during editing (either date can be empty)
+      // Only validate date relationship if both are provided
+      if (config.startDate && config.endDate) {
         // Both dates provided, validate them
         const start = new Date(config.startDate);
         const end = new Date(config.endDate);
-        if (start > end) {
+        if (isNaN(start.getTime())) {
+          errors.push('Start date is invalid');
+        } else if (isNaN(end.getTime())) {
+          errors.push('End date is invalid');
+        } else if (start > end) {
           errors.push('Start date must be before end date');
         }
       }
+      // If only one date is provided, that's okay during editing
+      // Validation for required fields happens at execution time
 
       if (config.dateIntervalMinutes && config.dateIntervalMinutes <= 0) {
         errors.push('Date interval must be greater than 0');

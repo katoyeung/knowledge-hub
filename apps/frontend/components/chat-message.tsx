@@ -42,6 +42,8 @@ export function ChatMessage({
     const isUser = message.role === 'user'
     const isAssistant = message.role === 'assistant'
     const isFailed = message.status === 'failed'
+    const isStreaming = message.status === 'streaming'
+    const isThinking = message.content === 'Thinking...'
 
     return (
         <div className="space-y-3">
@@ -60,51 +62,83 @@ export function ChatMessage({
                         : isFailed
                             ? 'bg-red-50 text-red-900 border border-red-200'
                             : 'bg-gray-100 text-gray-900'
-                        }`}
+                        } overflow-hidden`}
                 >
                     {isAssistant ? (
-                        <div className="prose prose-sm max-w-none">
-                            <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
-                                components={{
-                                    code({ inline, className, children, ...props }) {
-                                        const match = /language-(\w+)/.exec(className || '')
-                                        return !inline && match ? (
-                                            <SyntaxHighlighter
-                                                style={oneLight}
-                                                language={match[1]}
-                                                PreTag="div"
-                                                className="rounded-md"
-                                                {...props}
-                                            >
-                                                {String(children).replace(/\n$/, '')}
-                                            </SyntaxHighlighter>
-                                        ) : (
-                                            <code className={className} {...props}>
-                                                {children}
-                                            </code>
-                                        )
-                                    },
-                                    a({ href, children, ...props }) {
-                                        return (
-                                            <a
-                                                href={href}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="text-blue-600 hover:text-blue-800 underline cursor-pointer"
-                                                {...props}
-                                            >
-                                                [{children}]
-                                            </a>
-                                        )
-                                    },
-                                }}
-                            >
-                                {message.content}
-                            </ReactMarkdown>
-                        </div>
+                        isThinking ? (
+                            <div className="flex items-center gap-2 text-gray-600">
+                                <div className="flex gap-1">
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                                </div>
+                                <span className="text-sm italic">Thinking...</span>
+                            </div>
+                        ) : (
+                            <div className="prose prose-sm max-w-none break-words" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                                <ReactMarkdown
+                                    remarkPlugins={[remarkGfm]}
+                                    components={{
+                                        code({ inline, className, children, ...props }) {
+                                            const match = /language-(\w+)/.exec(className || '')
+                                            return !inline && match ? (
+                                                <div className="w-full my-2" style={{ maxWidth: '100%' }}>
+                                                    <SyntaxHighlighter
+                                                        style={oneLight}
+                                                        language={match[1]}
+                                                        PreTag="div"
+                                                        className="rounded-md"
+                                                        customStyle={{
+                                                            margin: 0,
+                                                            overflow: 'visible',
+                                                            boxSizing: 'border-box',
+                                                            whiteSpace: 'pre-wrap',
+                                                            wordBreak: 'break-word',
+                                                            overflowWrap: 'anywhere',
+                                                        }}
+                                                        codeTagProps={{
+                                                            style: {
+                                                                whiteSpace: 'pre-wrap',
+                                                                wordBreak: 'break-word',
+                                                                overflowWrap: 'anywhere',
+                                                                display: 'block',
+                                                            }
+                                                        }}
+                                                        {...props}
+                                                    >
+                                                        {String(children).replace(/\n$/, '')}
+                                                    </SyntaxHighlighter>
+                                                </div>
+                                            ) : (
+                                                <code className={`${className} break-words`} {...props}>
+                                                    {children}
+                                                </code>
+                                            )
+                                        },
+                                        a({ href, children, ...props }) {
+                                            return (
+                                                <a
+                                                    href={href}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-blue-600 hover:text-blue-800 underline cursor-pointer"
+                                                    {...props}
+                                                >
+                                                    [{children}]
+                                                </a>
+                                            )
+                                        },
+                                    }}
+                                >
+                                    {message.content}
+                                </ReactMarkdown>
+                                {isStreaming && !isThinking && (
+                                    <span className="inline-block w-2 h-4 bg-blue-500 ml-1 animate-pulse" />
+                                )}
+                            </div>
+                        )
                     ) : (
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                        <p className="text-sm whitespace-pre-wrap break-words" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{message.content}</p>
                     )}
 
                     <div

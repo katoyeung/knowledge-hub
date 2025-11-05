@@ -1281,9 +1281,9 @@ export const chatApi = {
     datasetId: string
   ): Promise<Conversation | null> => {
     try {
-      const response = await apiClient.get(
-        `/chat/conversations/latest?datasetId=${datasetId}`
-      );
+      const response = await apiClient.get(`/chat/conversations/latest`, {
+        params: { datasetId },
+      });
       return response.data;
     } catch (error: unknown) {
       // If no conversation exists, return null instead of throwing
@@ -2492,16 +2492,12 @@ export interface Post {
   title?: string;
   meta?: Record<string, any>;
   userId?: string;
-  datasetId?: string;
+  postedAt?: string;
   createdAt: string;
   updatedAt: string;
   user?: {
     id: string;
     email: string;
-  };
-  dataset?: {
-    id: string;
-    name: string;
   };
 }
 
@@ -2512,7 +2508,6 @@ export interface CreatePostDto {
   title?: string;
   meta?: Record<string, any>;
   userId?: string;
-  datasetId?: string;
 }
 
 export interface UpdatePostDto extends Partial<CreatePostDto> {}
@@ -2525,9 +2520,10 @@ export interface PostSearchParams {
   metaKey?: string;
   metaValue?: string;
   userId?: string;
-  datasetId?: string;
   startDate?: string;
   endDate?: string;
+  postedAtStart?: string;
+  postedAtEnd?: string;
   page?: number;
   limit?: number;
 }
@@ -2605,6 +2601,28 @@ export const postsApi = {
       { posts },
       {
         params: strategy ? { strategy } : undefined,
+      }
+    );
+    return response.data;
+  },
+
+  batchDelete: async (
+    postIds: string[]
+  ): Promise<{ success: boolean; deleted: number }> => {
+    const response = await apiClient.post("/posts/batch-delete", {
+      postIds,
+    });
+    return response.data;
+  },
+
+  deleteAll: async (
+    params?: PostSearchParams
+  ): Promise<{ success: boolean; deleted: number }> => {
+    const response = await apiClient.post(
+      "/posts/delete-all",
+      {},
+      {
+        params,
       }
     );
     return response.data;

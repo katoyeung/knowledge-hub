@@ -1,17 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-
-// Global state to track API calls across all component instances
-const globalApiCallTracker = {
-    userSettings: new Set<string>(),
-    conversations: new Set<string>(),
-}
+import { useChat } from '@ai-sdk/react'
 import { Send, Bot, ChevronDown, Plus } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { SourceChunksDisplay } from '@/components/source-chunks-display'
@@ -43,6 +34,12 @@ interface ChatSettings {
     conversationHistoryLimit?: number
 }
 
+// Global state to track API calls across all component instances
+const globalApiCallTracker = {
+    userSettings: new Set<string>(),
+    conversations: new Set<string>(),
+}
+
 export function DatasetChatPanel({
     datasetId,
     selectedDocumentId,
@@ -54,9 +51,6 @@ export function DatasetChatPanel({
 }: DatasetChatPanelProps) {
     const componentId = useRef(Math.random().toString(36).substr(2, 9))
     const { error } = useToast()
-    const [messages, setMessages] = useState<ChatMessage[]>([])
-    const [inputValue, setInputValue] = useState('')
-    const [conversationId, setConversationId] = useState<string | undefined>()
     const [sourceChunks, setSourceChunks] = useState<SourceChunk[]>([])
     const [previewDocument, setPreviewDocument] = useState<Document | null>(null)
     const [showPreview, setShowPreview] = useState(false)
@@ -69,14 +63,17 @@ export function DatasetChatPanel({
     const [selectedModel, setSelectedModel] = useState<string>('qwen-max-latest')
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [dataset, setDataset] = useState<Dataset | null>(null)
-    const [isLoading, setIsLoading] = useState(false)
-    const [isStreaming, setIsStreaming] = useState(false)
-    const [streamingMessage, setStreamingMessage] = useState<string>('')
     const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null)
     const [currentPage, setCurrentPage] = useState(1)
     const [hasMoreMessages, setHasMoreMessages] = useState(true)
     const [isLoadingHistory, setIsLoadingHistory] = useState(false)
     const [isInitialLoad, setIsInitialLoad] = useState(true)
+    const [historyMessages, setHistoryMessages] = useState<ChatMessage[]>([]) // Messages loaded from history
+    const [localInput, setLocalInput] = useState('') // Fallback input state
+    const [streamingMessages, setStreamingMessages] = useState<ChatMessage[]>([]) // Messages from direct API streaming
+    const [currentStreamingContent, setCurrentStreamingContent] = useState('') // Current streaming assistant message
+    const [isWaitingForResponse, setIsWaitingForResponse] = useState(false) // Show thinking indicator
+    const [userScrolledUp, setUserScrolledUp] = useState(false) // Track if user manually scrolled up
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const messagesContainerRef = useRef<HTMLDivElement>(null)
     const hasLoadedConversationRef = useRef(false)
@@ -86,15 +83,373 @@ export function DatasetChatPanel({
     const isLoadingUserSettingsRef = useRef(false)
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
+    // Convert AI SDK message to ChatMessage format
+    const convertToChatMessage = (msg: { role: 'user' | 'assistant' | 'system'; content: string }, id?: string): ChatMessage => {
+        return {
+            id: id || Date.now().toString(),
+            content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+            role: msg.role === 'user' ? 'user' : 'assistant',
+            status: 'completed',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        }
+    }
+
+    // Use Vercel AI SDK's useChat hook
+    const token = authUtil.getToken()
+    const chatHook = useChat({
+        // @ts-expect-error - api option exists but types may be outdated
+        api: '/api/chat',
+        headers: token ? {
+            Authorization: `Bearer ${token}`,
+        } : undefined,
+        body: {
+            datasetId,
+            documentIds: selectedDocumentIds || [],
+            segmentIds: selectedSegmentIds,
+            maxChunks: chatSettings.maxChunks || 5,
+            temperature: chatSettings.temperature || 0.7,
+            conversationId: currentConversation?.id,
+            includeConversationHistory: chatSettings.includeConversationHistory !== false,
+            conversationHistoryLimit: chatSettings.conversationHistoryLimit || 10,
+        },
+        onFinish: async () => {
+            // Try to fetch conversation metadata and source chunks after completion
+            if (currentConversation?.id) {
+                try {
+                    const response: PaginatedMessagesResponse = await chatApi.getConversationMessagesPaginated(
+                        currentConversation.id,
+                        1,
+                        1
+                    )
+                    if (response.messages.length > 0) {
+                        // Extract source chunks if available (this might need API changes)
+                        // For now, we'll leave source chunks empty and update when backend provides them
+                    }
+                } catch (err) {
+                    console.warn('Failed to fetch message metadata:', err)
+                }
+            }
+        },
+        onError: (err: Error) => {
+            console.error('Chat error:', err)
+            error(`Chat failed: ${err.message}`)
+        },
+    })
+
+    // Extract properties from the hook (using any due to type incompatibilities with AI SDK)
+    // The useChat hook returns an object with methods directly on it
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const aiMessages = (chatHook as any).messages || []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hookInput = (chatHook as any).input
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleInputChange = (chatHook as any).handleInputChange
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const setInput = (chatHook as any).setInput
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleSubmitHook = (chatHook as any).handleSubmit
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const append = (chatHook as any).append
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const isStreaming = (chatHook as any).isLoading || false
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const chatError = (chatHook as any).error as Error | null
+
+    // Debug: Log hook structure to understand what's available
+    useEffect(() => {
+        if (process.env.NODE_ENV === 'development') {
+            console.log('useChat hook keys:', Object.keys(chatHook))
+            console.log('Available methods:', {
+                handleSubmit: !!handleSubmitHook,
+                append: !!append,
+                setInput: !!setInput,
+                handleInputChange: !!handleInputChange,
+                input: hookInput,
+            })
+        }
+    }, [chatHook, handleSubmitHook, append, setInput, handleInputChange, hookInput])
+
+    // Use hook's input if available, otherwise use local state
+    // This ensures the hook always has the current value for submission
+    const input = hookInput !== undefined ? hookInput : localInput
+
+    // Create a proper input change handler
+    // Always update both hook and local state to keep them in sync
+    const onInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value
+
+        // Update local state (for immediate UI feedback)
+        setLocalInput(value)
+
+        // Update hook state (required for submission)
+        if (handleInputChange) {
+            handleInputChange(e)
+        } else if (setInput) {
+            setInput(value)
+        }
+    }, [handleInputChange, setInput])
+
+    // Custom submit handler that uses the hook's submit
+    const handleSubmit = useCallback((e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault()
+
+        // Get the current input value (prioritize local state as it's most up-to-date)
+        const currentInput = localInput.trim()
+
+        if (!currentInput || isStreaming) {
+            return
+        }
+
+        // CRITICAL: Ensure hook has the current input value before submitting
+        // The hook's handleSubmit reads from hook.input, not from the event
+        if (setInput) {
+            setInput(currentInput)
+        }
+
+        // User sent a message, reset scroll state to allow auto-scroll and scroll to bottom
+        setUserScrolledUp(false)
+
+        // Immediately scroll to bottom when user sends a message
+        setTimeout(() => {
+            if (messagesContainerRef.current) {
+                messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+            }
+        }, 100)
+
+        // Try to submit using available methods
+        // Priority: append (modern) > handleSubmit (legacy)
+        if (append && typeof append === 'function') {
+            // Use append method (modern way - preferred)
+            try {
+                setIsWaitingForResponse(true)
+                append({
+                    role: 'user',
+                    content: currentInput,
+                })
+                setLocalInput('')
+                // Clear thinking indicator when response starts (hook handles this)
+                // We'll clear it when streaming starts or after a timeout
+                setTimeout(() => {
+                    if (isWaitingForResponse) {
+                        setIsWaitingForResponse(false)
+                    }
+                }, 5000) // Clear after 5 seconds if no response
+            } catch (err) {
+                console.error('Append error:', err)
+                setIsWaitingForResponse(false)
+                error('Failed to send message. Please try again.')
+            }
+        } else if (handleSubmitHook && typeof handleSubmitHook === 'function') {
+            // Use handleSubmit (legacy way)
+            try {
+                setIsWaitingForResponse(true)
+                // Ensure hook has the input value
+                if (setInput && hookInput !== currentInput) {
+                    setInput(currentInput)
+                }
+
+                // Use requestAnimationFrame to ensure state is flushed
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        try {
+                            // Create a proper synthetic form event
+                            const form = e.currentTarget
+                            const syntheticEvent = new Event('submit', {
+                                bubbles: true,
+                                cancelable: true,
+                            }) as unknown as React.FormEvent<HTMLFormElement>
+
+                            // Set up the event properties
+                            Object.defineProperty(syntheticEvent, 'preventDefault', {
+                                value: () => { },
+                                writable: false,
+                            })
+                            Object.defineProperty(syntheticEvent, 'stopPropagation', {
+                                value: () => { },
+                                writable: false,
+                            })
+                            Object.defineProperty(syntheticEvent, 'currentTarget', {
+                                value: form,
+                                writable: false,
+                            })
+                            Object.defineProperty(syntheticEvent, 'target', {
+                                value: form,
+                                writable: false,
+                            })
+
+                            handleSubmitHook(syntheticEvent)
+                            setLocalInput('')
+                            // Clear thinking indicator when response starts (hook handles this)
+                            setTimeout(() => {
+                                if (isWaitingForResponse) {
+                                    setIsWaitingForResponse(false)
+                                }
+                            }, 5000) // Clear after 5 seconds if no response
+                        } catch (err) {
+                            console.error('Submit error:', err)
+                            setIsWaitingForResponse(false)
+                            error('Failed to send message. Please try again.')
+                        }
+                    })
+                })
+            } catch (err) {
+                console.error('Submit error:', err)
+                setIsWaitingForResponse(false)
+                error('Failed to send message. Please try again.')
+            }
+        } else {
+            // No submit method available - use direct API call via /api/chat endpoint
+            console.warn('useChat hook methods not available, using direct API call')
+            console.warn('Hook keys:', Object.keys(chatHook))
+
+            // Add user message to display immediately
+            const userMessage: ChatMessage = {
+                id: Date.now().toString(),
+                content: currentInput,
+                role: 'user',
+                status: 'completed',
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            }
+            setStreamingMessages(prev => [...prev, userMessage])
+
+            // Call the Next.js API route that useChat would use
+            const token = authUtil.getToken()
+            if (!token) {
+                error('Authentication required')
+                return
+            }
+
+            // Reset streaming state and show thinking indicator
+            setCurrentStreamingContent('')
+            setIsWaitingForResponse(true)
+
+            // Use the chatWithDocumentsStream API directly
+            chatApi.chatWithDocumentsStream(
+                {
+                    message: currentInput,
+                    datasetId,
+                    documentIds: selectedDocumentIds || [],
+                    segmentIds: selectedSegmentIds,
+                    maxChunks: chatSettings.maxChunks || 5,
+                    temperature: chatSettings.temperature || 0.7,
+                    conversationId: currentConversation?.id,
+                    includeConversationHistory: chatSettings.includeConversationHistory !== false,
+                    conversationHistoryLimit: chatSettings.conversationHistoryLimit || 10,
+                },
+                (token: string) => {
+                    // Handle streaming tokens - append to current streaming content
+                    // Clear thinking indicator when first token arrives
+                    setIsWaitingForResponse(false)
+                    setCurrentStreamingContent(prev => prev + token)
+                    // Auto-scroll to bottom as content streams
+                    setTimeout(() => {
+                        if (messagesContainerRef.current) {
+                            messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+                        }
+                    }, 0)
+                },
+                (response) => {
+                    // Handle completion - convert streaming message to completed message
+                    const assistantMessage: ChatMessage = {
+                        id: response.message.id || Date.now().toString(),
+                        content: response.message.content || currentStreamingContent,
+                        role: 'assistant',
+                        status: 'completed',
+                        createdAt: new Date(response.message.createdAt || Date.now()),
+                        updatedAt: new Date(response.message.updatedAt || Date.now()),
+                    }
+                    setStreamingMessages(prev => [...prev, assistantMessage])
+                    setCurrentStreamingContent('')
+
+                    if (response.conversationId && !currentConversation) {
+                        const user = authUtil.getUser()
+                        setCurrentConversation({
+                            id: response.conversationId,
+                            title: currentInput.substring(0, 50),
+                            datasetId,
+                            userId: user?.id || '',
+                            createdAt: new Date(),
+                            updatedAt: new Date(),
+                        })
+                    }
+                    if (response.sourceChunks && response.sourceChunks.length > 0) {
+                        setSourceChunks(response.sourceChunks)
+                    }
+                },
+                (errorMsg: string) => {
+                    console.error('Streaming error:', errorMsg)
+                    setCurrentStreamingContent('')
+                    setIsWaitingForResponse(false)
+                    error(`Chat failed: ${errorMsg}`)
+                }
+            ).catch((err) => {
+                console.error('API call error:', err)
+                setCurrentStreamingContent('')
+                setIsWaitingForResponse(false)
+                error('Failed to send message. Please try again.')
+            })
+
+            setLocalInput('')
+        }
+    }, [localInput, isStreaming, setInput, handleSubmitHook, append, hookInput, chatHook, error, datasetId, selectedDocumentIds, selectedSegmentIds, chatSettings, currentConversation])
+
+    // Helper function to set input value programmatically
+    const setInputValue = (value: string) => {
+        setLocalInput(value)
+        // Also sync with hook if available
+        if (setInput) {
+            setInput(value)
+        } else if (handleInputChange) {
+            handleInputChange({ target: { value } } as React.ChangeEvent<HTMLInputElement>)
+        }
+    }
+
+    // Convert AI SDK messages to ChatMessage format for display
+    const displayMessages: ChatMessage[] = [
+        ...historyMessages,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...aiMessages.map((msg: any) => {
+            const role = msg.role || 'assistant'
+            const content = msg.content || msg.text || JSON.stringify(msg)
+            return convertToChatMessage(
+                {
+                    role: role === 'user' ? 'user' : 'assistant',
+                    content: typeof content === 'string' ? content : JSON.stringify(content),
+                },
+                msg.id
+            )
+        }),
+        ...streamingMessages,
+        // Add streaming content if it exists
+        ...(currentStreamingContent ? [{
+            id: 'streaming',
+            content: currentStreamingContent,
+            role: 'assistant' as const,
+            status: 'streaming' as const,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        }] : []),
+        // Add thinking indicator if waiting for response
+        ...(isWaitingForResponse ? [{
+            id: 'thinking',
+            content: 'Thinking...',
+            role: 'assistant' as const,
+            status: 'streaming' as const,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        }] : []),
+    ]
 
     const scrollToBottomButton = useCallback(() => {
-        if (messagesEndRef.current) {
-            messagesEndRef.current.scrollIntoView({ behavior: 'auto' })
+        if (messagesContainerRef.current) {
+            messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+            setUserScrolledUp(false) // Reset scroll state when user clicks scroll to bottom
         }
     }, [])
 
     const checkAndLoadUserSettingsIfNeeded = useCallback(async (datasetData: Dataset) => {
-        // Only load user settings if dataset doesn't have valid chat settings
         const hasValidDatasetSettings = datasetData?.settings?.chat_settings &&
             (datasetData.settings.chat_settings.provider ||
                 datasetData.settings.chat_settings.model ||
@@ -102,7 +457,6 @@ export function DatasetChatPanel({
                 datasetData.settings.chat_settings.maxChunks !== undefined)
 
         if (!hasValidDatasetSettings) {
-            // Call loadUserSettings directly to avoid circular dependency
             const callKey = `user-settings-${componentId.current}`
             if (globalApiCallTracker.userSettings.has(callKey)) {
                 return
@@ -120,7 +474,6 @@ export function DatasetChatPanel({
                 if (userChatSettings && Object.keys(userChatSettings).length > 0) {
                     const settings = userChatSettings as Record<string, unknown>
                     setChatSettings(settings as ChatSettings)
-                    // Update local state with saved settings
                     if (typeof settings.provider === 'string') {
                         setSelectedProvider(settings.provider)
                     }
@@ -140,10 +493,8 @@ export function DatasetChatPanel({
             const datasetData = await datasetApi.getById(datasetId)
             setDataset(datasetData)
 
-            // Load chat settings from dataset
             if (datasetData.settings && datasetData.settings.chat_settings) {
                 setChatSettings(datasetData.settings.chat_settings)
-                // Update local state with saved settings
                 if (datasetData.settings.chat_settings.provider) {
                     setSelectedProvider(datasetData.settings.chat_settings.provider)
                 }
@@ -152,16 +503,12 @@ export function DatasetChatPanel({
                 }
             }
 
-            // Check if we need to load user settings as fallback
             await checkAndLoadUserSettingsIfNeeded(datasetData)
         } catch {
         }
     }, [datasetId, checkAndLoadUserSettingsIfNeeded])
 
-    // Remove unused loadUserSettings function
-
     const loadConversationMessages = useCallback(async (conversationId: string, page: number, limit: number) => {
-        // Prevent duplicate calls
         if (isLoadingMessagesRef.current) {
             return
         }
@@ -176,11 +523,9 @@ export function DatasetChatPanel({
             )
 
             if (page === 1) {
-                // First page - replace messages
-                setMessages(response.messages)
+                setHistoryMessages(response.messages)
             } else {
-                // Subsequent pages - prepend older messages, ensuring no duplicates
-                setMessages(prev => {
+                setHistoryMessages(prev => {
                     const existingIds = new Set(prev.map(m => m.id))
                     const newMessages = response.messages.filter(m => !existingIds.has(m.id))
                     return [...newMessages, ...prev]
@@ -195,7 +540,6 @@ export function DatasetChatPanel({
             setIsLoadingHistory(false)
         }
     }, [])
-
 
     const loadMoreMessages = useCallback(async () => {
         if (!currentConversation || isLoadingHistory || !hasMoreMessages || isLoadingPaginationRef.current) {
@@ -218,40 +562,45 @@ export function DatasetChatPanel({
             const isAtBottom = scrollHeight - scrollTop - clientHeight < 50
 
             setShowScrollButton(!isAtBottom)
+            // Track if user has scrolled up (not at bottom)
+            setUserScrolledUp(!isAtBottom)
 
-            // Check if user scrolled near the top for infinite scroll
             if (scrollTop < 100 && hasMoreMessages && !isLoadingHistory) {
-                // Clear any existing timeout
                 if (scrollTimeoutRef.current) {
                     clearTimeout(scrollTimeoutRef.current)
                 }
 
-                // Debounce the loadMoreMessages call
                 scrollTimeoutRef.current = setTimeout(() => {
                     loadMoreMessages()
-                }, 100) // 100ms debounce
+                }, 100)
             }
         }
     }, [hasMoreMessages, isLoadingHistory, loadMoreMessages])
 
-    // Stay at bottom when streaming - no scroll animation
+    // Stay at bottom when streaming - always auto-scroll during streaming
     useEffect(() => {
-        if (isStreaming && streamingMessage) {
-            // Immediately go to bottom without animation
+        if (isStreaming) {
             if (messagesContainerRef.current) {
                 messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
             }
         }
-    }, [isStreaming, streamingMessage])
+    }, [isStreaming, aiMessages])
+
+    // Also auto-scroll when streaming content changes
+    useEffect(() => {
+        if (currentStreamingContent && !userScrolledUp) {
+            if (messagesContainerRef.current) {
+                messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+            }
+        }
+    }, [currentStreamingContent, userScrolledUp])
 
     // Load dataset and chat settings on mount
     useEffect(() => {
         if (propDataset) {
-            // Use dataset passed as prop
             setDataset(propDataset)
             if (propDataset.settings && propDataset.settings.chat_settings) {
                 setChatSettings(propDataset.settings.chat_settings)
-                // Update local state with saved settings
                 if (propDataset.settings.chat_settings.provider) {
                     setSelectedProvider(propDataset.settings.chat_settings.provider)
                 }
@@ -260,42 +609,35 @@ export function DatasetChatPanel({
                 }
             }
         } else {
-            // Fallback to fetching dataset if not provided as prop
             loadDataset()
         }
 
-        // Check if we need to load user settings as fallback
         if (propDataset) {
             checkAndLoadUserSettingsIfNeeded(propDataset)
         }
     }, [datasetId, propDataset, loadDataset, checkAndLoadUserSettingsIfNeeded])
 
-    // Load latest conversation for this dataset (separate effect to prevent duplicate calls)
+    // Load latest conversation for this dataset
     useEffect(() => {
         let isMounted = true
         let timeoutId: NodeJS.Timeout
 
         const loadConversation = async () => {
-            // Reset conversation state when datasetId changes
             hasLoadedConversationRef.current = false
             isLoadingConversationRef.current = false
             isLoadingMessagesRef.current = false
             isLoadingPaginationRef.current = false
             isLoadingUserSettingsRef.current = false
             setCurrentConversation(null)
-            setConversationId(undefined)
-            setMessages([])
+            setHistoryMessages([])
             setSourceChunks([])
             setCurrentPage(1)
             setHasMoreMessages(true)
 
             if (isMounted) {
-                // Add a small delay to prevent rapid successive calls
                 timeoutId = setTimeout(async () => {
                     if (isMounted) {
-                        // Call loadLatestConversation directly here instead of using the callback
                         try {
-                            // Prevent duplicate calls using global tracker
                             const callKey = `conversation-${datasetId}-${componentId.current}`
                             if (globalApiCallTracker.conversations.has(callKey)) {
                                 return
@@ -306,13 +648,11 @@ export function DatasetChatPanel({
                             const conversation = await chatApi.getLatestConversation(datasetId)
                             if (conversation && isMounted) {
                                 setCurrentConversation(conversation)
-                                setConversationId(conversation.id)
                                 await loadConversationMessages(conversation.id, 1, 10)
                             }
                             hasLoadedConversationRef.current = true
                         } catch (err) {
                             console.warn('Failed to load latest conversation:', err)
-                            // Don't show error to user for conversation loading - it's not critical
                         } finally {
                             if (isMounted) {
                                 setIsInitialLoad(false)
@@ -334,19 +674,26 @@ export function DatasetChatPanel({
             if (scrollTimeoutRef.current) {
                 clearTimeout(scrollTimeoutRef.current)
             }
-            // Clean up global tracker
             const callKey = `conversation-${datasetId}-${componentId.current}`
             globalApiCallTracker.conversations.delete(callKey)
         }
-    }, [datasetId, loadConversationMessages]) // Add loadConversationMessages back since we use it directly
+    }, [datasetId, loadConversationMessages])
 
-    // Just stay at bottom - no scrolling effects
+    // Scroll to bottom when messages change, but only if:
+    // 1. User hasn't manually scrolled up, OR
+    // 2. It's a new conversation/initial load, OR
+    // 3. A new message was just added (user sent a message)
     useEffect(() => {
-        // Immediately go to bottom without any animation or delay
-        if (messagesContainerRef.current) {
-            messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+        if (messagesContainerRef.current && !userScrolledUp) {
+            // Only auto-scroll if user is already near the bottom or it's initial load
+            const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current
+            const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
+
+            if (isNearBottom || isInitialLoad) {
+                messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+            }
         }
-    }, [messages, currentConversation, datasetId])
+    }, [displayMessages, currentConversation, datasetId, userScrolledUp, isInitialLoad])
 
     // Add scroll event listener
     useEffect(() => {
@@ -362,154 +709,25 @@ export function DatasetChatPanel({
         }
     }, [handleScroll])
 
-    const handleSendMessage = async () => {
-        if (!inputValue.trim() || isLoading || isStreaming || (requireDocumentSelection && (!selectedDocumentIds || selectedDocumentIds.length === 0))) return
-
-        const userMessage: ChatMessage = {
-            id: Date.now().toString(),
-            content: inputValue.trim(),
-            role: 'user',
-            status: 'completed',
-            createdAt: new Date(),
-            updatedAt: new Date()
-        }
-
-
-        setMessages(prev => {
-            const existingIds = new Set(prev.map(m => m.id))
-            if (existingIds.has(userMessage.id)) {
-                return prev // Don't add if already exists
-            }
-            return [...prev, userMessage]
-        })
-        const messageText = inputValue.trim()
-        setInputValue('')
-        setIsStreaming(true)
-        setStreamingMessage('')
-
-        try {
-            // Use chat settings if available, otherwise fallback to defaults
-            const settings = Object.keys(chatSettings).length > 0 ? chatSettings : {
-                temperature: 0.7,
-                maxChunks: 5,
-                includeConversationHistory: true,
-                conversationHistoryLimit: 10
-            }
-
-            await chatApi.chatWithDocumentsStream(
-                {
-                    message: messageText,
-                    datasetId,
-                    documentIds: selectedDocumentIds || [],
-                    segmentIds: selectedSegmentIds,
-                    conversationId,
-                    maxChunks: settings.maxChunks || 5,
-                    temperature: settings.temperature || 0.7,
-                    includeConversationHistory: settings.includeConversationHistory,
-                    conversationHistoryLimit: settings.conversationHistoryLimit
-                },
-                // onToken callback
-                (token: string) => {
-                    setStreamingMessage(prev => prev + token)
-                },
-                // onComplete callback
-                (response) => {
-                    // Update conversation ID if this is a new conversation
-                    if (!conversationId) {
-                        setConversationId(response.conversationId)
-                        // Reset pagination state for new conversation
-                        setCurrentPage(1)
-                        setHasMoreMessages(true)
-                    }
-
-
-                    // Add the complete assistant message (check for duplicates)
-                    setMessages(prev => {
-                        const existingIds = new Set(prev.map(m => m.id))
-                        if (existingIds.has(response.message.id)) {
-                            return prev // Don't add if already exists
-                        }
-                        return [...prev, {
-                            ...response.message,
-                            role: response.message.role as 'user' | 'assistant' | 'system',
-                            status: response.message.status as 'pending' | 'completed' | 'failed'
-                        }]
-                    })
-
-                    // Update source chunks
-                    setSourceChunks(response.sourceChunks)
-
-                    // Clear streaming state
-                    setStreamingMessage('')
-                    setIsStreaming(false)
-                },
-                // onError callback
-                (errorMsg: string) => {
-                    console.error('Chat streaming error:', errorMsg)
-                    error(`Chat failed: ${errorMsg}`)
-
-                    // Add error message to chat
-                    const errorMessage: ChatMessage = {
-                        id: (Date.now() + 1).toString(),
-                        content: `Sorry, I encountered an error: ${errorMsg}`,
-                        role: 'assistant',
-                        status: 'failed',
-                        createdAt: new Date(),
-                        updatedAt: new Date()
-                    }
-                    setMessages(prev => {
-                        const existingIds = new Set(prev.map(m => m.id))
-                        if (existingIds.has(errorMessage.id)) {
-                            return prev // Don't add if already exists
-                        }
-                        return [...prev, errorMessage]
-                    })
-
-                    // Reset streaming state
-                    setStreamingMessage('')
-                    setIsStreaming(false)
-
-                    // Reset loading state to allow new submissions
-                    setIsLoading(false)
-                }
-            )
-
-        } catch (err) {
-            console.error('Chat request failed:', err)
-            error('Sorry, I encountered an error. Please try again.')
-
-            const errorMessage: ChatMessage = {
-                id: (Date.now() + 1).toString(),
-                content: 'Sorry, I encountered an error. Please try again.',
-                role: 'assistant',
-                status: 'failed',
-                createdAt: new Date(),
-                updatedAt: new Date()
-            }
-            setMessages(prev => {
-                const existingIds = new Set(prev.map(m => m.id))
-                if (existingIds.has(errorMessage.id)) {
-                    return prev // Don't add if already exists
-                }
-                return [...prev, errorMessage]
-            })
-
-            // Reset all states to allow new submissions
-            setStreamingMessage('')
-            setIsStreaming(false)
-            setIsLoading(false)
-        }
-    }
-
-    const handleKeyPress = (e: React.KeyboardEvent) => {
+    const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault()
-            handleSendMessage()
+            const form = e.currentTarget.closest('form')
+            if (form) {
+                const formEvent = new Event('submit', { bubbles: true, cancelable: true }) as unknown as React.FormEvent<HTMLFormElement>
+                Object.defineProperty(formEvent, 'currentTarget', { value: form })
+                handleSubmit(formEvent)
+            }
         } else if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
-            handleSendMessage()
+            const form = e.currentTarget.closest('form')
+            if (form) {
+                const formEvent = new Event('submit', { bubbles: true, cancelable: true }) as unknown as React.FormEvent<HTMLFormElement>
+                Object.defineProperty(formEvent, 'currentTarget', { value: form })
+                handleSubmit(formEvent)
+            }
         }
-    }
+    }, [handleSubmit])
 
     const handleViewDocument = async (documentId: string) => {
         setLoadingDocument(true)
@@ -518,7 +736,6 @@ export function DatasetChatPanel({
             setPreviewDocument(document)
             setShowPreview(true)
         } catch {
-            // You could add a toast notification here
         } finally {
             setLoadingDocument(false)
         }
@@ -531,7 +748,6 @@ export function DatasetChatPanel({
 
     const handleChatSettingsChange = (newSettings: ChatSettings) => {
         setChatSettings(newSettings)
-        // Update local state immediately for UI responsiveness
         if (newSettings.provider) {
             setSelectedProvider(newSettings.provider)
         }
@@ -561,14 +777,12 @@ export function DatasetChatPanel({
     }
 
     const handleRegenerateMessage = async (messageId: string) => {
-        // Find the user message that preceded this assistant message
-        const messageIndex = messages.findIndex(m => m.id === messageId)
+        const messageIndex = displayMessages.findIndex(m => m.id === messageId)
         if (messageIndex === -1) return
 
-        // Find the previous user message
         let userMessageIndex = -1
         for (let i = messageIndex - 1; i >= 0; i--) {
-            if (messages[i].role === 'user') {
+            if (displayMessages[i].role === 'user') {
                 userMessageIndex = i
                 break
             }
@@ -576,39 +790,59 @@ export function DatasetChatPanel({
 
         if (userMessageIndex === -1) return
 
-        const userMessage = messages[userMessageIndex]
+        const userMessage = displayMessages[userMessageIndex]
 
-        // Remove the assistant message and all messages after it
-        setMessages(prev => prev.slice(0, userMessageIndex + 1))
-
-        // Set the input to the user message and trigger a new response
+        // Reset to before this message and resubmit
+        // This is complex with useChat - we might need to manage state manually here
+        // For now, just set the input and let user resubmit
         setInputValue(userMessage.content)
-
-        // Trigger a new message send
-        setTimeout(() => {
-            handleSendMessage()
-        }, 100)
     }
 
     const handleNewChat = () => {
-        // Clear current conversation and messages
         setCurrentConversation(null)
-        setConversationId(undefined)
-        setMessages([])
+        setHistoryMessages([])
         setSourceChunks([])
         setCurrentPage(1)
         setHasMoreMessages(true)
-        hasLoadedConversationRef.current = false // Reset to allow loading new conversation
+        hasLoadedConversationRef.current = false
         isLoadingConversationRef.current = false
         isLoadingMessagesRef.current = false
         isLoadingPaginationRef.current = false
         isLoadingUserSettingsRef.current = false
-        setInputValue('')
+        // Note: useChat doesn't have a direct reset method, so we'll need to handle this differently
+        // For now, we'll just clear our local state
     }
 
+    // Show error from chat
+    useEffect(() => {
+        if (chatError) {
+            error(`Chat error: ${chatError.message}`)
+        }
+    }, [chatError, error])
+
+    // Sync local input with hook input when hook clears it (after submit)
+    useEffect(() => {
+        if (hookInput === '' && localInput !== '') {
+            setLocalInput('')
+        } else if (hookInput && hookInput !== localInput && hookInput !== undefined) {
+            // Sync local input to hook input (in case hook updates from elsewhere)
+            setLocalInput(hookInput)
+        }
+    }, [hookInput, localInput])
+
+    // Clear thinking indicator when hook starts receiving messages
+    useEffect(() => {
+        if (isWaitingForResponse && aiMessages.length > 0) {
+            // Check if the last message is from assistant (response started)
+            const lastMessage = aiMessages[aiMessages.length - 1]
+            if (lastMessage && (lastMessage as any).role === 'assistant') {
+                setIsWaitingForResponse(false)
+            }
+        }
+    }, [aiMessages, isWaitingForResponse])
+
     return (
-        <div className={`h-full flex flex-col bg-white border border-gray-200 rounded-lg ${requireDocumentSelection ? '' : 'min-h-0'
-            }`}>
+        <div className={`h-full flex flex-col bg-white border border-gray-200 rounded-lg ${requireDocumentSelection ? '' : 'min-h-0'}`}>
             {/* Header */}
             <div className="h-16 px-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
                 <div>
@@ -633,7 +867,6 @@ export function DatasetChatPanel({
                         New Chat
                     </Button>
                     <ChatSettingsPopup
-                        datasetId={datasetId}
                         currentSettings={chatSettings}
                         onSettingsChange={handleChatSettingsChange}
                         onSaveSettings={handleSaveChatSettings}
@@ -644,7 +877,7 @@ export function DatasetChatPanel({
             {/* Messages */}
             <div
                 ref={messagesContainerRef}
-                className={`flex-1 overflow-y-auto p-4 space-y-4 min-h-0 ${requireDocumentSelection
+                className={`flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 min-h-0 relative ${requireDocumentSelection
                     ? 'max-h-[calc(100vh-16rem)]'
                     : 'max-h-[calc(100vh-8rem)] sm:max-h-[calc(100vh-12rem)] pb-20'
                     }`}
@@ -660,7 +893,7 @@ export function DatasetChatPanel({
                 )}
 
                 {/* No more messages indicator */}
-                {!hasMoreMessages && messages.length > 0 && (
+                {!hasMoreMessages && displayMessages.length > 0 && (
                     <div className="flex justify-center py-2">
                         <span className="text-xs text-gray-400">No more messages</span>
                     </div>
@@ -673,7 +906,7 @@ export function DatasetChatPanel({
                             <span>Loading conversation...</span>
                         </div>
                     </div>
-                ) : messages.length === 0 ? (
+                ) : displayMessages.length === 0 ? (
                     <div className="text-center text-gray-500 mt-8 px-4">
                         <Bot className="h-12 w-12 mx-auto mb-4 text-gray-300" />
                         <p className="text-lg font-medium mb-2">Start a conversation</p>
@@ -705,19 +938,17 @@ export function DatasetChatPanel({
                         </div>
                     </div>
                 ) : (
-                    messages.map((message, index) => (
+                    displayMessages.map((message, index) => (
                         <div key={`${message.id}-${index}`}>
                             <ChatMessageComponent
                                 message={message}
-                                isLast={index === messages.length - 1}
-                                onViewDocument={handleViewDocument}
-                                loadingDocument={loadingDocument}
+                                isLast={index === displayMessages.length - 1}
                                 onRegenerate={message.role === 'assistant' ? () => handleRegenerateMessage(message.id) : undefined}
                             />
 
                             {/* Show source chunks for the last assistant message */}
                             {message.role === 'assistant' &&
-                                index === messages.length - 1 &&
+                                index === displayMessages.length - 1 &&
                                 sourceChunks.length > 0 && (
                                     <div className="ml-11">
                                         <SourceChunksDisplay
@@ -731,75 +962,16 @@ export function DatasetChatPanel({
                     ))
                 )}
 
-                {isStreaming && (
-                    <div className="flex gap-3 justify-start">
-                        <div className="flex-shrink-0 w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                            <Bot className="h-4 w-4 text-blue-600" />
-                        </div>
-                        <div className="bg-gray-100 rounded-lg px-4 py-2 max-w-[80%]">
-                            {streamingMessage ? (
-                                <div className="prose prose-sm max-w-none">
-                                    <ReactMarkdown
-                                        remarkPlugins={[remarkGfm]}
-                                        components={{
-                                            code({ inline, className, children, ...props }) {
-                                                const match = /language-(\w+)/.exec(className || '')
-                                                return !inline && match ? (
-                                                    <SyntaxHighlighter
-                                                        style={oneLight}
-                                                        language={match[1]}
-                                                        PreTag="div"
-                                                        className="rounded-md"
-                                                        {...props}
-                                                    >
-                                                        {String(children).replace(/\n$/, '')}
-                                                    </SyntaxHighlighter>
-                                                ) : (
-                                                    <code className={className} {...props}>
-                                                        {children}
-                                                    </code>
-                                                )
-                                            },
-                                            a({ href, children, ...props }) {
-                                                return (
-                                                    <a
-                                                        href={href}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="text-blue-600 hover:text-blue-800 underline cursor-pointer"
-                                                        {...props}
-                                                    >
-                                                        [{children}]
-                                                    </a>
-                                                )
-                                            },
-                                        }}
-                                    >
-                                        {streamingMessage}
-                                    </ReactMarkdown>
-                                    <span className="inline-block w-2 h-4 bg-blue-600 ml-1 animate-pulse"></span>
-                                </div>
-                            ) : (
-                                <div className="flex space-x-1">
-                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )}
-
                 {/* Always keep this at the bottom for proper scrolling */}
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* Scroll to bottom button */}
+            {/* Scroll to bottom button - centered inside chat box, above input */}
             {showScrollButton && (
-                <div className="absolute bottom-20 right-6 z-20">
+                <div className="absolute bottom-16 left-1/2 transform -translate-x-1/2 z-20">
                     <button
                         onClick={scrollToBottomButton}
-                        className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-2 shadow-lg transition-colors backdrop-blur-sm"
+                        className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-2 shadow-lg transition-all backdrop-blur-sm hover:scale-105"
                         title="Scroll to bottom"
                     >
                         <ChevronDown className="h-4 w-4" />
@@ -809,28 +981,30 @@ export function DatasetChatPanel({
 
             {/* Input */}
             <div className="p-4 border-t border-gray-200 flex-shrink-0">
-                <div className="flex gap-2">
+                <form onSubmit={handleSubmit} className="flex gap-2">
                     <Input
-                        value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
-                        onKeyPress={handleKeyPress}
+                        value={input}
+                        onChange={onInputChange}
+                        onKeyDown={handleKeyDown}
                         placeholder={
                             requireDocumentSelection && (!selectedDocumentIds || selectedDocumentIds.length === 0)
                                 ? "Select documents to start chatting..."
                                 : "Ask a question about your dataset..."
                         }
-                        disabled={isLoading || isStreaming || (requireDocumentSelection && (!selectedDocumentIds || selectedDocumentIds.length === 0))}
+                        disabled={!!isStreaming || (requireDocumentSelection && (!selectedDocumentIds || selectedDocumentIds.length === 0))}
                         className="flex-1"
+                        autoComplete="off"
+                        spellCheck={false}
                     />
                     <Button
-                        onClick={handleSendMessage}
-                        disabled={!inputValue.trim() || isLoading || isStreaming || (requireDocumentSelection && (!selectedDocumentIds || selectedDocumentIds.length === 0))}
+                        type="submit"
+                        disabled={!input.trim() || !!isStreaming || (requireDocumentSelection && (!selectedDocumentIds || selectedDocumentIds.length === 0))}
                         size="sm"
                         className="px-4"
                     >
                         <Send className="h-4 w-4" />
                     </Button>
-                </div>
+                </form>
             </div>
 
             {/* Document Preview Modal */}

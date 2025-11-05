@@ -14,6 +14,7 @@ import { StepExecutionContext } from '../steps/base.step';
 import { PipelineStepRegistry } from './pipeline-step-registry.service';
 import { NodeOutputCacheService } from './node-output-cache.service';
 import { NotificationService } from '../../notification/notification.service';
+import { WORKFLOW_CONSTANTS } from '../constants/workflow.constants';
 
 export interface WorkflowExecutionContext {
   executionId: string;
@@ -72,8 +73,9 @@ export class WorkflowExecutor {
       execution.metrics = this.createInitialMetrics(workflow.nodes.length);
       execution.executionContext = {
         userId: context.userId,
-        environment: process.env.NODE_ENV || 'development',
-        version: '1.0.0',
+        environment:
+          process.env.NODE_ENV || WORKFLOW_CONSTANTS.DEFAULT_ENVIRONMENT,
+        version: WORKFLOW_CONSTANTS.VERSION,
         parameters: context.metadata || {},
       };
       await this.executionRepository.save(execution);
@@ -91,8 +93,9 @@ export class WorkflowExecutor {
         metrics: this.createInitialMetrics(workflow.nodes.length),
         executionContext: {
           userId: context.userId,
-          environment: process.env.NODE_ENV || 'development',
-          version: '1.0.0',
+          environment:
+            process.env.NODE_ENV || WORKFLOW_CONSTANTS.DEFAULT_ENVIRONMENT,
+          version: WORKFLOW_CONSTANTS.VERSION,
           parameters: context.metadata || {},
         },
       });
@@ -285,6 +288,9 @@ export class WorkflowExecutor {
           executionGraph,
           executionId,
         );
+        this.logger.log(
+          `[executeNodes] Node ${nodeInfo.node.name} will receive input: type=${Array.isArray(nodeInputData) ? 'array' : typeof nodeInputData}, length=${Array.isArray(nodeInputData) ? nodeInputData.length : 'N/A'}`,
+        );
         const result = await this.executeNode(
           nodeInfo.node,
           nodeInputData,
@@ -294,18 +300,24 @@ export class WorkflowExecutor {
         results.push(result);
         completedNodes.add(nodeId);
 
-        // Store output data using hybrid cache (memory + database)
+        // Store output data exactly as-is (no wrapping at all)
+        // Previous node output: { data: [...] } → store as { data: [...] }
+        // Previous node output: [...] → store as [...]
+        this.logger.log(
+          `[STORE] Node ${nodeInfo.node.name} (${nodeId}) outputData: type=${Array.isArray(result.outputData) ? 'array' : typeof result.outputData}, value=${JSON.stringify(result.outputData).substring(0, 200)}`,
+        );
         await this.nodeOutputCache.storeNodeOutput(
           executionId,
           nodeId,
-          result.outputData,
+          result.outputData, // Store exactly as-is, no wrapping
           nodeInfo.node.type,
         );
 
         // Also store in memory map for immediate access during execution
+        // Store the actual outputData (can be object or array) - this is what nodes use
         nodeData.set(nodeId, result.outputData);
         this.logger.log(
-          `Stored output data for node ${nodeId}: ${result.outputData.length} items`,
+          `[STORE] Stored in memory for node ${nodeId}: type=${Array.isArray(result.outputData) ? 'array' : typeof result.outputData}`,
         );
       }
     } else if (settings.executionMode === 'parallel') {
@@ -337,15 +349,16 @@ export class WorkflowExecutor {
             const nodeInfo = executionGraph.get(result.nodeId);
             const nodeType = nodeInfo?.node?.type || 'unknown';
 
-            // Store output data using hybrid cache (memory + database)
+            // Store output data exactly as-is - no wrapping
             await this.nodeOutputCache.storeNodeOutput(
               executionId,
               result.nodeId,
-              result.outputData,
+              result.outputData, // Store exactly as-is
               nodeType,
             );
 
             // Also store in memory map for immediate access during execution
+            // Store the actual outputData (can be object or array)
             nodeData.set(result.nodeId, result.outputData);
           }
         }
@@ -392,15 +405,16 @@ export class WorkflowExecutor {
             const nodeInfo = executionGraph.get(result.nodeId);
             const nodeType = nodeInfo?.node?.type || 'unknown';
 
-            // Store output data using hybrid cache (memory + database)
+            // Store output data exactly as-is - no wrapping
             await this.nodeOutputCache.storeNodeOutput(
               executionId,
               result.nodeId,
-              result.outputData,
+              result.outputData, // Store exactly as-is
               nodeType,
             );
 
             // Also store in memory map for immediate access during execution
+            // Store the actual outputData (can be object or array)
             nodeData.set(result.nodeId, result.outputData);
           }
         } else {
@@ -414,14 +428,17 @@ export class WorkflowExecutor {
           completedNodes.add(nodeId);
 
           // Store output data using hybrid cache (memory + database)
+          // Wrap in array if it's an object (for steps that return structured output)
+          // Store output data exactly as-is - no wrapping
           await this.nodeOutputCache.storeNodeOutput(
             executionId,
             nodeId,
-            result.outputData,
+            result.outputData, // Store exactly as-is
             nodeInfo.node.type,
           );
 
           // Also store in memory map for immediate access during execution
+          // Store the actual outputData (can be object or array)
           nodeData.set(nodeId, result.outputData);
         }
       }
@@ -435,7 +452,7 @@ export class WorkflowExecutor {
    */
   private async executeNode(
     node: WorkflowNode,
-    inputData: any[],
+    inputData: any, // Can be array, object, or anything - no wrapping
     context: WorkflowExecutionContext,
   ): Promise<NodeExecutionResult> {
     const startTime = new Date();
@@ -494,9 +511,14 @@ export class WorkflowExecutor {
       // Generic debug logging for node execution (only when debug level is enabled)
       this.logger.debug(`Executing node: ${node.name} (${node.type})`);
       this.logger.debug(
-        `Node ID: ${node.id}, Input data count: ${inputData.length}`,
+        `Node ID: ${node.id}, Input data: type=${inputData ? (Array.isArray(inputData) ? 'array' : typeof inputData) : 'null'}, length=${inputData && Array.isArray(inputData) ? inputData.length : 'N/A'}`,
       );
-      if (inputData.length > 0 && typeof inputData[0] === 'object') {
+      if (
+        inputData &&
+        Array.isArray(inputData) &&
+        inputData.length > 0 &&
+        typeof inputData[0] === 'object'
+      ) {
         this.logger.debug(
           `First input item keys: ${Object.keys(inputData[0]).join(', ')}`,
         );
@@ -544,19 +566,45 @@ export class WorkflowExecutor {
         }
       }
 
-      // Create snapshot
-      // Store inputData without wrapper for all node types
-      let snapshotInputData: any;
-      if (inputData.length === 1 && typeof inputData[0] === 'object') {
-        // Store single object directly without wrapper
-        snapshotInputData = inputData[0];
-      } else {
-        // Store array directly without wrapper
-        snapshotInputData = inputData;
-      }
+      // Create snapshot - store inputData exactly as received (no extraction)
+      // Store as-is: object stays object, array stays array
+      const snapshotInputData: any = inputData;
+
+      this.logger.log(
+        `[executeNode] Input data for snapshot: type=${Array.isArray(inputData) ? 'array' : typeof inputData}, length=${Array.isArray(inputData) ? inputData.length : 'N/A'}, value=${JSON.stringify(inputData).substring(0, 300)}`,
+      );
 
       // Use step's formatOutput method to format the output
       const formattedOutputData = stepInstance.formatOutput(result, inputData);
+
+      // Debug logging for post_deleter to see what formatOutput returns
+      if (node.type === 'post_deleter') {
+        this.logger.log(
+          `[Post Deleter Debug] formattedOutputData type: ${Array.isArray(formattedOutputData) ? 'array' : typeof formattedOutputData}, value: ${JSON.stringify(formattedOutputData).substring(0, WORKFLOW_CONSTANTS.PREVIEW_LENGTH_MEDIUM)}`,
+        );
+        this.logger.log(
+          `[Post Deleter Debug] result.outputSegments length: ${result.outputSegments?.length || 0}`,
+        );
+      }
+
+      // Ensure we never store an empty array - always use formatted output
+      // For post_deleter, formatOutput should always return an object
+      let finalOutputData = formattedOutputData;
+      if (
+        node.type === 'post_deleter' &&
+        Array.isArray(formattedOutputData) &&
+        formattedOutputData.length === 0
+      ) {
+        this.logger.warn(
+          `[Post Deleter] formatOutput returned empty array, using default structure`,
+        );
+        finalOutputData = {
+          deleted: 0,
+          requested: 0,
+          failed: 0,
+          postIds: [],
+        };
+      }
 
       const snapshot: NodeExecutionSnapshot = {
         nodeId: node.id,
@@ -567,7 +615,7 @@ export class WorkflowExecutor {
         durationMs: duration,
         status: result.success ? 'completed' : 'failed',
         inputData: snapshotInputData,
-        outputData: formattedOutputData,
+        outputData: finalOutputData,
         metrics: {
           processingTime: duration,
           memoryUsage: process.memoryUsage().heapUsed,
@@ -575,7 +623,7 @@ export class WorkflowExecutor {
           dataSize: JSON.stringify(inputData).length,
         },
         error: result.error,
-        progress: 100,
+        progress: WORKFLOW_CONSTANTS.PROGRESS_COMPLETE,
       };
 
       // Persist snapshot incrementally so frontend can open node details immediately
@@ -618,8 +666,28 @@ export class WorkflowExecutor {
       // Store the formatted output directly without wrapping
       let outputDataForStorage: any;
 
-      if (Array.isArray(formattedOutputData)) {
-        // Already an array - use as-is
+      // For post_deleter, always use formattedOutputData (should be an object, never array)
+      if (node.type === 'post_deleter') {
+        if (
+          Array.isArray(formattedOutputData) &&
+          formattedOutputData.length === 0
+        ) {
+          // Fallback if somehow formatOutput returned empty array
+          this.logger.warn(
+            `[Post Deleter] formatOutput returned empty array, using default structure`,
+          );
+          outputDataForStorage = {
+            deleted: 0,
+            requested: 0,
+            failed: 0,
+            postIds: [],
+          };
+        } else {
+          // Use formatted output directly (should be object)
+          outputDataForStorage = formattedOutputData;
+        }
+      } else if (Array.isArray(formattedOutputData)) {
+        // Already an array - use as-is (for other step types)
         outputDataForStorage = formattedOutputData;
       } else if (
         formattedOutputData &&
@@ -629,7 +697,7 @@ export class WorkflowExecutor {
         // Store directly without wrapping
         outputDataForStorage = formattedOutputData;
       } else {
-        // Fallback to raw segments
+        // Fallback to raw segments (but never for post_deleter)
         outputDataForStorage = result.outputSegments || [];
       }
 
@@ -645,15 +713,8 @@ export class WorkflowExecutor {
     } catch (error) {
       this.logger.error(`Node execution failed: ${node.name}`, error);
 
-      // Store inputData without wrapper for all node types
-      let errorSnapshotInputData: any;
-      if (inputData.length === 1 && typeof inputData[0] === 'object') {
-        // Store single object directly without wrapper
-        errorSnapshotInputData = inputData[0];
-      } else {
-        // Store array directly without wrapper
-        errorSnapshotInputData = inputData;
-      }
+      // Store inputData exactly as-is (no extraction)
+      const errorSnapshotInputData: any = inputData;
 
       const snapshot: NodeExecutionSnapshot = {
         nodeId: node.id,
@@ -728,111 +789,190 @@ export class WorkflowExecutor {
    */
   private async getNodeInputData(
     nodeInfo: any,
-    nodeData: Map<string, any[]>,
+    nodeData: Map<string, any>, // Changed to any to reflect direct storage
     executionGraph: Map<string, any>,
     executionId: string,
-  ): Promise<any[]> {
+  ): Promise<any> {
+    // Returns any type - array, object, or primitive - no wrapping
     const node = nodeInfo.node;
-    let inputData: any[] = [];
+    let inputData: any = null; // Can be array, object, or anything - no default wrapping
 
-    this.logger.log(`Getting input data for node: ${node.name} (${node.id})`);
     this.logger.log(
-      `Node inputSources:`,
-      JSON.stringify(node.inputSources || [], null, 2),
+      `[getNodeInputData] Getting input data for node: ${node.name} (${node.id})`,
     );
-    this.logger.log(`Available nodeData keys:`, Array.from(nodeData.keys()));
+    this.logger.log(
+      `[getNodeInputData] Node inputSources:`,
+      JSON.stringify(
+        node.inputSources || [],
+        null,
+        WORKFLOW_CONSTANTS.JSON_INDENTATION,
+      ),
+    );
+    this.logger.log(
+      `[getNodeInputData] NodeInfo.dependencies:`,
+      JSON.stringify(nodeInfo.dependencies || [], null, 2),
+    );
+    this.logger.log(
+      `[getNodeInputData] Available nodeData keys:`,
+      Array.from(nodeData.keys()),
+    );
+
+    // If node doesn't have inputSources configured, derive from execution graph dependencies
+    let inputSources = node.inputSources || [];
+    if (!inputSources || inputSources.length === 0) {
+      const dependencies = nodeInfo.dependencies || [];
+      this.logger.log(
+        `[${node.name}] Node has no inputSources configured. Checking dependencies: ${dependencies.length} dependencies found`,
+      );
+      if (dependencies.length > 0) {
+        this.logger.log(
+          `[${node.name}] Dependencies: ${dependencies.join(', ')}`,
+        );
+        // Create inputSources from dependencies
+        inputSources = dependencies.map((depNodeId: string) => ({
+          type: 'previous_node' as const,
+          nodeId: depNodeId,
+        }));
+        this.logger.log(
+          `[${node.name}] Created ${inputSources.length} inputSources from dependencies`,
+        );
+      } else {
+        this.logger.warn(
+          `[${node.name}] No inputSources configured AND no dependencies found in execution graph. Node will receive empty input.`,
+        );
+      }
+    } else {
+      this.logger.log(
+        `[${node.name}] Node has ${inputSources.length} inputSources configured`,
+      );
+    }
 
     // Process input sources
-    if (node.inputSources && Array.isArray(node.inputSources)) {
-      for (const inputSource of node.inputSources) {
+    if (inputSources && Array.isArray(inputSources)) {
+      for (const inputSource of inputSources) {
         this.logger.log(
           `Processing input source:`,
-          JSON.stringify(inputSource, null, 2),
+          JSON.stringify(
+            inputSource,
+            null,
+            WORKFLOW_CONSTANTS.JSON_INDENTATION,
+          ),
         );
         switch (inputSource.type) {
           case 'previous_node':
             if (inputSource.nodeId) {
-              // Try memory cache first
+              this.logger.log(
+                `[${node.name}] Looking for previous node output: ${inputSource.nodeId}`,
+              );
+              // Try memory cache first (stores outputData directly, not wrapped)
               let data = nodeData.get(inputSource.nodeId);
+              this.logger.log(
+                `[${node.name}] Memory cache check for ${inputSource.nodeId}: ${data ? 'found' : 'not found'}`,
+              );
+              if (data) {
+                this.logger.log(
+                  `[${node.name}] Memory cache data: type=${Array.isArray(data) ? 'array' : typeof data}, length=${Array.isArray(data) ? data.length : 'N/A'}, keys=${typeof data === 'object' && data !== null && !Array.isArray(data) ? Object.keys(data).join(', ') : 'N/A'}, value=${JSON.stringify(data).substring(0, 200)}`,
+                );
+              }
 
               // If not in memory, try cache service (which includes database)
               if (!data) {
+                this.logger.log(
+                  `[${node.name}] Checking database cache for ${inputSource.nodeId}`,
+                );
                 data = await this.nodeOutputCache.getNodeOutput(
                   executionId,
                   inputSource.nodeId,
                 );
-              }
-
-              // Extract the actual segments array if data is a transformed object
-              let segments: any[] = [];
-              if (data) {
-                if (Array.isArray(data)) {
-                  // Pass array as-is (preserves structure if it contains objects with metadata fields)
-                  segments = data;
-                } else if (
-                  typeof data === 'object' &&
-                  'count' in data &&
-                  'sample' in data &&
-                  Array.isArray((data as any).sample) &&
-                  (data as any).sample.length > 0
-                ) {
-                  // {count, sample, schema} structure - extract sample[0] if it's a structured object
-                  // This preserves structure from previous nodes that output metadata
-                  const sampleItem = (data as any).sample[0];
-                  if (
-                    sampleItem &&
-                    typeof sampleItem === 'object' &&
-                    ('data' in sampleItem ||
-                      'total' in sampleItem ||
-                      'duplicates' in sampleItem)
-                  ) {
-                    // Structured object - extract it
-                    segments = [sampleItem];
-                  } else {
-                    // For other nodes, pass the wrapped structure
-                    segments = [data];
-                  }
-                } else if (
-                  typeof data === 'object' &&
-                  'items' in data &&
-                  Array.isArray((data as any).items)
-                ) {
-                  // Transformed output format like { items: [...], count: X, ... }
-                  // Pass the full wrapped object to preserve structure for the next node
-                  segments = [data];
-                } else if (
-                  typeof data === 'object' &&
-                  'data' in data &&
-                  Array.isArray((data as any).data)
-                ) {
-                  // Raw structure with data field like { total: X, data: [...] }
-                  // Pass the complete structure to maintain structure
-                  segments = [data];
-                } else {
-                  // Fallback: treat entire object as single item
-                  segments = [data];
+                if (data) {
+                  this.logger.log(
+                    `[${node.name}] Database cache returned: type=${Array.isArray(data) ? 'array' : typeof data}, keys=${typeof data === 'object' && data !== null && !Array.isArray(data) ? Object.keys(data).join(', ') : 'N/A'}, value=${JSON.stringify(data).substring(0, 200)}`,
+                  );
                 }
+                this.logger.log(
+                  `[${node.name}] Database cache check for ${inputSource.nodeId}: ${data ? 'found' : 'not found'}`,
+                );
               }
 
-              if (segments && segments.length > 0) {
+              // NO EXTRACTION, NO WRAPPING - Just pass data exactly as-is
+              // Previous output is object? Pass object. Array? Pass array. Store as-is, pass as-is.
+              if (data) {
                 this.logger.log(
-                  `Found data from previous node ${inputSource.nodeId}:`,
-                  segments.length,
-                  'items',
+                  `[${node.name}] Data from cache: type=${Array.isArray(data) ? 'array' : typeof data}, length=${Array.isArray(data) ? data.length : 'N/A'}`,
                 );
-                if (inputSource.filters) {
-                  inputData = inputData.concat(
-                    this.applyFilters(segments, inputSource.filters),
+                // Pass data exactly as-is - no wrapping at all
+                // If this is the first input source, use data directly
+                if (inputData === null || inputData === undefined) {
+                  inputData = data;
+                  this.logger.log(
+                    `[${node.name}] First input source - using data directly: type=${Array.isArray(inputData) ? 'array' : typeof inputData}`,
                   );
                 } else {
-                  inputData = inputData.concat(segments);
+                  // Multiple input sources - need to combine them
+                  // Strategy: Extract arrays from objects and concatenate, or merge objects
+                  this.logger.log(
+                    `[${node.name}] Multiple input sources - combining: existing type=${Array.isArray(inputData) ? 'array' : typeof inputData}, new type=${Array.isArray(data) ? 'array' : typeof data}`,
+                  );
+
+                  // Helper to extract array from object or return array as-is
+                  const extractArray = (value: any): any[] => {
+                    if (Array.isArray(value)) {
+                      return value;
+                    }
+                    if (typeof value === 'object' && value !== null) {
+                      // Look for common array properties
+                      for (const key of [
+                        'data',
+                        'items',
+                        'results',
+                        'segments',
+                      ]) {
+                        if (Array.isArray(value[key])) {
+                          return value[key];
+                        }
+                      }
+                      // If no array found, return empty (object structure doesn't match)
+                      return [];
+                    }
+                    return [];
+                  };
+
+                  const inputArray = extractArray(inputData);
+                  const dataArray = extractArray(data);
+
+                  if (inputArray.length > 0 || dataArray.length > 0) {
+                    // Both have extractable arrays - concatenate them
+                    inputData = inputArray.concat(dataArray);
+                    this.logger.log(
+                      `[${node.name}] Combined ${inputArray.length} + ${dataArray.length} = ${inputData.length} items from arrays`,
+                    );
+                  } else {
+                    // Neither is an array or has extractable arrays - merge objects
+                    if (
+                      typeof inputData === 'object' &&
+                      inputData !== null &&
+                      typeof data === 'object' &&
+                      data !== null
+                    ) {
+                      inputData = { ...inputData, ...data };
+                      this.logger.log(
+                        `[${node.name}] Merged objects (keys: ${Object.keys(inputData).join(', ')})`,
+                      );
+                    } else {
+                      // Fallback: wrap in array (shouldn't happen often)
+                      inputData = [inputData, data];
+                      this.logger.warn(
+                        `[${node.name}] Could not extract arrays or merge objects, wrapped in array`,
+                      );
+                    }
+                  }
                 }
                 this.logger.log(
-                  `Added to input data. Current length: ${inputData.length}`,
+                  `[${node.name}] Passing to step: type=${Array.isArray(inputData) ? 'array' : typeof inputData}, length=${Array.isArray(inputData) ? inputData.length : 'N/A'}, value=${JSON.stringify(inputData).substring(0, 200)}`,
                 );
               } else {
                 this.logger.warn(
-                  `No data found for previous node ${inputSource.nodeId}`,
+                  `[${node.name}] No data found from previous node ${inputSource.nodeId}`,
                 );
               }
             }
@@ -865,9 +1005,22 @@ export class WorkflowExecutor {
       inputData = this.applyDataMapping(inputData, node.inputSources);
     }
 
+    // If inputData is still null, return empty array (steps expect input, even if empty)
+    if (inputData === null || inputData === undefined) {
+      this.logger.warn(
+        `[getNodeInputData] WARNING: Node ${node.name} (${node.id}) received null/undefined input! Returning empty array. Check if previous node output exists and dependencies are correct.`,
+      );
+      return [];
+    }
+
     this.logger.log(
-      `Final input data for node ${node.name}: ${inputData.length} items`,
+      `[getNodeInputData] Final input data for node ${node.name}: type=${Array.isArray(inputData) ? 'array' : typeof inputData}, length=${Array.isArray(inputData) ? inputData.length : 'N/A'}`,
     );
+    if (Array.isArray(inputData) && inputData.length === 0) {
+      this.logger.warn(
+        `[getNodeInputData] WARNING: Node ${node.name} (${node.id}) received empty array! Check if previous node output exists and dependencies are correct.`,
+      );
+    }
     return inputData;
   }
 
@@ -1061,14 +1214,19 @@ export class WorkflowExecutor {
       results.length > 0 ? totalDuration / results.length : 0;
 
     const totalDataProcessed = results.reduce(
-      (sum, r) => sum + r.inputData.length,
+      (sum, r) =>
+        sum +
+        (Array.isArray(r.inputData) ? r.inputData.length : r.inputData ? 1 : 0),
       0,
     );
     const peakMemoryUsage = Math.max(
       ...results.map((r) => r.snapshot.metrics.memoryUsage || 0),
     );
     const dataThroughput =
-      totalDuration > 0 ? totalDataProcessed / (totalDuration / 1000) : 0;
+      totalDuration > 0
+        ? totalDataProcessed /
+          (totalDuration / WORKFLOW_CONSTANTS.MS_TO_SECONDS)
+        : 0;
 
     return {
       totalNodes: results.length,
