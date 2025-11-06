@@ -65,8 +65,8 @@ function DatasetDetailContent() {
         const fetchDocuments = async () => {
             try {
                 setDocumentsLoading(true)
-                const docs = await documentApi.getByDataset(datasetId)
-                setDocuments(docs)
+                const result = await documentApi.getByDataset(datasetId, 1, 20)
+                setDocuments(result.data)
             } catch (err) {
                 console.error('Failed to load documents:', err)
             } finally {
@@ -103,8 +103,8 @@ function DatasetDetailContent() {
             if (hasProcessingDocuments()) {
                 pollingIntervalRef.current = setInterval(async () => {
                     try {
-                        const docs = await documentApi.getByDataset(datasetId)
-                        setDocuments(docs)
+                        const result = await documentApi.getByDataset(datasetId, 1, 20)
+                        setDocuments(result.data)
                     } catch (err) {
                         console.error('Failed to refresh documents during polling:', err)
                     }
@@ -145,8 +145,8 @@ function DatasetDetailContent() {
                 // Page is visible and has processing documents, resume polling
                 pollingIntervalRef.current = setInterval(async () => {
                     try {
-                        const docs = await documentApi.getByDataset(datasetId)
-                        setDocuments(docs)
+                        const result = await documentApi.getByDataset(datasetId, 1, 20)
+                        setDocuments(result.data)
                     } catch (err) {
                         console.error('Failed to refresh documents during polling:', err)
                     }

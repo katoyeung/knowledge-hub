@@ -51,9 +51,6 @@ export enum EventTypes {
   DOCUMENT_EMBEDDING_STARTED = 'document.embedding.started',
   DOCUMENT_EMBEDDING_COMPLETED = 'document.embedding.completed',
   DOCUMENT_EMBEDDING_FAILED = 'document.embedding.failed',
-  DOCUMENT_NER_STARTED = 'document.ner.started',
-  DOCUMENT_NER_COMPLETED = 'document.ner.completed',
-  DOCUMENT_NER_FAILED = 'document.ner.failed',
 
   // Entity Learning Events
   ENTITY_LEARNING_STARTED = 'entity.learning.started',

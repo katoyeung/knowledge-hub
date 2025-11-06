@@ -29,7 +29,6 @@ export interface EmbeddingJobData {
     enableParentChildChunking?: boolean;
     useModelDefaults?: boolean;
   };
-  nerEnabled?: boolean;
   segmentIds?: string[];
 }
 
@@ -54,14 +53,7 @@ export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
   }
 
   async process(data: EmbeddingJobData): Promise<void> {
-    const {
-      documentId,
-      datasetId,
-      userId,
-      embeddingConfig,
-      nerEnabled = false,
-      segmentIds,
-    } = data;
+    const { documentId, datasetId, userId, embeddingConfig, segmentIds } = data;
 
     this.logger.log(
       `[EMBEDDING] Starting embedding generation for document ${documentId}`,
@@ -107,7 +99,7 @@ export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
         this.logger.log(
           `[EMBEDDING] All segments already embedded for document ${documentId}`,
         );
-        await this.completeEmbeddingStage(documentId, datasetId, nerEnabled);
+        await this.completeEmbeddingStage(documentId, datasetId);
         return;
       }
 
@@ -159,7 +151,7 @@ export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
         embeddingModel: embeddingConfig.model,
         embeddingDimensions: embeddingDimensions,
         processingMetadata: {
-          currentStage: nerEnabled ? 'ner' : 'completed',
+          currentStage: 'completed',
           embedding: {
             startedAt: new Date(),
             completedAt: new Date(),
@@ -190,7 +182,7 @@ export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
       );
 
       // Complete embedding stage and dispatch next job
-      await this.completeEmbeddingStage(documentId, datasetId, nerEnabled);
+      await this.completeEmbeddingStage(documentId, datasetId);
     } catch (error) {
       this.logger.error(
         `[EMBEDDING] Failed to process document ${documentId}:`,
@@ -222,7 +214,6 @@ export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
   private async completeEmbeddingStage(
     documentId: string,
     datasetId: string,
-    nerEnabled: boolean,
   ): Promise<void> {
     // Update document status to embedded
     await this.documentRepository.update(documentId, {
@@ -241,7 +232,7 @@ export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
 
     // Update processing metadata
     await this.updateProcessingMetadata(documentId, {
-      currentStage: nerEnabled ? 'ner' : 'completed',
+      currentStage: 'completed',
       embedding: {
         startedAt: new Date(),
         completedAt: new Date(),
@@ -260,80 +251,67 @@ export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
       },
     });
 
-    if (nerEnabled) {
-      // Dispatch NER job
-      await this.jobDispatcher.dispatch('ner', {
+    // Check if all segments are properly embedded before marking as completed
+    const remainingSegments = await this.segmentRepository.find({
+      where: {
         documentId,
-        datasetId,
-      });
-      this.logger.log(
-        `[EMBEDDING] Dispatched NER job for document ${documentId}`,
+        status: In(['embedding', 'waiting', 'chunked']),
+      },
+    });
+
+    if (remainingSegments.length > 0) {
+      this.logger.warn(
+        `[EMBEDDING] Document ${documentId} has ${remainingSegments.length} segments still processing. Not marking as completed.`,
       );
-    } else {
-      // Check if all segments are properly embedded before marking as completed
-      const remainingSegments = await this.segmentRepository.find({
-        where: {
-          documentId,
-          status: In(['embedding', 'waiting', 'chunked']),
-        },
-      });
 
-      if (remainingSegments.length > 0) {
-        this.logger.warn(
-          `[EMBEDDING] Document ${documentId} has ${remainingSegments.length} segments still processing. Not marking as completed.`,
-        );
-
-        // Mark document as embedding_failed due to incomplete segments
-        await this.documentRepository.update(documentId, {
-          indexingStatus: 'embedding_failed',
-          error: `${remainingSegments.length} segments failed to embed properly`,
-          stoppedAt: new Date(),
-        });
-
-        // Send notification that embedding failed
-        this.notificationService.sendDocumentProcessingUpdate(
-          documentId,
-          datasetId,
-          {
-            status: 'embedding_failed',
-            message: `${remainingSegments.length} segments failed to embed properly`,
-          },
-        );
-
-        throw new Error(
-          `Document processing failed: ${remainingSegments.length} segments did not complete embedding`,
-        );
-      }
-
-      // All segments are embedded, mark document as completed
+      // Mark document as embedding_failed due to incomplete segments
       await this.documentRepository.update(documentId, {
-        indexingStatus: 'completed',
-        completedAt: new Date(),
+        indexingStatus: 'embedding_failed',
+        error: `${remainingSegments.length} segments failed to embed properly`,
+        stoppedAt: new Date(),
       });
 
-      // Send notification that processing completed
+      // Send notification that embedding failed
       this.notificationService.sendDocumentProcessingUpdate(
         documentId,
         datasetId,
         {
-          status: 'completed',
-          message: 'Document processing completed',
+          status: 'embedding_failed',
+          message: `${remainingSegments.length} segments failed to embed properly`,
         },
       );
 
-      this.eventBus.publish({
-        type: EventTypes.DOCUMENT_PROCESSING_COMPLETED,
-        timestamp: Date.now(),
-        payload: {
-          documentId,
-          datasetId,
-        },
-      });
-
-      this.logger.log(
-        `[EMBEDDING] Document ${documentId} processing completed`,
+      throw new Error(
+        `Document processing failed: ${remainingSegments.length} segments did not complete embedding`,
       );
     }
+
+    // All segments are embedded, mark document as completed
+    await this.documentRepository.update(documentId, {
+      indexingStatus: 'completed',
+      completedAt: new Date(),
+    });
+
+    // Send notification that processing completed
+    this.notificationService.sendDocumentProcessingUpdate(
+      documentId,
+      datasetId,
+      {
+        status: 'completed',
+        message: 'Document processing completed',
+      },
+    );
+
+    this.eventBus.publish({
+      type: EventTypes.DOCUMENT_PROCESSING_COMPLETED,
+      timestamp: Date.now(),
+      payload: {
+        documentId,
+        datasetId,
+      },
+    });
+
+    this.logger.log(`[EMBEDDING] Document ${documentId} processing completed`);
   }
 
   private async updateProcessingMetadata(

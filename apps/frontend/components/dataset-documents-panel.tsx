@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2, RotateCcw, Network, Play } from 'lucide-react'
+import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2, RotateCcw, Network, Play, Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { documentApi, datasetApi, queueApi, type Document, type Dataset } from '@/lib/api'
+import { documentApi, datasetApi, queueApi, documentSegmentApi, type Document, type Dataset } from '@/lib/api'
 import { DocumentPreviewModal } from './document-preview-modal'
 import { DatasetDocumentUploadModal } from './dataset-document-upload-modal'
 import { useDocumentProcessingNotifications, useGraphExtractionNotifications } from '@/lib/hooks/use-notifications'
@@ -32,7 +32,12 @@ export function DatasetDocumentsPanel({
 }: DatasetDocumentsPanelProps) {
     const [documents, setDocuments] = useState<Document[]>([])
     const [loading, setLoading] = useState(true)
+    const [loadingMore, setLoadingMore] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const [page, setPage] = useState(1)
+    const [hasMore, setHasMore] = useState(true)
+    const [total, setTotal] = useState(0)
+    const scrollContainerRef = useRef<HTMLDivElement>(null)
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editName, setEditName] = useState('')
     const [showAddDocument, setShowAddDocument] = useState(false)
@@ -40,6 +45,7 @@ export function DatasetDocumentsPanel({
     const [previewDocument, setPreviewDocument] = useState<Document | null>(null)
     const [showPreview, setShowPreview] = useState(false)
     const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
+    const [showSelectAllDropdown, setShowSelectAllDropdown] = useState(false)
     const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set())
     const [extractingGraphs, setExtractingGraphs] = useState<Set<string>>(new Set())
     const [resumingJobs, setResumingJobs] = useState(false)
@@ -47,36 +53,10 @@ export function DatasetDocumentsPanel({
     const hasUserInteracted = useRef<boolean>(false)
     const lastNotifiedSelectedDocs = useRef<Set<string>>(new Set())
     const toast = useToast()
+    const [documentLastUpdated, setDocumentLastUpdated] = useState<Map<string, string>>(new Map())
+    const [documentSegmentCounts, setDocumentSegmentCounts] = useState<Map<string, number>>(new Map())
+    const [searchQuery, setSearchQuery] = useState('')
 
-    // Helper function to get status display information
-    const getStatusInfo = (status: string) => {
-        switch (status) {
-            case 'waiting':
-                return { text: 'Waiting', color: 'text-gray-500', bgColor: 'bg-gray-100' }
-            case 'chunking':
-                return { text: 'Chunking', color: 'text-blue-600', bgColor: 'bg-blue-100' }
-            case 'chunked':
-                return { text: 'Chunked', color: 'text-blue-600', bgColor: 'bg-blue-100' }
-            case 'embedding':
-                return { text: 'Embedding', color: 'text-purple-600', bgColor: 'bg-purple-100' }
-            case 'embedded':
-                return { text: 'Embedded', color: 'text-purple-600', bgColor: 'bg-purple-100' }
-            case 'ner_processing':
-                return { text: 'NER Processing', color: 'text-orange-600', bgColor: 'bg-orange-100' }
-            case 'completed':
-                return { text: 'Completed', color: 'text-green-600', bgColor: 'bg-green-100' }
-            case 'chunking_failed':
-                return { text: 'Chunking Failed', color: 'text-red-600', bgColor: 'bg-red-100' }
-            case 'embedding_failed':
-                return { text: 'Embedding Failed', color: 'text-red-600', bgColor: 'bg-red-100' }
-            case 'ner_failed':
-                return { text: 'NER Failed', color: 'text-red-600', bgColor: 'bg-red-100' }
-            case 'error':
-                return { text: 'Error', color: 'text-red-600', bgColor: 'bg-red-100' }
-            default:
-                return { text: status, color: 'text-gray-500', bgColor: 'bg-gray-100' }
-        }
-    }
 
     // Handle document processing notifications
     const handleDocumentProcessingUpdate = useCallback((notification: { documentId: string; status: string; wordCount?: number; embeddingDimensions?: number }) => {
@@ -130,6 +110,8 @@ export function DatasetDocumentsPanel({
     const handleUploadSuccess = useCallback((newDocuments: Document[]) => {
         // Add new documents to the list
         setDocuments(prev => [...prev, ...newDocuments])
+        // Update total count
+        setTotal(prev => prev + newDocuments.length)
 
         // Don't auto-select immediately - wait for processing to complete
         // Auto-selection will happen via notification handler when status becomes 'completed'
@@ -139,42 +121,238 @@ export function DatasetDocumentsPanel({
     }, [])
 
     // Set up notifications for this dataset
-    useDocumentProcessingNotifications(datasetId, handleDocumentProcessingUpdate)
-    useGraphExtractionNotifications(datasetId, handleGraphExtractionUpdate)
+    const { getDocumentProcessingNotifications } = useDocumentProcessingNotifications()
+    const { getGraphExtractionNotifications } = useGraphExtractionNotifications()
 
-    const loadDocuments = useCallback(async () => {
+    // Listen for document processing notifications
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const notifications = getDocumentProcessingNotifications(datasetId)
+            notifications.forEach((notification) => {
+                if (notification.data?.documentId) {
+                    handleDocumentProcessingUpdate(notification.data)
+                }
+            })
+        }, 1000)
+
+        return () => clearInterval(interval)
+    }, [datasetId, getDocumentProcessingNotifications, handleDocumentProcessingUpdate])
+
+    // Listen for graph extraction notifications
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const notifications = getGraphExtractionNotifications(datasetId)
+            notifications.forEach((notification) => {
+                if (notification.data?.documentId) {
+                    handleGraphExtractionUpdate(notification.data)
+                }
+            })
+        }, 1000)
+
+        return () => clearInterval(interval)
+    }, [datasetId, getGraphExtractionNotifications, handleGraphExtractionUpdate])
+
+    const fetchLatestSegmentTime = useCallback(async (documentId: string): Promise<string | null> => {
         try {
-            setLoading(true)
+            // Fetch segments for this document, sorted by createdAt descending
+            const segments = await documentSegmentApi.getByDocument(documentId)
+            if (segments && segments.length > 0) {
+                // Sort by createdAt descending and get the latest
+                const sorted = [...segments].sort((a, b) => {
+                    const dateA = new Date(a.createdAt).getTime()
+                    const dateB = new Date(b.createdAt).getTime()
+                    return dateB - dateA
+                })
+                return sorted[0].createdAt
+            }
+            return null
+        } catch (err) {
+            console.error(`Failed to fetch segments for document ${documentId}:`, err)
+            return null
+        }
+    }, [])
+
+    const fetchSegmentCount = useCallback(async (documentId: string): Promise<number | null> => {
+        try {
+            // Use status-counts endpoint which returns totalSegments
+            const result = await documentSegmentApi.getDocumentStatusCounts(documentId)
+            const count = result?.totalSegments ?? 0
+            return count
+        } catch (err) {
+            console.error(`Failed to fetch segment count for document ${documentId}:`, err)
+            // Fallback: try to get count from segments array
+            try {
+                const segments = await documentSegmentApi.getByDocument(documentId)
+                return segments?.length || 0
+            } catch (fallbackErr) {
+                console.error(`Failed to fetch segments as fallback for document ${documentId}:`, fallbackErr)
+                return null
+            }
+        }
+    }, [])
+
+    const loadDocuments = useCallback(async (pageNum: number = 1, append: boolean = false) => {
+        try {
+            if (append) {
+                setLoadingMore(true)
+            } else {
+                setLoading(true)
+            }
             setError(null)
-            const docs = await documentApi.getByDataset(datasetId)
-            setDocuments(docs)
+            const result = await documentApi.getByDataset(datasetId, pageNum, 20)
+
+            if (append) {
+                // Use functional update to access previous state
+                setDocuments(prev => {
+                    const allLoaded = [...prev, ...result.data]
+                    const allLoadedCount = allLoaded.length
+                    // Calculate hasMore: we have more if loaded count is less than total
+                    const hasMorePages = allLoadedCount < result.total
+                    setHasMore(hasMorePages)
+                    return allLoaded
+                })
+
+                // Auto-select newly loaded documents if user hasn't interacted
+                if (!hasUserInteracted.current) {
+                    const newDocumentIds = result.data.map(doc => doc.id)
+                    setSelectedDocuments(prev => {
+                        const newSet = new Set(prev)
+                        newDocumentIds.forEach(id => newSet.add(id))
+                        return newSet
+                    })
+                }
+            } else {
+                const currentLoadedCount = result.data.length
+                setDocuments(result.data)
+                // Calculate hasMore: we have more if loaded count is less than total
+                const hasMorePages = currentLoadedCount < result.total
+                setHasMore(hasMorePages)
+            }
+
+            // Always update total from API response (it's the source of truth)
+            setTotal(result.total)
+            setPage(result.page)
+
+            // Fetch latest segment time and segment count for each document
+            const newDocuments = append ? result.data : result.data
+            const updatedTimes = new Map<string, string>()
+            const segmentCounts = new Map<string, number>()
+            await Promise.all(
+                newDocuments.map(async (doc: Document) => {
+                    const [latestTime, segmentCount] = await Promise.all([
+                        fetchLatestSegmentTime(doc.id),
+                        fetchSegmentCount(doc.id)
+                    ])
+                    if (latestTime) {
+                        updatedTimes.set(doc.id, latestTime)
+                    }
+                    // Always set segment count, even if 0 (null means fetch failed)
+                    if (segmentCount !== null) {
+                        segmentCounts.set(doc.id, segmentCount)
+                    } else {
+                        // Set to 0 if fetch failed to show placeholder
+                        segmentCounts.set(doc.id, 0)
+                    }
+                })
+            )
+            setDocumentLastUpdated(prev => {
+                const merged = new Map(prev)
+                updatedTimes.forEach((value, key) => merged.set(key, value))
+                return merged
+            })
+            setDocumentSegmentCounts(prev => {
+                const merged = new Map(prev)
+                segmentCounts.forEach((value, key) => merged.set(key, value))
+                return merged
+            })
         } catch (err) {
             console.error('Failed to load documents:', err)
             setError('Failed to load documents')
         } finally {
             setLoading(false)
+            setLoadingMore(false)
         }
-    }, [datasetId])
+    }, [datasetId, fetchLatestSegmentTime, fetchSegmentCount])
+
+    // Load more documents when scrolling to bottom
+    const loadMoreDocuments = useCallback(() => {
+        if (!loadingMore && hasMore) {
+            loadDocuments(page + 1, true)
+        }
+    }, [page, hasMore, loadingMore, loadDocuments])
+
+    // Removed auto-scroll loading - now using manual "Show more" button
 
     // Use props if provided, otherwise load documents
     useEffect(() => {
         if (propDocuments !== undefined) {
             setDocuments(propDocuments)
             setLoading(propLoading || false)
-        } else {
-            loadDocuments()
-        }
-    }, [propDocuments, propLoading, loadDocuments])
+            // Reset pagination state when using props
+            setPage(1)
+            // Fetch total count from API to get accurate total across all pages
+            documentApi.getByDataset(datasetId, 1, 1).then(result => {
+                setTotal(result.total)
+                // Calculate hasMore based on propDocuments length vs total
+                const hasMorePages = propDocuments.length < result.total
+                setHasMore(hasMorePages)
+            }).catch(err => {
+                console.error('Failed to fetch total count:', err)
+                // Fallback to current page length if API fails
+                setTotal(propDocuments.length)
+                setHasMore(false)
+            })
 
-    // Auto-select completed documents when documents first load (only if user hasn't interacted)
+            // Fetch segment counts for propDocuments
+            const updatedTimes = new Map<string, string>()
+            const segmentCounts = new Map<string, number>()
+            Promise.all(
+                propDocuments.map(async (doc: Document) => {
+                    const [latestTime, segmentCount] = await Promise.all([
+                        fetchLatestSegmentTime(doc.id),
+                        fetchSegmentCount(doc.id)
+                    ])
+                    if (latestTime) {
+                        updatedTimes.set(doc.id, latestTime)
+                    }
+                    // Always set segment count, even if 0 (null means fetch failed)
+                    if (segmentCount !== null) {
+                        segmentCounts.set(doc.id, segmentCount)
+                    } else {
+                        // Set to 0 if fetch failed to show placeholder
+                        segmentCounts.set(doc.id, 0)
+                    }
+                })
+            ).then(() => {
+                setDocumentLastUpdated(prev => {
+                    const merged = new Map(prev)
+                    updatedTimes.forEach((value, key) => merged.set(key, value))
+                    return merged
+                })
+                setDocumentSegmentCounts(prev => {
+                    const merged = new Map(prev)
+                    segmentCounts.forEach((value, key) => merged.set(key, value))
+                    return merged
+                })
+            }).catch(err => {
+                console.error('Failed to fetch segment counts for propDocuments:', err)
+            })
+        } else {
+            // Reset pagination when dataset changes
+            setPage(1)
+            setHasMore(true)
+            setDocuments([])
+            loadDocuments(1, false)
+        }
+    }, [datasetId, propDocuments, propLoading, loadDocuments, fetchLatestSegmentTime, fetchSegmentCount])
+
+    // Auto-select all documents when documents first load (only if user hasn't interacted)
     useEffect(() => {
         if (documents.length > 0 && selectedDocuments.size === 0 && !hasUserInteracted.current) {
-            const completedDocumentIds = documents
-                .filter(doc => doc.indexingStatus === 'completed')
-                .map(doc => doc.id)
-
-            if (completedDocumentIds.length > 0) {
-                setSelectedDocuments(new Set(completedDocumentIds))
+            // Select all documents on the current page by default
+            const allDocumentIds = documents.map(doc => doc.id)
+            if (allDocumentIds.length > 0) {
+                setSelectedDocuments(new Set(allDocumentIds))
             }
         }
     }, [documents, selectedDocuments.size])
@@ -185,16 +363,19 @@ export function DatasetDocumentsPanel({
             if (openDropdownId) {
                 closeDropdown()
             }
+            if (showSelectAllDropdown) {
+                setShowSelectAllDropdown(false)
+            }
         }
 
-        if (openDropdownId) {
+        if (openDropdownId || showSelectAllDropdown) {
             document.addEventListener('click', handleClickOutside)
         }
 
         return () => {
             document.removeEventListener('click', handleClickOutside)
         }
-    }, [openDropdownId])
+    }, [openDropdownId, showSelectAllDropdown])
 
     // Notify parent component when selected documents change
     useEffect(() => {
@@ -226,8 +407,7 @@ export function DatasetDocumentsPanel({
                 status === 'splitting' ||
                 status === 'indexing' ||
                 status === 'chunking' ||
-                status === 'embedding' ||
-                status === 'ner_processing'
+                status === 'embedding'
 
             if (previousStatus &&
                 isProcessingStatus(previousStatus) &&
@@ -307,13 +487,6 @@ export function DatasetDocumentsPanel({
         })
     }
 
-    // Handle select all documents (only completed ones)
-    const selectAllDocuments = () => {
-        hasUserInteracted.current = true
-        const completedDocuments = documents.filter(doc => doc.indexingStatus === 'completed')
-        setSelectedDocuments(new Set(completedDocuments.map(doc => doc.id)))
-    }
-
     // Handle deselect all documents
     const deselectAllDocuments = () => {
         hasUserInteracted.current = true
@@ -325,9 +498,74 @@ export function DatasetDocumentsPanel({
             try {
                 await documentApi.delete(documentId)
                 setDocuments(prev => prev.filter(doc => doc.id !== documentId))
+                setSelectedDocuments(prev => {
+                    const newSet = new Set(prev)
+                    newSet.delete(documentId)
+                    return newSet
+                })
+                // Reload first page to get accurate total from API
+                const result = await documentApi.getByDataset(datasetId, 1, 20)
+                setTotal(result.total)
                 closeDropdown()
             } catch (err) {
                 console.error('Failed to delete document:', err)
+                alert('Failed to delete document. Please try again.')
+            }
+        }
+    }
+
+    // Handle bulk delete for current page
+    const handleDeleteCurrentPage = async () => {
+        const selectedIds = Array.from(selectedDocuments).filter(id =>
+            documents.some(doc => doc.id === id)
+        )
+
+        if (selectedIds.length === 0) {
+            alert('No documents selected on current page')
+            return
+        }
+
+        if (confirm(`Are you sure you want to delete ${selectedIds.length} document(s) from the current page?`)) {
+            try {
+                // Delete all selected documents in parallel
+                await Promise.all(selectedIds.map(id => documentApi.delete(id)))
+
+                // Clear selection
+                setSelectedDocuments(new Set())
+
+                // Reload to refresh the list and get accurate total from API
+                await loadDocuments(1, false)
+            } catch (err) {
+                console.error('Failed to delete documents:', err)
+                alert('Failed to delete some documents. Please try again.')
+            }
+        }
+    }
+
+    // Handle bulk delete for ALL documents in the dataset
+    const handleDeleteAll = async () => {
+        if (!total || total === 0) {
+            alert('No documents to delete')
+            return
+        }
+
+        if (confirm(`Are you sure you want to delete ALL ${total} document(s) in this dataset? This action cannot be undone.`)) {
+            try {
+                // Use the bulk delete endpoint
+                const result = await documentApi.deleteAllByDataset(datasetId)
+
+                // Clear selection and documents
+                setSelectedDocuments(new Set())
+                setDocuments([])
+                setTotal(0)
+
+                // Reload to show empty state
+                await loadDocuments(1, false)
+
+                toast.success(`Successfully deleted ${result.deletedCount} document(s)`)
+            } catch (err) {
+                console.error('Failed to delete documents:', err)
+                alert('Failed to delete documents. Please try again.')
             }
         }
     }
@@ -417,7 +655,7 @@ export function DatasetDocumentsPanel({
     return (
         <div className="h-full flex flex-col bg-white border border-gray-200 rounded-lg">
             {/* Header */}
-            <div className="px-4 border-b border-gray-200">
+            <div className="px-2 border-b border-gray-200">
                 <div className="h-12 flex items-center justify-between">
                     <h2 className="text-lg font-semibold text-gray-900">Sources</h2>
                     <div className="flex items-center gap-2">
@@ -440,31 +678,114 @@ export function DatasetDocumentsPanel({
                     </div>
                 </div>
                 {documents.length > 0 && (
-                    <div className="h-8 flex items-center justify-between">
-                        <span className="text-sm text-gray-600">Select all sources</span>
-                        <button
-                            onClick={() => {
-                                const completedDocuments = documents.filter(doc => doc.indexingStatus === 'completed')
-                                const allCompletedSelected = completedDocuments.length > 0 && completedDocuments.every(doc => selectedDocuments.has(doc.id))
-                                if (allCompletedSelected) {
-                                    deselectAllDocuments()
-                                } else {
-                                    selectAllDocuments()
-                                }
-                            }}
-                            className="p-1 hover:bg-gray-200 rounded"
-                            title="Select all completed documents"
-                        >
-                            {(() => {
-                                const completedDocuments = documents.filter(doc => doc.indexingStatus === 'completed')
-                                const allCompletedSelected = completedDocuments.length > 0 && completedDocuments.every(doc => selectedDocuments.has(doc.id))
-                                return allCompletedSelected ? (
-                                    <CheckSquare className="h-4 w-4 text-blue-600" />
-                                ) : (
-                                    <Square className="h-4 w-4 text-gray-400" />
-                                )
-                            })()}
-                        </button>
+                    <div className="border-b border-gray-200">
+                        <div className="group flex items-center justify-between p-2 rounded-lg hover:bg-gray-50">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <div className="relative flex-1 max-w-xs">
+                                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                                    <Input
+                                        type="text"
+                                        placeholder="Search by title..."
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        className="pl-8 pr-2 h-8 text-sm"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                                <button
+                                    onClick={() => {
+                                        const filteredDocs = documents.filter((doc) => {
+                                            if (!searchQuery.trim()) return true
+                                            return doc.name.toLowerCase().includes(searchQuery.toLowerCase())
+                                        })
+                                        const allSelected = filteredDocs.length > 0 && filteredDocs.every(doc => selectedDocuments.has(doc.id))
+                                        if (allSelected) {
+                                            deselectAllDocuments()
+                                        } else {
+                                            // Select only filtered documents
+                                            hasUserInteracted.current = true
+                                            const filteredIds = filteredDocs.map(doc => doc.id)
+                                            setSelectedDocuments(prev => {
+                                                const newSet = new Set(prev)
+                                                filteredIds.forEach(id => newSet.add(id))
+                                                return newSet
+                                            })
+                                        }
+                                    }}
+                                    className="p-1 hover:bg-gray-200 rounded"
+                                    title="Select all visible documents"
+                                >
+                                    {(() => {
+                                        const filteredDocs = documents.filter((doc) => {
+                                            if (!searchQuery.trim()) return true
+                                            return doc.name.toLowerCase().includes(searchQuery.toLowerCase())
+                                        })
+                                        const allSelected = filteredDocs.length > 0 && filteredDocs.every(doc => selectedDocuments.has(doc.id))
+                                        return allSelected ? (
+                                            <CheckSquare className="h-4 w-4 text-blue-600" />
+                                        ) : (
+                                            <Square className="h-4 w-4 text-gray-400" />
+                                        )
+                                    })()}
+                                </button>
+                                <div className="relative">
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation()
+                                            setShowSelectAllDropdown(!showSelectAllDropdown)
+                                        }}
+                                        className="p-1 hover:bg-gray-200 rounded transition-all duration-200"
+                                        title="More actions"
+                                    >
+                                        <MoreVertical className="h-4 w-4 text-gray-500" />
+                                    </button>
+
+                                    {showSelectAllDropdown && (
+                                        <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    handleResumeJobs()
+                                                    setShowSelectAllDropdown(false)
+                                                }}
+                                                disabled={resumingJobs}
+                                                className="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {resumingJobs ? (
+                                                    <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />
+                                                ) : (
+                                                    <Play className="h-3 w-3 text-blue-500" />
+                                                )}
+                                                {resumingJobs ? 'Resuming...' : 'Resume Jobs'}
+                                            </button>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    handleDeleteCurrentPage()
+                                                    setShowSelectAllDropdown(false)
+                                                }}
+                                                className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                            >
+                                                <Trash2 className="h-3 w-3 text-red-500" />
+                                                Selected ({Array.from(selectedDocuments).filter(id => documents.some(doc => doc.id === id)).length})
+                                            </button>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    handleDeleteAll()
+                                                    setShowSelectAllDropdown(false)
+                                                }}
+                                                className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                            >
+                                                <Trash2 className="h-3 w-3 text-red-500" />
+                                                All ({total})
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>
@@ -504,257 +825,289 @@ export function DatasetDocumentsPanel({
             )}
 
             {/* Documents List */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto min-h-0" ref={scrollContainerRef}>
                 {error ? (
                     <div className="p-4 text-center text-red-600 text-sm">
                         {error}
                     </div>
-                ) : documents.length === 0 ? (
+                ) : documents.length === 0 && !loading ? (
                     <div className="p-4 text-center text-gray-500 text-sm">
                         No documents yet
                     </div>
                 ) : (
                     <div className="p-2 space-y-1">
-                        {documents.map((document) => (
-                            <div
-                                key={document.id}
-                                className="group flex items-center justify-between p-2 rounded-lg hover:bg-gray-50"
-                            >
-                                <div className="flex items-center gap-2 flex-1 min-w-0">
-                                    {editingId === document.id ? (
-                                        <>
-                                            <Input
-                                                value={editName}
-                                                onChange={(e) => setEditName(e.target.value)}
-                                                className="text-sm h-8"
-                                                autoFocus
-                                                onKeyDown={(e) => {
-                                                    if (e.key === 'Enter') handleSaveEdit(document.id)
-                                                    if (e.key === 'Escape') handleCancelEdit()
-                                                }}
-                                                onClick={(e) => e.stopPropagation()}
-                                            />
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div className="relative">
+                        {(() => {
+                            const filteredDocuments = documents.filter((document) => {
+                                if (!searchQuery.trim()) return true
+                                return document.name.toLowerCase().includes(searchQuery.toLowerCase())
+                            })
+
+                            // Sort by segment count (descending), then by name for documents with same count
+                            const sortedDocuments = [...filteredDocuments].sort((a, b) => {
+                                const countA = documentSegmentCounts.get(a.id) ?? 0
+                                const countB = documentSegmentCounts.get(b.id) ?? 0
+                                if (countB !== countA) {
+                                    return countB - countA // Descending order by segment count
+                                }
+                                // If segment counts are equal, sort by name alphabetically
+                                return a.name.localeCompare(b.name)
+                            })
+
+                            if (sortedDocuments.length === 0 && searchQuery.trim()) {
+                                return (
+                                    <div key="no-results" className="p-4 text-center text-gray-500 text-sm">
+                                        No documents found matching &quot;{searchQuery}&quot;
+                                    </div>
+                                )
+                            }
+
+                            return sortedDocuments.map((document) => (
+                                <div
+                                    key={document.id}
+                                    className="group flex items-center justify-between p-2 rounded-lg hover:bg-gray-50"
+                                >
+                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                        {editingId === document.id ? (
+                                            <>
+                                                <Input
+                                                    value={editName}
+                                                    onChange={(e) => setEditName(e.target.value)}
+                                                    className="text-sm h-8"
+                                                    autoFocus
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') handleSaveEdit(document.id)
+                                                        if (e.key === 'Escape') handleCancelEdit()
+                                                    }}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                            </>
+                                        ) : (
+                                            <>
+                                                {/* Document icon based on status */}
+                                                <div className="flex-shrink-0">
+                                                    {(() => {
+                                                        const isProcessing = [
+                                                            'waiting',
+                                                            'processing',
+                                                            'parsing',
+                                                            'splitting',
+                                                            'indexing',
+                                                            'chunking',
+                                                            'chunked',
+                                                            'embedding',
+                                                            'embedded',
+                                                        ].includes(document.indexingStatus);
+
+                                                        const isFailed = [
+                                                            'chunking_failed',
+                                                            'embedding_failed',
+                                                            'error',
+                                                        ].includes(document.indexingStatus);
+
+                                                        const isCompleted = document.indexingStatus === 'completed';
+
+                                                        if (isProcessing) {
+                                                            return <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />;
+                                                        } else if (isFailed) {
+                                                            return <FileText className="h-4 w-4 text-red-500" />;
+                                                        } else if (isCompleted) {
+                                                            return <FileText className="h-4 w-4 text-blue-500" />;
+                                                        } else {
+                                                            return <FileText className="h-4 w-4 text-gray-400" />;
+                                                        }
+                                                    })()}
+                                                </div>
+
+                                                {/* Document name and metadata */}
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex flex-col gap-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <p
+                                                                className="text-sm font-medium text-gray-900 truncate cursor-pointer hover:text-blue-600 transition-colors"
+                                                                onClick={() => handlePreviewDocument(document)}
+                                                                title="Click to preview document content"
+                                                            >
+                                                                {document.name}
+                                                                {documentSegmentCounts.has(document.id) ? (
+                                                                    <span className="text-gray-500 font-normal">
+                                                                        {' '}({documentSegmentCounts.get(document.id)})
+                                                                    </span>
+                                                                ) : null}
+                                                            </p>
+                                                        </div>
+
+                                                        {/* Document metadata */}
+                                                        <div className="flex items-center gap-3 text-xs text-gray-500">
+                                                            {documentLastUpdated.has(document.id) && (
+                                                                <span>
+                                                                    Updated at {new Date(documentLastUpdated.get(document.id)!).toLocaleString()}
+                                                                </span>
+                                                            )}
+                                                            {document.embeddingDimensions && (
+                                                                <span>{document.embeddingDimensions} dims</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+
+                                    {/* Action buttons */}
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                        {editingId === document.id ? (
+                                            <>
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation()
-                                                        toggleDropdown(document.id)
+                                                        handleSaveEdit(document.id)
                                                     }}
-                                                    className="p-1 hover:bg-gray-200 rounded transition-all duration-200"
-                                                    title="More actions"
+                                                    className="p-1 hover:bg-gray-200 rounded"
                                                 >
-                                                    {(document.indexingStatus === 'waiting' ||
-                                                        document.indexingStatus === 'processing' ||
-                                                        document.indexingStatus === 'parsing' ||
-                                                        document.indexingStatus === 'splitting' ||
-                                                        document.indexingStatus === 'indexing' ||
-                                                        document.indexingStatus === 'chunking' ||
-                                                        document.indexingStatus === 'embedding' ||
-                                                        document.indexingStatus === 'ner_processing') ? (
-                                                        <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
+                                                    <Check className="h-3 w-3 text-green-600" />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        handleCancelEdit()
+                                                    }}
+                                                    className="p-1 hover:bg-gray-200 rounded"
+                                                >
+                                                    <X className="h-3 w-3 text-red-600" />
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        toggleDocumentSelection(document.id)
+                                                    }}
+                                                    className="p-1 rounded hover:bg-gray-200"
+                                                    title={selectedDocuments.has(document.id) ? "Deselect document" : "Select document"}
+                                                >
+                                                    {selectedDocuments.has(document.id) ? (
+                                                        <CheckSquare className="h-4 w-4 text-blue-600" />
                                                     ) : (
-                                                        <>
-                                                            <FileText className="h-4 w-4 text-gray-400 group-hover:hidden" />
-                                                            <MoreVertical className="h-3 w-3 text-gray-500 hidden group-hover:block" />
-                                                        </>
+                                                        <Square className="h-4 w-4 text-gray-400" />
                                                     )}
                                                 </button>
+                                                <div className="relative">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            toggleDropdown(document.id)
+                                                        }}
+                                                        className="p-1 hover:bg-gray-200 rounded transition-all duration-200"
+                                                        title="More actions"
+                                                    >
+                                                        <MoreVertical className="h-3 w-3 text-gray-500" />
+                                                    </button>
 
-                                                {openDropdownId === document.id && (
-                                                    <div className="absolute left-0 top-8 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation()
-                                                                handlePreviewDocument(document)
-                                                                closeDropdown()
-                                                            }}
-                                                            className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                                                        >
-                                                            <FileText className="h-3 w-3 text-gray-500" />
-                                                            Preview document
-                                                        </button>
-                                                        {(document.indexingStatus === 'chunking_failed' ||
-                                                            document.indexingStatus === 'embedding_failed' ||
-                                                            document.indexingStatus === 'ner_failed' ||
-                                                            document.indexingStatus === 'error') && (
-                                                                <button
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation()
-                                                                        handleResume(document.id)
-                                                                    }}
-                                                                    className="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2"
-                                                                >
-                                                                    <RotateCcw className="h-3 w-3 text-blue-500" />
-                                                                    Resume processing
-                                                                </button>
-                                                            )}
-                                                        {document.indexingStatus === 'completed' && (
+                                                    {openDropdownId === document.id && (
+                                                        <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
                                                             <button
                                                                 onClick={(e) => {
                                                                     e.stopPropagation()
-                                                                    handleExtractGraph(document.id)
+                                                                    handlePreviewDocument(document)
+                                                                    closeDropdown()
                                                                 }}
-                                                                disabled={extractingGraphs.has(document.id)}
-                                                                className="w-full px-3 py-2 text-left text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
                                                             >
-                                                                {extractingGraphs.has(document.id) ? (
-                                                                    <Loader2 className="h-3 w-3 text-purple-500 animate-spin" />
-                                                                ) : (
-                                                                    <Network className="h-3 w-3 text-purple-500" />
-                                                                )}
-                                                                {extractingGraphs.has(document.id) ? 'Extracting...' : 'Extract Graph'}
+                                                                <FileText className="h-3 w-3 text-gray-500" />
+                                                                Preview document
                                                             </button>
-                                                        )}
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation()
-                                                                handleEdit(document)
-                                                                closeDropdown()
-                                                            }}
-                                                            className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                                                        >
-                                                            <Edit2 className="h-3 w-3 text-gray-500" />
-                                                            Edit name
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation()
-                                                                handleResumeJobs()
-                                                            }}
-                                                            disabled={resumingJobs}
-                                                            className="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                        >
-                                                            {resumingJobs ? (
-                                                                <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />
-                                                            ) : (
-                                                                <Play className="h-3 w-3 text-blue-500" />
+                                                            {(document.indexingStatus === 'chunking_failed' ||
+                                                                document.indexingStatus === 'embedding_failed' ||
+                                                                document.indexingStatus === 'error') && (
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation()
+                                                                            handleResume(document.id)
+                                                                        }}
+                                                                        className="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2"
+                                                                    >
+                                                                        <RotateCcw className="h-3 w-3 text-blue-500" />
+                                                                        Resume processing
+                                                                    </button>
+                                                                )}
+                                                            {document.indexingStatus === 'completed' && (
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation()
+                                                                        handleExtractGraph(document.id)
+                                                                    }}
+                                                                    disabled={extractingGraphs.has(document.id)}
+                                                                    className="w-full px-3 py-2 text-left text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                >
+                                                                    {extractingGraphs.has(document.id) ? (
+                                                                        <Loader2 className="h-3 w-3 text-purple-500 animate-spin" />
+                                                                    ) : (
+                                                                        <Network className="h-3 w-3 text-purple-500" />
+                                                                    )}
+                                                                    {extractingGraphs.has(document.id) ? 'Extracting...' : 'Extract Graph'}
+                                                                </button>
                                                             )}
-                                                            {resumingJobs ? 'Resuming...' : 'Resume Jobs'}
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation()
-                                                                handleDelete(document.id)
-                                                            }}
-                                                            className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                                                        >
-                                                            <Trash2 className="h-3 w-3 text-red-500" />
-                                                            Delete document
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex flex-col gap-1">
-                                                    <div className="flex items-center gap-2">
-                                                        <p
-                                                            className="text-sm font-medium text-gray-900 truncate cursor-pointer hover:text-blue-600 transition-colors"
-                                                            onClick={() => handlePreviewDocument(document)}
-                                                            title="Click to preview document content"
-                                                        >
-                                                            {document.name}
-                                                        </p>
-                                                        {(() => {
-                                                            const statusInfo = getStatusInfo(document.indexingStatus)
-                                                            return (
-                                                                <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusInfo.bgColor} ${statusInfo.color}`}>
-                                                                    {statusInfo.text}
-                                                                </span>
-                                                            )
-                                                        })()}
-                                                    </div>
-
-                                                    {/* Document metadata */}
-                                                    <div className="flex items-center gap-3 text-xs text-gray-500">
-                                                        {document.wordCount && (
-                                                            <span>{document.wordCount.toLocaleString()} words</span>
-                                                        )}
-                                                        {document.docType && (
-                                                            <span className="capitalize">{document.docType}</span>
-                                                        )}
-                                                        {document.processingMetadata?.ner && (
-                                                            <div className="flex items-center gap-1">
-                                                                <span>NER:</span>
-                                                                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${document.processingMetadata.ner.enabled
-                                                                    ? document.processingMetadata.ner.completedAt
-                                                                        ? 'bg-green-100 text-green-700'
-                                                                        : 'bg-blue-100 text-blue-700'
-                                                                    : 'bg-gray-100 text-gray-700'
-                                                                    }`}>
-                                                                    {document.processingMetadata.ner.enabled
-                                                                        ? document.processingMetadata.ner.completedAt
-                                                                            ? 'Completed'
-                                                                            : 'Processing'
-                                                                        : 'Disabled'
-                                                                    }
-                                                                </span>
-                                                            </div>
-                                                        )}
-                                                    </div>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation()
+                                                                    handleEdit(document)
+                                                                    closeDropdown()
+                                                                }}
+                                                                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                                            >
+                                                                <Edit2 className="h-3 w-3 text-gray-500" />
+                                                                Edit name
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation()
+                                                                    handleDelete(document.id)
+                                                                }}
+                                                                className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                                            >
+                                                                <Trash2 className="h-3 w-3 text-red-500" />
+                                                                Delete document
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            </div>
-                                        </>
-                                    )}
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
+                            ))
+                        })()}
 
-                                <div className="flex items-center gap-1">
-                                    {editingId === document.id ? (
-                                        <>
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    handleSaveEdit(document.id)
-                                                }}
-                                                className="p-1 hover:bg-gray-200 rounded"
-                                            >
-                                                <Check className="h-3 w-3 text-green-600" />
-                                            </button>
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    handleCancelEdit()
-                                                }}
-                                                className="p-1 hover:bg-gray-200 rounded"
-                                            >
-                                                <X className="h-3 w-3 text-red-600" />
-                                            </button>
-                                        </>
-                                    ) : (
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                // Only allow selection if document is completed
-                                                if (document.indexingStatus === 'completed') {
-                                                    toggleDocumentSelection(document.id)
-                                                }
-                                            }}
-                                            className={`p-1 rounded ${document.indexingStatus === 'completed'
-                                                ? 'hover:bg-gray-200'
-                                                : 'cursor-not-allowed opacity-50'
-                                                }`}
-                                            disabled={document.indexingStatus !== 'completed'}
-                                            title={
-                                                document.indexingStatus === 'completed'
-                                                    ? (selectedDocuments.has(document.id) ? "Deselect document" : "Select document")
-                                                    : "Document is still processing"
-                                            }
-                                        >
-                                            {selectedDocuments.has(document.id) ? (
-                                                <CheckSquare className="h-4 w-4 text-blue-600" />
-                                            ) : (
-                                                <Square className={`h-4 w-4 ${document.indexingStatus === 'completed'
-                                                    ? 'text-gray-400'
-                                                    : 'text-gray-300'
-                                                    }`} />
-                                            )}
-                                        </button>
-                                    )}
-                                </div>
+                        {/* Show more button or end of list indicator */}
+                        {hasMore && !loadingMore && documents.length > 0 && (
+                            <div className="p-4 text-center">
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={loadMoreDocuments}
+                                    className="flex items-center gap-2"
+                                >
+                                    <Plus className="h-4 w-4" />
+                                    Show more ({documents.length} / {total})
+                                </Button>
                             </div>
-                        ))}
+                        )}
+
+                        {/* Loading more indicator */}
+                        {loadingMore && (
+                            <div className="p-4 text-center">
+                                <Loader2 className="h-4 w-4 animate-spin mx-auto text-gray-400" />
+                                <p className="text-xs text-gray-500 mt-2">Loading more documents...</p>
+                            </div>
+                        )}
+
+                        {/* End of list indicator */}
+                        {!hasMore && documents.length > 0 && (
+                            <div className="p-4 text-center text-xs text-gray-500">
+                                No more documents ({documents.length} / {total})
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -767,14 +1120,16 @@ export function DatasetDocumentsPanel({
             />
 
             {/* Document Upload Modal */}
-            {dataset && (
-                <DatasetDocumentUploadModal
-                    isOpen={showUploadModal}
-                    onClose={() => setShowUploadModal(false)}
-                    dataset={dataset}
-                    onUploadSuccess={handleUploadSuccess}
-                />
-            )}
+            {
+                dataset && (
+                    <DatasetDocumentUploadModal
+                        isOpen={showUploadModal}
+                        onClose={() => setShowUploadModal(false)}
+                        dataset={dataset}
+                        onUploadSuccess={handleUploadSuccess}
+                    />
+                )
+            }
         </div >
     )
 }

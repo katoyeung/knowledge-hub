@@ -13,6 +13,7 @@ import {
   Logger,
   BadRequestException,
   Get,
+  Delete,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { DocumentService } from './document.service';
@@ -37,6 +38,7 @@ import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { ParseJsonStringsPipe } from '../../common/pipes/parse-json-strings.pipe';
 import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id.interceptor';
+import { ApiOperation } from '@nestjs/swagger';
 
 @Crud({
   model: {
@@ -97,6 +99,51 @@ export class DocumentController implements CrudController<Document> {
     public readonly service: DocumentService,
     private readonly documentProcessingService: DocumentProcessingService,
   ) {}
+
+  @Delete('dataset/:datasetId/all')
+  @ApiOperation({ summary: 'Delete all documents in a dataset' })
+  async deleteAllByDataset(@Param('datasetId') datasetId: string) {
+    this.logger.log(
+      `🗑️ Starting bulk deletion of all documents in dataset: ${datasetId}`,
+    );
+
+    try {
+      // Step 1: Cancel all processing jobs for documents in this dataset
+      const documents = await this.service.findByDatasetId(datasetId);
+      for (const doc of documents) {
+        await this.documentProcessingService.cancelAllProcessingJobs(doc.id);
+      }
+
+      // Step 2: Delete all documents
+      const deletedCount =
+        await this.service.deleteAllDocumentsByDataset(datasetId);
+
+      // Step 3: Stop ALL ongoing processing jobs asynchronously (cleanup)
+      this.documentProcessingService
+        .stopAllProcessingJobs(
+          'All documents deleted by user - clearing all processing jobs',
+        )
+        .catch((error) => {
+          this.logger.error('Failed to stop remaining processing jobs:', error);
+        });
+
+      this.logger.log(
+        `✅ Bulk document deletion completed: ${deletedCount} documents deleted`,
+      );
+
+      return {
+        success: true,
+        deletedCount,
+        message: `Successfully deleted ${deletedCount} document(s)`,
+      };
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to delete all documents in dataset ${datasetId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
 
   @Override('deleteOneBase')
   async deleteOne(@ParsedRequest() req: CrudRequest) {

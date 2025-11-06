@@ -66,7 +66,7 @@ When Mr. Bilbo Baggins of Bag End announced that he would shortly be celebrating
 
 Bilbo was very rich and very peculiar, and had been the wonder of the Shire for sixty years, ever since his remarkable disappearance and unexpected return. The riches he had brought back from his travels had now become a local legend, and it was popularly believed, whatever the old folk might say, that the Hill at Bag End was full of tunnels stuffed with treasure.
 
-This is a test document for job management E2E tests. It contains enough text to trigger the chunking, embedding, and NER processing stages.`;
+This is a test document for job management E2E tests. It contains enough text to trigger the chunking and embedding processing stages.`;
 
     await fs.writeFile(testFilePath, testContent);
     const uploadsDir = join(process.cwd(), 'uploads', 'documents');
@@ -105,7 +105,7 @@ This is a test document for job management E2E tests. It contains enough text to
   });
 
   describe('Test 1: Document Processing with All Stages', () => {
-    it('should process document through all stages (chunking, embedding, NER)', async () => {
+    it('should process document through all stages (chunking, embedding)', async () => {
       // Upload document
       const uploadResponse = await request(app.getHttpServer())
         .post('/documents/upload')
@@ -132,7 +132,6 @@ This is a test document for job management E2E tests. It contains enough text to
           chunkSize: 800,
           chunkOverlap: 100,
           enableParentChildChunking: false,
-          nerEnabled: false,
         });
 
       if (processResponse.status !== 201) {
@@ -207,7 +206,6 @@ This is a test document for job management E2E tests. It contains enough text to
           chunkSize: 800,
           chunkOverlap: 100,
           enableParentChunking: false,
-          nerEnabled: false,
         });
 
       if (processResponse.status !== 201) {
@@ -445,7 +443,6 @@ This is a test document for job management E2E tests. It contains enough text to
           chunkSize: 800,
           chunkOverlap: 100,
           enableParentChunking: false,
-          nerEnabled: false,
         });
 
       if (processResponse.status !== 201) {

@@ -313,11 +313,6 @@ export class ProcessDocumentsDto {
   @IsOptional()
   @IsBoolean()
   useModelDefaults?: boolean;
-
-  // 🆕 NER processing option
-  @IsOptional()
-  @IsBoolean()
-  nerEnabled?: boolean;
 }
 
 export class UploadDocumentDto {

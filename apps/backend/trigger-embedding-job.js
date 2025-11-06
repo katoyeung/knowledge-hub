@@ -66,7 +66,6 @@ async function triggerEmbeddingJob() {
       chunkOverlap: 200,
       useModelDefaults: true,
     },
-    nerEnabled: false,
     segmentIds: waitingSegments.map((s) => s.id),
   };
 

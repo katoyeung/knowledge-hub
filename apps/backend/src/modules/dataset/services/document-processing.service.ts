@@ -27,10 +27,6 @@ import {
 } from '../../document-parser/services/ragflow-pdf-parser.service';
 import { SimplePdfParserService } from '../../document-parser/services/simple-pdf-parser.service';
 import { ChineseTextPreprocessorService } from '../../document-parser/services/chinese-text-preprocessor.service';
-import {
-  EntityExtractionService,
-  EntityExtractionConfig,
-} from './entity-extraction.service';
 import { ModelMappingService } from '../../../common/services/model-mapping.service';
 import { DetectorService } from '../../../common/services/detector.service';
 import {
@@ -68,7 +64,6 @@ export class DocumentProcessingService {
     private readonly ragflowPdfParserService: RagflowPdfParserService,
     private readonly simplePdfParserService: SimplePdfParserService,
     private readonly chineseTextPreprocessorService: ChineseTextPreprocessorService,
-    private readonly entityExtractionService: EntityExtractionService,
     private readonly modelMappingService: ModelMappingService,
     private readonly detectorService: DetectorService,
     private readonly notificationService: NotificationService,
@@ -104,7 +99,6 @@ export class DocumentProcessingService {
           datasetId: event.datasetId,
           userId: event.userId,
           embeddingConfig: event.embeddingConfig,
-          nerEnabled: false,
         },
       });
 
@@ -403,37 +397,35 @@ export class DocumentProcessingService {
       return;
     }
 
-    // Check if file still exists before processing
-    const filePath = join(
-      process.cwd(),
-      'uploads',
-      'documents',
-      document.fileId,
-    );
+    // Check if file still exists before processing (skip for posts and CSV which don't use files)
+    let filePath: string | undefined;
+    if (document.docType !== 'posts' && document.docType !== 'csv') {
+      filePath = join(process.cwd(), 'uploads', 'documents', document.fileId);
 
-    try {
-      await fs.access(filePath);
-      this.logger.log(`✅ File exists: ${filePath}`);
-    } catch {
-      this.logger.warn(`❌ File not found: ${filePath}`);
-      this.logger.log(
-        `🛑 Stopping document processing - file has been deleted`,
-      );
+      try {
+        await fs.access(filePath);
+        this.logger.log(`✅ File exists: ${filePath}`);
+      } catch {
+        this.logger.warn(`❌ File not found: ${filePath}`);
+        this.logger.log(
+          `🛑 Stopping document processing - file has been deleted`,
+        );
 
-      // Update document status to indicate file was deleted
-      await this.documentRepository.update(documentId, {
-        indexingStatus: 'error',
-        error: 'File not found - may have been deleted',
-        stoppedAt: new Date(),
-      });
+        // Update document status to indicate file was deleted
+        await this.documentRepository.update(documentId, {
+          indexingStatus: 'error',
+          error: 'File not found - may have been deleted',
+          stoppedAt: new Date(),
+        });
 
-      // Clean up any existing segments for this document
-      await this.segmentRepository.delete({ documentId: documentId });
-      this.logger.log(
-        `🧹 Cleaned up segments for deleted document ${documentId}`,
-      );
+        // Clean up any existing segments for this document
+        await this.segmentRepository.delete({ documentId: documentId });
+        this.logger.log(
+          `🧹 Cleaned up segments for deleted document ${documentId}`,
+        );
 
-      return; // Exit early if file doesn't exist
+        return; // Exit early if file doesn't exist
+      }
     }
 
     // Check if this is a resume operation (segments already exist)
@@ -459,15 +451,21 @@ export class DocumentProcessingService {
       indexingStatus: 'parsing',
     });
 
-    // Read file content
-    let content: string;
-    try {
-      const filePath = join(
-        process.cwd(),
-        'uploads',
-        'documents',
-        document.fileId,
+    // Posts and CSV documents are handled by chunking job, not here
+    // This method should not be called for posts/CSV documents
+    if (document.docType === 'posts' || document.docType === 'csv') {
+      this.logger.warn(
+        `Document processing service called for ${document.docType} document - this should be handled by chunking job`,
       );
+      return; // Exit early - chunking job will handle it
+    }
+
+    // Read file content for regular documents
+    let content: string;
+    if (!filePath) {
+      filePath = join(process.cwd(), 'uploads', 'documents', document.fileId);
+    }
+    try {
       content = await this.extractTextFromFile(filePath, document.docType);
     } catch (error) {
       throw new Error(`Failed to read file: ${error.message}`);
@@ -480,7 +478,6 @@ export class DocumentProcessingService {
 
     // 🆕 Choose chunking strategy based on configuration
     let segments: DocumentSegment[] = [];
-
     if (isResume) {
       // Resume mode: use existing segments
       this.logger.log(
@@ -594,6 +591,9 @@ export class DocumentProcessingService {
       }
 
       // Check if file still exists before processing each batch
+      if (!filePath) {
+        filePath = join(process.cwd(), 'uploads', 'documents', document.fileId);
+      }
       try {
         await fs.access(filePath);
       } catch {
@@ -634,6 +634,14 @@ export class DocumentProcessingService {
         const totalIncomplete = incompleteSegments.length;
 
         // Check if file still exists before processing each segment
+        if (!filePath) {
+          filePath = join(
+            process.cwd(),
+            'uploads',
+            'documents',
+            document.fileId,
+          );
+        }
         try {
           await fs.access(filePath);
         } catch {
@@ -1638,10 +1646,7 @@ export class DocumentProcessingService {
       const isChinese =
         this.chineseTextPreprocessorService.isChineseText(content);
 
-      // Use LLM-based entity extraction if requested and content is Chinese
-      if (useLLMExtraction && isChinese) {
-        return this.extractEntitiesWithLLM(content, true);
-      }
+      // LLM-based entity extraction removed (NER feature removed)
 
       if (isChinese) {
         return this.extractChineseKeywords(content);
@@ -1655,45 +1660,14 @@ export class DocumentProcessingService {
   }
 
   /**
-   * 🆕 Extract entities using LLM with text normalization
+   * Extract entities using LLM - REMOVED (NER feature removed)
    */
   private async extractEntitiesWithLLM(
-    content: string,
-    enableCustomPatterns: boolean = false,
+    _content: string,
+    _enableCustomPatterns: boolean = false,
   ): Promise<string[]> {
-    try {
-      const config: EntityExtractionConfig = {
-        method: 'llm',
-        maxEntities: 8,
-        enablePerformanceLogging: true,
-        enableTextNormalization: true, // Always normalize text
-        // Add custom patterns only if needed for specific use cases
-        customPatterns: enableCustomPatterns
-          ? [
-              // Add domain-specific patterns only when explicitly requested
-              {
-                pattern: /第\d+(?:\([^)]+\))*條/g,
-                type: 'LEGAL_REF',
-                maxLength: 20,
-              },
-            ]
-          : undefined,
-      };
-
-      const result = await this.entityExtractionService.extractEntities(
-        content,
-        config,
-      );
-
-      return result.entities;
-    } catch (error) {
-      this.logger.error(`LLM entity extraction failed: ${error.message}`);
-      this.logger.warn(
-        `LLM entity extraction failed, falling back to n-gram: ${error.message}`,
-      );
-      // Fallback to traditional Chinese keyword extraction
-      return this.extractChineseKeywords(content);
-    }
+    // NER feature removed - return empty array
+    return [];
   }
 
   /**
@@ -2151,7 +2125,10 @@ export class DocumentProcessingService {
       );
 
       // Use LLM-based entity extraction for better Chinese keyword extraction
-      const keywords = await this.extractKeywords(ragflowSegment.content, true);
+      const keywords = await this.extractKeywords(
+        ragflowSegment.content,
+        false,
+      );
       const keywordsObject = {
         extracted: keywords,
         count: keywords.length,
@@ -2194,7 +2171,10 @@ export class DocumentProcessingService {
       const ragflowSegment = childRagflowSegments[i];
 
       // Use LLM-based entity extraction for better Chinese keyword extraction
-      const keywords = await this.extractKeywords(ragflowSegment.content, true);
+      const keywords = await this.extractKeywords(
+        ragflowSegment.content,
+        false,
+      );
       const keywordsObject = {
         extracted: keywords,
         count: keywords.length,

@@ -818,7 +818,6 @@ async function verifyProcessingPipelineStages(
   const verificationResults = {
     chunking: { passed: 0, failed: 0 },
     embedding: { passed: 0, failed: 0 },
-    ner: { passed: 0, failed: 0 },
     overall: { passed: 0, failed: 0 },
   };
 
@@ -867,20 +866,6 @@ async function verifyProcessingPipelineStages(
         verificationResults.embedding.failed++;
       }
 
-      // Check NER stage (optional, may not be enabled)
-      if (document.indexingStatus === 'completed') {
-        console.log('   ✅ NER stage completed (or skipped)');
-        verificationResults.ner.passed++;
-      } else if (document.indexingStatus === 'embedded') {
-        console.log('   ⚠️ NER stage skipped (not enabled)');
-        verificationResults.ner.passed++;
-      } else {
-        console.log(
-          `   ❌ NER stage not completed (status: ${document.indexingStatus})`,
-        );
-        verificationResults.ner.failed++;
-      }
-
       // Check processing metadata
       if (document.processingMetadata) {
         const metadata = document.processingMetadata;
@@ -905,17 +890,6 @@ async function verifyProcessingPipelineStages(
           ) {
             console.log(
               `      Progress: ${metadata.embedding.processedCount}/${metadata.embedding.totalCount}`,
-            );
-          }
-        }
-
-        if (metadata.ner) {
-          console.log(
-            `      NER: ${metadata.ner.completedAt ? 'Completed' : 'In Progress'}`,
-          );
-          if (metadata.ner.processedCount && metadata.ner.totalCount) {
-            console.log(
-              `      Progress: ${metadata.ner.processedCount}/${metadata.ner.totalCount}`,
             );
           }
         }
@@ -975,9 +949,6 @@ async function verifyProcessingPipelineStages(
   );
   console.log(
     `Embedding Stage: ${verificationResults.embedding.passed} passed, ${verificationResults.embedding.failed} failed`,
-  );
-  console.log(
-    `NER Stage: ${verificationResults.ner.passed} passed, ${verificationResults.ner.failed} failed`,
   );
   console.log(
     `Overall: ${verificationResults.overall.passed} passed, ${verificationResults.overall.failed} failed`,
@@ -1194,7 +1165,6 @@ describe('Simple Chat E2E Tests', () => {
       textSplitter: 'recursive_character',
       chunkSize: 1000,
       chunkOverlap: 200,
-      nerEnabled: false, // Test the new nerEnabled flag
     };
 
     const processResponse = await request
@@ -1449,7 +1419,6 @@ describe('Simple Chat E2E Tests', () => {
       textSplitter: 'recursive_character',
       chunkSize: 1000,
       chunkOverlap: 200,
-      nerEnabled: false, // Test the new nerEnabled flag
     };
 
     const processResponse = await request

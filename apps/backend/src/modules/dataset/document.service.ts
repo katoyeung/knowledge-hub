@@ -119,6 +119,122 @@ export class DocumentService extends TypeOrmCrudService<Document> {
     }
   }
 
+  /**
+   * Delete all documents in a dataset
+   * @param datasetId - The dataset ID
+   */
+  async deleteAllDocumentsByDataset(datasetId: string): Promise<number> {
+    this.logger.log(
+      `🗑️ Starting bulk deletion of all documents in dataset: ${datasetId}`,
+    );
+
+    // Get all documents in the dataset
+    const documents = await this.documentRepository.find({
+      where: { datasetId },
+      select: ['id', 'fileId', 'datasetId'],
+    });
+
+    if (documents.length === 0) {
+      this.logger.log(
+        `⚠️ No documents found in dataset ${datasetId}, skipping deletion`,
+      );
+      return 0;
+    }
+
+    this.logger.log(
+      `📄 Found ${documents.length} documents to delete in dataset ${datasetId}`,
+    );
+
+    // Use a transaction to ensure all deletions happen atomically
+    const queryRunner =
+      this.documentRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const documentIds = documents.map((doc) => doc.id);
+
+      // Get all segments for these documents to find embeddings to delete
+      const segments = await queryRunner.manager
+        .createQueryBuilder(DocumentSegment, 'segment')
+        .where('segment.documentId IN (:...documentIds)', { documentIds })
+        .select(['segment.id', 'segment.embeddingId'])
+        .getMany();
+
+      this.logger.log(`🗑️ Found ${segments.length} segments to analyze`);
+
+      // Collect all embedding IDs that need to be deleted
+      const embeddingIds = segments
+        .filter((segment) => segment.embeddingId)
+        .map((segment) => segment.embeddingId)
+        .filter(Boolean) // Remove null/undefined values
+        .filter((id, index, self) => self.indexOf(id) === index); // Remove duplicates
+
+      this.logger.log(
+        `🗑️ Found ${embeddingIds.length} unique embeddings to delete`,
+      );
+
+      // Delete document segments first (they reference embeddings via foreign key)
+      const deletedSegments = await queryRunner.manager
+        .createQueryBuilder()
+        .delete()
+        .from(DocumentSegment)
+        .where('documentId IN (:...documentIds)', { documentIds })
+        .execute();
+      this.logger.log(`✅ Deleted ${deletedSegments.affected || 0} segments`);
+
+      // Now delete embeddings (no longer referenced by segments)
+      if (embeddingIds.length > 0) {
+        const deletedEmbeddings = await queryRunner.manager.delete(
+          Embedding,
+          embeddingIds,
+        );
+        this.logger.log(
+          `✅ Deleted ${deletedEmbeddings.affected || 0} embeddings`,
+        );
+      }
+
+      // Finally, delete all documents
+      const deletedDocuments = await queryRunner.manager
+        .createQueryBuilder()
+        .delete()
+        .from(Document)
+        .where('id IN (:...documentIds)', { documentIds })
+        .execute();
+      this.logger.log(`✅ Deleted ${deletedDocuments.affected || 0} documents`);
+
+      // Commit the transaction
+      await queryRunner.commitTransaction();
+
+      // After successful database deletion, delete physical files
+      for (const document of documents) {
+        if (document.fileId) {
+          await this.deletePhysicalFile(document.fileId, document.datasetId);
+        }
+      }
+
+      // Invalidate caches
+      await this.invalidateDatasetCache(datasetId);
+      documentIds.forEach((id) => this.invalidateDocumentCache(id));
+
+      this.logger.log(
+        `🎉 Bulk document deletion completed successfully: ${deletedDocuments.affected || 0} documents deleted`,
+      );
+
+      return deletedDocuments.affected || 0;
+    } catch (error) {
+      // Rollback the transaction on error
+      await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `💥 Bulk document deletion failed, transaction rolled back: ${error.message}`,
+      );
+      throw error;
+    } finally {
+      // Release the query runner
+      await queryRunner.release();
+    }
+  }
+
   async deleteDocument(id: string): Promise<void> {
     this.logger.log(`🗑️ Starting document deletion: ${id}`);
 

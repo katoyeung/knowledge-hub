@@ -59,7 +59,7 @@ export class JobResumeService {
 
       // Check if there are segments that need processing
       const needsProcessing = segments.some((segment) =>
-        ['waiting', 'chunked', 'embedding', 'ner'].includes(segment.status),
+        ['waiting', 'chunked', 'embedding'].includes(segment.status),
       );
 
       if (!needsProcessing) {
@@ -81,7 +81,6 @@ export class JobResumeService {
               model: 'Xenova/bge-m3',
               provider: 'local',
             },
-            nerEnabled: false,
           },
         });
 

@@ -32,7 +32,7 @@ import { CreateDatasetDto } from './dto/create-dataset.dto';
 import { UpdateDatasetDto } from './dto/update-dataset.dto';
 import { UpdateChatSettingsDto } from './dto/update-chat-settings.dto';
 import { UpdateGraphSettingsDto } from './dto/update-graph-settings.dto';
-import { UploadDocumentDto } from './dto/upload-document.dto';
+import { UploadDocumentDto, SyncPostsDto } from './dto/upload-document.dto';
 import {
   getEffectiveChunkSize,
   getEffectiveChunkOverlap,
@@ -253,6 +253,35 @@ export class DatasetController implements CrudController<Dataset> {
           size: file.size,
           mimetype: file.mimetype,
         })),
+      },
+    };
+  }
+
+  @Post(':id/sync-posts')
+  @ApiOperation({ summary: 'Sync posts to dataset using filters' })
+  async syncPosts(
+    @Param('id') datasetId: string,
+    @Body() syncDto: SyncPostsDto,
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+
+    const result = await this.service.syncPostsToDataset(
+      datasetId,
+      syncDto,
+      userId,
+    );
+
+    return {
+      success: true,
+      message: `Successfully synced ${result.documents.length} post(s) to dataset`,
+      data: {
+        dataset: result.dataset,
+        documents: result.documents,
       },
     };
   }

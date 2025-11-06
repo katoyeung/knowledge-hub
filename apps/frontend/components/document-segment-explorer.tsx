@@ -279,7 +279,8 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
     const loadDocuments = useCallback(async () => {
         try {
             setLoadingDocuments(true)
-            const docs = await documentApi.getByDataset(datasetId)
+            const result = await documentApi.getByDataset(datasetId, 1, 100)
+            const docs = result.data || []
             setDocuments(docs)
             if (docs.length > 0 && !selectedDocumentId) {
                 setSelectedDocumentId(docs[0].id)

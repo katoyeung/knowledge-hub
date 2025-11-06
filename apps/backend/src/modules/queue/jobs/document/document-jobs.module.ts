@@ -10,12 +10,10 @@ import { Dataset } from '../../../dataset/entities/dataset.entity';
 import { Embedding } from '../../../dataset/entities/embedding.entity';
 import { ChunkingJob } from './chunking.job';
 import { EmbeddingJob } from './embedding.job';
-import { NerJob } from './ner.job';
 import { WorkerPoolService } from './worker-pool.service';
 import { JobRegistryService } from '../../services/job-registry.service';
 import { EmbeddingV2Service } from '../../../dataset/services/embedding-v2.service';
 import { ModelMappingService } from '../../../../common/services/model-mapping.service';
-import { EntityExtractionService } from '../../../dataset/services/entity-extraction.service';
 import { EmbeddingClientFactory } from '../../../../common/services/embedding-client-factory.service';
 import { ApiClientFactory } from '../../../../common/services/api-client-factory.service';
 import { LocalEmbeddingClient } from '../../../../common/services/local-embedding-client.service';
@@ -29,8 +27,8 @@ import { LocalLLMClient } from '../../../../common/services/local-llm-client.ser
 import { DashScopeApiClient } from '../../../../common/services/dashscope-api-client.service';
 import { LocalLLMService } from '../../../../common/services/local-llm.service';
 import { ChunkingService } from '../../../dataset/services/chunking.service';
+import { PostContentTransformerService } from '../../../dataset/services/post-content-transformer.service';
 import { EmbeddingProcessingService } from '../../../dataset/services/embedding-processing.service';
-import { NerProcessingService } from '../../../dataset/services/ner-processing.service';
 import { DocumentParserModule } from '../../../document-parser/document-parser.module';
 import { CsvConnectorModule } from '../../../csv-connector/csv-connector.module';
 import { DetectorService } from '../../../../common/services/detector.service';
@@ -58,6 +56,7 @@ import { AiProviderModule } from '../../../ai-provider/ai-provider.module';
 import { PromptsModule } from '../../../prompts/prompts.module';
 import { GraphModule } from '../../../graph/graph.module';
 import { EventModule } from '../../../event/event.module';
+import { PostsModule } from '../../../posts/posts.module';
 
 @Module({
   imports: [
@@ -81,23 +80,22 @@ import { EventModule } from '../../../event/event.module';
     forwardRef(() => PromptsModule),
     forwardRef(() => GraphModule),
     EventModule,
+    PostsModule,
   ],
   providers: [
     ChunkingJob,
     EmbeddingJob,
-    NerJob,
     WorkerPoolService,
     JobDispatcherService,
     QueueManagerService,
     EventBusService,
     NotificationService,
     // Add the services that the jobs need
+    PostContentTransformerService,
     ChunkingService,
     EmbeddingProcessingService,
-    NerProcessingService,
     EmbeddingV2Service,
     ModelMappingService,
-    EntityExtractionService,
     DetectorService,
     EmbeddingClientFactory,
     ApiClientFactory,
@@ -127,14 +125,13 @@ import { EventModule } from '../../../event/event.module';
     DocumentSegmentService,
     DocumentService,
   ],
-  exports: [ChunkingJob, EmbeddingJob, NerJob, WorkerPoolService, WorkflowJob],
+  exports: [ChunkingJob, EmbeddingJob, WorkerPoolService, WorkflowJob],
 })
 export class DocumentJobsModule {
   constructor(
     private readonly jobRegistry: JobRegistryService,
     private readonly chunkingJob: ChunkingJob,
     private readonly embeddingJob: EmbeddingJob,
-    private readonly nerJob: NerJob,
     private readonly workflowJob: WorkflowJob,
     private readonly dataSourceStep: DataSourceStep,
     private readonly stepRegistry: PipelineStepRegistry,
@@ -147,7 +144,6 @@ export class DocumentJobsModule {
     // Register jobs with the registry
     this.jobRegistry.register(this.chunkingJob);
     this.jobRegistry.register(this.embeddingJob);
-    this.jobRegistry.register(this.nerJob);
     this.jobRegistry.register(this.workflowJob);
 
     // Register pipeline steps

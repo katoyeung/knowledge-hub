@@ -28,6 +28,8 @@ import { Logger } from '@nestjs/common';
 import { EmbeddingConfigProcessorService } from './services/embedding-config-processor.service';
 import { UpdateGraphSettingsDto } from './dto/update-graph-settings.dto';
 import { UserService } from '../user/user.service';
+import { PostsService } from '../posts/posts.service';
+import { SyncPostsDto } from './dto/upload-document.dto';
 
 @Injectable()
 export class DatasetService extends TypeOrmCrudService<Dataset> {
@@ -54,6 +56,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     private readonly csvParserService: CsvParserService,
     private readonly csvTemplateService: CsvConnectorTemplateService,
     private readonly userService: UserService,
+    private readonly postsService: PostsService,
   ) {
     super(datasetRepository);
   }
@@ -487,6 +490,97 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
     return { dataset, documents };
   }
 
+  async syncPostsToDataset(
+    datasetId: string,
+    syncDto: SyncPostsDto,
+    userId: string,
+  ): Promise<{ dataset: Dataset; documents: Document[] }> {
+    const dataset = await this.datasetRepository.findOne({
+      where: { id: datasetId },
+    });
+
+    if (!dataset) {
+      throw new Error('Dataset not found');
+    }
+
+    // Get the next position for documents in this dataset
+    const existingDocs = await this.documentRepository.find({
+      where: { datasetId },
+      order: { position: 'DESC' },
+      take: 1,
+    });
+
+    let nextPosition =
+      existingDocs.length > 0 ? existingDocs[0].position + 1 : 1;
+
+    // Store post filters in document metadata (similar to CSV config)
+    // The actual posts will be fetched and processed during chunking
+    const postConfig = {
+      filters: {
+        hash: syncDto.hash,
+        provider: syncDto.provider,
+        source: syncDto.source,
+        title: syncDto.title,
+        metaKey: syncDto.metaKey,
+        metaValue: syncDto.metaValue,
+        userId: syncDto.userId,
+        postedAtStart: syncDto.postedAtStart,
+        postedAtEnd: syncDto.postedAtEnd,
+        startDate: syncDto.startDate,
+        endDate: syncDto.endDate,
+      },
+      syncedAt: new Date(),
+    };
+
+    // Create a single document to represent the posts sync (similar to how CSV file is one document)
+    // The document will be processed later, and posts will be grouped by source during chunking
+    const document = this.documentRepository.create({
+      datasetId: dataset.id,
+      position: nextPosition,
+      dataSourceType: 'posts',
+      batch: `posts_sync_${Date.now()}`,
+      name: 'Posts Sync',
+      createdFrom: 'posts_sync',
+      fileId: undefined, // No file for posts
+      docType: 'posts',
+      docForm: 'text_model',
+      docLanguage: 'en',
+      indexingStatus: 'waiting',
+      enabled: true,
+      archived: false,
+      userId,
+      docMetadata: {
+        postConfig, // Store filters for later processing
+      },
+    });
+
+    const savedDocument = await this.documentRepository.save(document);
+
+    // Emit document uploaded event
+    const uploadedEvent: DocumentUploadedEvent = {
+      type: EventTypes.DOCUMENT_UPLOADED,
+      payload: {
+        documentId: savedDocument.id,
+        datasetId: dataset.id,
+        userId,
+        filename: '', // No file for posts
+        originalName: 'Posts Sync',
+        mimeType: 'text/plain',
+        size: 0,
+        filePath: '', // No file for posts
+      },
+      timestamp: Date.now(),
+    };
+
+    this.eventEmitter.emit(EventTypes.DOCUMENT_UPLOADED, uploadedEvent);
+
+    await this.invalidateDatasetCache(datasetId);
+    this.logger.log(
+      `Successfully created posts sync document for dataset ${datasetId}`,
+    );
+    return { dataset, documents: [savedDocument] };
+  }
+
   async processDocuments(
     processDto: ProcessDocumentsDto,
     _userId: string,
@@ -558,7 +652,6 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
           enableParentChildChunking: processDto.enableParentChildChunking,
           useModelDefaults: processDto.useModelDefaults,
         },
-        nerEnabled: processDto.nerEnabled || false,
       });
 
       this.logger.log(

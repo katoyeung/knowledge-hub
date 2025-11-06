@@ -21,7 +21,6 @@ import { DocumentSegmentController } from './document-segment.controller';
 import { DocumentProcessingService } from './services/document-processing.service';
 import { EmbeddingV2Service } from './services/embedding-v2.service';
 import { HybridSearchService } from './services/hybrid-search.service';
-import { EntityExtractionService } from './services/entity-extraction.service';
 import { EmbeddingConfigProcessorService } from './services/embedding-config-processor.service';
 import { ApiClientFactory } from '../../common/services/api-client-factory.service';
 import { EmbeddingClientFactory } from '../../common/services/embedding-client-factory.service';
@@ -44,13 +43,14 @@ import { QueueModule } from '../queue/queue.module';
 import { BullModule } from '@nestjs/bull';
 // 🆕 Import new processing services
 import { ChunkingService } from './services/chunking.service';
+import { PostContentTransformerService } from './services/post-content-transformer.service';
 import { EmbeddingProcessingService } from './services/embedding-processing.service';
-import { NerProcessingService } from './services/ner-processing.service';
 import { JobDispatcherService } from '../queue/services/job-dispatcher.service';
 import { QueueManagerService } from '../queue/services/queue-manager.service';
 import { EventBusService } from '../event/services/event-bus.service';
 import { WorkerPoolService } from '../queue/jobs/document/worker-pool.service';
 import { UserModule } from '../user/user.module';
+import { PostsModule } from '../posts/posts.module';
 import { GraphNode } from '../graph/entities/graph-node.entity';
 import { GraphEdge } from '../graph/entities/graph-edge.entity';
 import { Prompt } from '../prompts/entities/prompt.entity';
@@ -81,6 +81,7 @@ import { AiProvider } from '../ai-provider/entities/ai-provider.entity';
     CsvConnectorModule,
     QueueModule,
     UserModule,
+    PostsModule,
     BullModule.registerQueue({
       name: 'default',
     }),
@@ -92,7 +93,6 @@ import { AiProvider } from '../ai-provider/entities/ai-provider.entity';
     DocumentProcessingService,
     EmbeddingV2Service,
     HybridSearchService,
-    EntityExtractionService,
     EmbeddingConfigProcessorService,
     ModelMappingService,
     DetectorService,
@@ -109,9 +109,10 @@ import { AiProvider } from '../ai-provider/entities/ai-provider.entity';
     LocalLLMClient,
     DashScopeApiClient,
     // 🆕 Add new processing services
+    // Note: ChunkingService needs PostsService, but PostsModule is already imported
+    PostContentTransformerService,
     ChunkingService,
     EmbeddingProcessingService,
-    NerProcessingService,
     JobDispatcherService,
     QueueManagerService,
     EventBusService,
@@ -126,9 +127,9 @@ import { AiProvider } from '../ai-provider/entities/ai-provider.entity';
     EmbeddingV2Service,
     EmbeddingProcessingService,
     HybridSearchService,
-    EntityExtractionService,
     ModelMappingService,
     EmbeddingConfigProcessorService,
+    PostContentTransformerService,
   ],
   controllers: [
     DatasetController,

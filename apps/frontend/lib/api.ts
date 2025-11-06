@@ -116,7 +116,7 @@ export interface Dataset {
 
 // Document processing metadata interface
 export interface DocumentProcessingMetadata {
-  currentStage: "chunking" | "embedding" | "ner" | "completed";
+  currentStage: "chunking" | "embedding" | "completed";
   chunking: {
     startedAt: Date;
     completedAt: Date;
@@ -127,13 +127,6 @@ export interface DocumentProcessingMetadata {
     completedAt: Date;
     processedCount: number;
     totalCount: number;
-  };
-  ner: {
-    startedAt: Date;
-    completedAt: Date;
-    processedCount: number;
-    totalCount: number;
-    enabled: boolean;
   };
 }
 
@@ -180,13 +173,6 @@ export interface Embedding {
   providerName: string;
 }
 
-// NER Keywords interface
-export interface NerKeywords {
-  extracted: string[];
-  count: number;
-  extractedAt: string;
-}
-
 // Document Segment API interface
 export interface DocumentSegment {
   id: string;
@@ -197,7 +183,6 @@ export interface DocumentSegment {
   answer?: string;
   wordCount: number;
   tokens: number;
-  keywords?: NerKeywords;
   indexNodeId?: string;
   indexNodeHash?: string;
   hitCount: number;
@@ -417,8 +402,6 @@ export const datasetApi = {
     separators?: string[];
     // 🆕 Parent-Child Chunking option
     enableParentChildChunking?: boolean;
-    // 🆕 NER processing option
-    nerEnabled?: boolean;
   }): Promise<{
     success: boolean;
     message: string;
@@ -428,6 +411,25 @@ export const datasetApi = {
     };
   }> => {
     const response = await apiClient.post("/datasets/process-documents", data);
+    return response.data;
+  },
+
+  // Sync posts to dataset
+  syncPostsFromDataset: async (
+    datasetId: string,
+    filters: PostSearchParams
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      dataset: Dataset;
+      documents: Document[];
+    };
+  }> => {
+    const response = await apiClient.post(
+      `/datasets/${datasetId}/sync-posts`,
+      filters
+    );
     return response.data;
   },
 
@@ -549,14 +551,37 @@ export const datasetApi = {
 // Document API functions
 export const documentApi = {
   // Get documents by dataset ID
-  getByDataset: async (datasetId: string): Promise<Document[]> => {
+  getByDataset: async (
+    datasetId: string,
+    page: number = 1,
+    limit: number = 20
+  ): Promise<{
+    data: Document[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> => {
     const response = await apiClient.get(
-      `/documents?filter=datasetId||eq||${datasetId}`
+      `/documents?filter=datasetId||eq||${datasetId}&page=${page}&limit=${limit}&sort=createdAt,DESC`
     );
     // Handle both direct array response and paginated response
-    return Array.isArray(response.data)
-      ? response.data
-      : response.data.data || [];
+    if (Array.isArray(response.data)) {
+      return {
+        data: response.data,
+        count: response.data.length,
+        total: response.data.length,
+        page: 1,
+        pageCount: 1,
+      };
+    }
+    return {
+      data: response.data.data || [],
+      count: response.data.count || 0,
+      total: response.data.total || 0,
+      page: response.data.page || 1,
+      pageCount: response.data.pageCount || 1,
+    };
   },
 
   // Upload documents
@@ -655,6 +680,20 @@ export const documentApi = {
   delete: async (id: string): Promise<boolean> => {
     await apiClient.delete(`/documents/${id}`);
     return true;
+  },
+
+  // Delete all documents in a dataset
+  deleteAllByDataset: async (
+    datasetId: string
+  ): Promise<{
+    success: boolean;
+    deletedCount: number;
+    message: string;
+  }> => {
+    const response = await apiClient.delete(
+      `/documents/dataset/${datasetId}/all`
+    );
+    return response.data;
   },
 
   // Resume document processing

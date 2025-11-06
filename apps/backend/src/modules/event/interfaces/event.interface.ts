@@ -73,10 +73,7 @@ export interface DocumentEvent extends BaseEvent {
     | EventTypes.DOCUMENT_CHUNKING_FAILED
     | EventTypes.DOCUMENT_EMBEDDING_STARTED
     | EventTypes.DOCUMENT_EMBEDDING_COMPLETED
-    | EventTypes.DOCUMENT_EMBEDDING_FAILED
-    | EventTypes.DOCUMENT_NER_STARTED
-    | EventTypes.DOCUMENT_NER_COMPLETED
-    | EventTypes.DOCUMENT_NER_FAILED;
+    | EventTypes.DOCUMENT_EMBEDDING_FAILED;
   payload: {
     documentId: string;
     datasetId?: string;

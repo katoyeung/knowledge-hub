@@ -1,0 +1,469 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import * as request from 'supertest';
+
+import { AppModule } from '../src/app.module';
+import { AuthHelper } from './auth-helper';
+import { Post } from '../src/modules/posts/entities/post.entity';
+import { Document } from '../src/modules/dataset/entities/document.entity';
+import { DocumentSegment } from '../src/modules/dataset/entities/document-segment.entity';
+
+describe('Dataset Posts Source E2E Tests', () => {
+  let app: INestApplication;
+  let dataSource: DataSource;
+  let jwtToken: string;
+  let userId: string;
+  let datasetId: string;
+  let createdPostIds: string[] = [];
+  let createdDocumentIds: string[] = [];
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+    dataSource = app.get(DataSource);
+
+    // Get JWT token for authentication
+    const authResult = await AuthHelper.authenticateAsAdmin(app);
+    jwtToken = authResult.jwtToken;
+    userId = authResult.user.id;
+  });
+
+  afterAll(async () => {
+    // Clean up test data
+    if (dataSource) {
+      // Delete segments
+      if (createdDocumentIds.length > 0) {
+        await dataSource.query(
+          `DELETE FROM document_segments WHERE document_id = ANY($1::uuid[])`,
+          [createdDocumentIds],
+        );
+      }
+
+      // Delete documents
+      if (createdDocumentIds.length > 0) {
+        await dataSource.query(
+          `DELETE FROM documents WHERE id = ANY($1::uuid[])`,
+          [createdDocumentIds],
+        );
+      }
+
+      // Delete dataset
+      if (datasetId) {
+        await dataSource.query('DELETE FROM datasets WHERE id = $1', [
+          datasetId,
+        ]);
+      }
+
+      // Delete created posts
+      if (createdPostIds.length > 0) {
+        await dataSource.query(`DELETE FROM posts WHERE id = ANY($1::uuid[])`, [
+          createdPostIds,
+        ]);
+      }
+    }
+    await app.close();
+  });
+
+  describe('Posts Source Flow - Complete Workflow', () => {
+    it('should create posts, sync to dataset, chunk, embed, and search successfully', async () => {
+      // Step 1: Create test posts with meta.content
+      const testPosts = [
+        {
+          hash: `test-post-1-${Date.now()}`,
+          provider: 'test-provider',
+          source: 'test-source-1',
+          title: 'Test Post 1 Title',
+          meta: {
+            content: 'This is the first test post content about machine learning and artificial intelligence. It discusses neural networks and deep learning algorithms.',
+            category: 'technology',
+            author: 'Test Author 1',
+          },
+          postedAt: new Date('2025-01-01'),
+          userId,
+        },
+        {
+          hash: `test-post-2-${Date.now()}`,
+          provider: 'test-provider',
+          source: 'test-source-1',
+          title: 'Test Post 2 Title',
+          meta: {
+            content: 'This is the second test post content about natural language processing. It covers transformers and BERT models.',
+            category: 'technology',
+            author: 'Test Author 2',
+          },
+          postedAt: new Date('2025-01-02'),
+          userId,
+        },
+        {
+          hash: `test-post-3-${Date.now()}`,
+          provider: 'test-provider',
+          source: 'test-source-2',
+          title: 'Test Post 3 Title',
+          meta: {
+            content: 'This is the third test post content about data science and analytics. It includes information about pandas and numpy.',
+            category: 'data-science',
+            author: 'Test Author 3',
+          },
+          postedAt: new Date('2025-01-03'),
+          userId,
+        },
+      ];
+
+      // Create posts via API
+      for (const postData of testPosts) {
+        const createResponse = await request(app.getHttpServer())
+          .post('/posts')
+          .set(AuthHelper.getAuthHeader(jwtToken))
+          .send(postData)
+          .expect(201);
+
+        createdPostIds.push(createResponse.body.id);
+      }
+
+      expect(createdPostIds.length).toBe(3);
+
+      // Step 2: Create a dataset
+      const createDatasetResponse = await request(app.getHttpServer())
+        .post('/datasets')
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send({
+          name: 'Test Posts Dataset',
+          description: 'Test dataset for posts source',
+          provider: 'test',
+          permission: 'only_me',
+        })
+        .expect(201);
+
+      datasetId = createDatasetResponse.body.id;
+      expect(datasetId).toBeDefined();
+
+      // Step 3: Sync posts to dataset using filters
+      const syncPostsResponse = await request(app.getHttpServer())
+        .post(`/datasets/${datasetId}/sync-posts`)
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send({
+          provider: 'test-provider',
+        })
+        .expect(201);
+
+      expect(syncPostsResponse.body.success).toBe(true);
+      expect(syncPostsResponse.body.data.documents.length).toBeGreaterThan(0);
+
+      // Get the created document IDs
+      const documents = syncPostsResponse.body.data.documents;
+      documents.forEach((doc: Document) => {
+        if (doc.id) {
+          createdDocumentIds.push(doc.id);
+        }
+      });
+
+      // Step 4: Update dataset with embedding config and trigger processing
+      await request(app.getHttpServer())
+        .patch(`/datasets/${datasetId}`)
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send({
+          embeddingModel: 'Xenova/bge-m3',
+          embeddingModelProvider: 'local',
+          embeddingConfig: {
+            model: 'Xenova/bge-m3',
+            provider: 'local',
+            textSplitter: 'recursive_character',
+            chunkSize: 512,
+            chunkOverlap: 50,
+            enableParentChildChunking: false,
+          },
+        })
+        .expect(200);
+
+      // Trigger processing
+      const processResponse = await request(app.getHttpServer())
+        .post('/datasets/process-documents')
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send({
+          datasetId,
+          embeddingModel: 'Xenova/bge-m3',
+          embeddingProvider: 'local',
+          textSplitter: 'recursive_character',
+          chunkSize: 512,
+          chunkOverlap: 50,
+          enableParentChildChunking: false,
+        })
+        .expect(201);
+
+      // Wait for processing to complete (poll document status)
+      let allChunked = false;
+      let attempts = 0;
+      const maxAttempts = 60; // 60 seconds max wait
+
+      while (!allChunked && attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const documentsResponse = await request(app.getHttpServer())
+          .get(`/documents?filter=datasetId||eq||${datasetId}`)
+          .set(AuthHelper.getAuthHeader(jwtToken))
+          .expect(200);
+
+        const docs = Array.isArray(documentsResponse.body)
+          ? documentsResponse.body
+          : documentsResponse.body.data || [];
+
+        allChunked = docs.every(
+          (doc: Document) =>
+            doc.indexingStatus === 'chunked' ||
+            doc.indexingStatus === 'completed' ||
+            doc.indexingStatus === 'error',
+        );
+
+        if (!allChunked) {
+          attempts++;
+        }
+      }
+
+      expect(allChunked).toBe(true);
+
+      // Verify segments were created from post meta.content
+      const segmentsResponse = await request(app.getHttpServer())
+        .get(`/document-segments?filter=datasetId||eq||${datasetId}`)
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .expect(200);
+
+      const segments = Array.isArray(segmentsResponse.body)
+        ? segmentsResponse.body
+        : segmentsResponse.body.data || [];
+
+      expect(segments.length).toBeGreaterThan(0);
+
+      // Verify segment content includes meta.content
+      const testSegment = segments.find(
+        (seg: DocumentSegment) =>
+          seg.content &&
+          seg.content.includes('machine learning and artificial intelligence'),
+      );
+      expect(testSegment).toBeDefined();
+      expect(testSegment.content).toContain(
+        'machine learning and artificial intelligence',
+      );
+
+      // Verify segments are grouped by source (documents created per source)
+      const documentsCheckResponse = await request(app.getHttpServer())
+        .get(`/documents?filter=datasetId||eq||${datasetId}`)
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .expect(200);
+
+      const finalDocs = Array.isArray(documentsCheckResponse.body)
+        ? documentsCheckResponse.body
+        : documentsCheckResponse.body.data || [];
+
+      // Should have documents for each source (test-source-1 and test-source-2)
+      const sourceDocuments = finalDocs.filter(
+        (doc: Document) => doc.docType === 'post_source',
+      );
+      expect(sourceDocuments.length).toBeGreaterThanOrEqual(2); // At least 2 sources
+
+      // Step 5: Wait for embedding to complete
+      let allEmbedded = false;
+      attempts = 0;
+
+      while (!allEmbedded && attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const documentsResponse = await request(app.getHttpServer())
+          .get(`/documents?filter=datasetId||eq||${datasetId}`)
+          .set(AuthHelper.getAuthHeader(jwtToken))
+          .expect(200);
+
+        const docs = Array.isArray(documentsResponse.body)
+          ? documentsResponse.body
+          : documentsResponse.body.data || [];
+
+        allEmbedded = docs.every(
+          (doc: Document) =>
+            doc.indexingStatus === 'completed' ||
+            doc.indexingStatus === 'error',
+        );
+
+        if (!allEmbedded) {
+          attempts++;
+        }
+      }
+
+      expect(allEmbedded).toBe(true);
+
+      // Step 6: Test search functionality
+      const searchResponse = await request(app.getHttpServer())
+        .post('/datasets/search')
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send({
+          datasetId,
+          query: 'machine learning',
+          topK: 5,
+          embeddingConfig: {
+            model: 'Xenova/bge-m3',
+            provider: 'local',
+          },
+        })
+        .expect(201);
+
+      expect(searchResponse.body.success).toBe(true);
+      expect(searchResponse.body.data.results.length).toBeGreaterThan(0);
+
+      // Verify search results contain relevant content
+      const searchResults = searchResponse.body.data.results;
+      const hasRelevantResult = searchResults.some(
+        (result: any) =>
+          result.segment?.content?.toLowerCase().includes('machine learning') ||
+          result.segment?.content?.toLowerCase().includes('artificial intelligence'),
+      );
+
+      expect(hasRelevantResult).toBe(true);
+
+      // Verify search results include post metadata
+      const resultWithMetadata = searchResults.find(
+        (result: any) => result.segment?.hierarchyMetadata?.postHash,
+      );
+      expect(resultWithMetadata).toBeDefined();
+      expect(resultWithMetadata.segment.hierarchyMetadata.source).toBeDefined();
+      expect(
+        resultWithMetadata.segment.hierarchyMetadata.postHash,
+      ).toBeDefined();
+    }, 120000); // 2 minute timeout for complete flow
+
+    it('should properly convert post meta.content into segment content', async () => {
+      // Create a post with specific content in meta
+      const testContent = `This is a detailed test post content that should be converted to a segment. 
+      It contains information about TypeScript, NestJS, and database management.
+      The content should be searchable after embedding.`;
+
+      const postData = {
+        hash: `test-meta-content-${Date.now()}`,
+        provider: 'test-provider',
+        source: 'test-meta-source',
+        title: 'Meta Content Test',
+        meta: {
+          content: testContent,
+          extra: 'some extra metadata',
+        },
+        postedAt: new Date(),
+        userId,
+      };
+
+      const createPostResponse = await request(app.getHttpServer())
+        .post('/posts')
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send(postData)
+        .expect(201);
+
+      const postId = createPostResponse.body.id;
+      createdPostIds.push(postId);
+
+      // Create dataset
+      const createDatasetResponse = await request(app.getHttpServer())
+        .post('/datasets')
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send({
+          name: 'Test Meta Content Dataset',
+          description: 'Test meta content conversion',
+          provider: 'test',
+          permission: 'only_me',
+        })
+        .expect(201);
+
+      const testDatasetId = createDatasetResponse.body.id;
+
+      // Sync posts
+      await request(app.getHttpServer())
+        .post(`/datasets/${testDatasetId}/sync-posts`)
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send({
+          source: 'test-meta-source',
+        })
+        .expect(201);
+
+      // Update dataset with embedding config
+      await request(app.getHttpServer())
+        .patch(`/datasets/${testDatasetId}`)
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send({
+          embeddingModel: 'Xenova/bge-m3',
+          embeddingModelProvider: 'local',
+        })
+        .expect(200);
+
+      // Process documents
+      await request(app.getHttpServer())
+        .post('/datasets/process-documents')
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .send({
+          datasetId: testDatasetId,
+          embeddingModel: 'Xenova/bge-m3',
+          embeddingProvider: 'local',
+          textSplitter: 'recursive_character',
+          chunkSize: 512,
+          chunkOverlap: 50,
+          enableParentChildChunking: false,
+        })
+        .expect(201);
+
+      // Wait for chunking
+      let chunked = false;
+      let attempts = 0;
+      while (!chunked && attempts < 30) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const docsResponse = await request(app.getHttpServer())
+          .get(`/documents?filter=datasetId||eq||${testDatasetId}`)
+          .set(AuthHelper.getAuthHeader(jwtToken))
+          .expect(200);
+
+        const docs = Array.isArray(docsResponse.body)
+          ? docsResponse.body
+          : docsResponse.body.data || [];
+
+        chunked = docs.some(
+          (doc: Document) =>
+            doc.indexingStatus === 'chunked' ||
+            doc.indexingStatus === 'completed',
+        );
+        attempts++;
+      }
+
+      // Verify segment content matches meta.content
+      const segmentsResponse = await request(app.getHttpServer())
+        .get(`/document-segments?filter=datasetId||eq||${testDatasetId}`)
+        .set(AuthHelper.getAuthHeader(jwtToken))
+        .expect(200);
+
+      const segments = Array.isArray(segmentsResponse.body)
+        ? segmentsResponse.body
+        : segmentsResponse.body.data || [];
+
+      const matchingSegment = segments.find(
+        (seg: DocumentSegment) =>
+          seg.content &&
+          seg.content.includes('TypeScript, NestJS, and database management'),
+      );
+
+      expect(matchingSegment).toBeDefined();
+      expect(matchingSegment.content).toContain('TypeScript');
+      expect(matchingSegment.content).toContain('NestJS');
+      expect(matchingSegment.content).toContain('database management');
+
+      // Cleanup
+      await dataSource.query(
+        'DELETE FROM document_segments WHERE dataset_id = $1',
+        [testDatasetId],
+      );
+      await dataSource.query('DELETE FROM documents WHERE dataset_id = $1', [
+        testDatasetId,
+      ]);
+      await dataSource.query('DELETE FROM datasets WHERE id = $1', [
+        testDatasetId,
+      ]);
+    }, 60000);
+  });
+});
+

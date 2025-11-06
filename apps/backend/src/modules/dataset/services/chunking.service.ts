@@ -1,10 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { join } from 'path';
 import { Document } from '../entities/document.entity';
 import { DocumentSegment } from '../entities/document-segment.entity';
-import { promises as fs } from 'fs';
-import { join } from 'path';
 import {
   RagflowPdfParserService,
   RagflowParseOptions,
@@ -14,6 +13,8 @@ import { ChineseTextPreprocessorService } from '../../document-parser/services/c
 import { DetectorService } from '../../../common/services/detector.service';
 import { CsvParserService } from '../../csv-connector/services/csv-parser.service';
 import { CsvConnectorTemplateService } from '../../csv-connector/services/csv-connector-template.service';
+import { PostsService } from '../../posts/posts.service';
+import { PostContentTransformerService } from './post-content-transformer.service';
 import {
   EmbeddingModel,
   getEffectiveChunkSize,
@@ -48,6 +49,8 @@ export class ChunkingService {
     private readonly detectorService: DetectorService,
     private readonly csvParserService: CsvParserService,
     private readonly csvTemplateService: CsvConnectorTemplateService,
+    private readonly postsService: PostsService,
+    private readonly postContentTransformer: PostContentTransformerService,
   ) {}
 
   async createSegments(
@@ -64,6 +67,14 @@ export class ChunkingService {
         `[CHUNKING] Processing CSV file for document ${document.id}`,
       );
       return this.processCsvDocument(document, datasetId, userId);
+    }
+
+    // Handle posts documents differently (group by source)
+    if (document.docType === 'posts') {
+      this.logger.log(
+        `[CHUNKING] Processing posts document for document ${document.id}`,
+      );
+      return this.processPostsDocument(document, datasetId, userId);
     }
 
     // Extract text from file for non-CSV documents
@@ -238,6 +249,192 @@ export class ChunkingService {
     } catch (error) {
       this.logger.error(
         `[CHUNKING] Failed to process CSV document ${document.id}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Process posts document by fetching posts, grouping by source, and creating documents and segments
+   * Similar to CSV processing: one document per source (like one CSV file), each post becomes a segment (like CSV rows)
+   */
+  private async processPostsDocument(
+    document: Document,
+    datasetId: string,
+    userId: string,
+  ): Promise<DocumentSegment[]> {
+    try {
+      // Get post configuration from document metadata
+      const docMetadata = document.docMetadata as any;
+      const postConfig = docMetadata?.postConfig;
+      if (!postConfig || !postConfig.filters) {
+        throw new Error('Post configuration not found in document metadata');
+      }
+
+      this.logger.log(
+        `[CHUNKING] Processing posts document ${document.id} with filters`,
+      );
+
+      // Convert stored filters to PostSearchFilters format
+      const filters: any = {
+        hash: postConfig.filters.hash,
+        provider: postConfig.filters.provider,
+        source: postConfig.filters.source,
+        title: postConfig.filters.title,
+        metaKey: postConfig.filters.metaKey,
+        metaValue: postConfig.filters.metaValue,
+        userId: postConfig.filters.userId,
+        postedAtStart: postConfig.filters.postedAtStart
+          ? new Date(postConfig.filters.postedAtStart)
+          : undefined,
+        postedAtEnd: postConfig.filters.postedAtEnd
+          ? new Date(postConfig.filters.postedAtEnd)
+          : undefined,
+        startDate: postConfig.filters.startDate
+          ? new Date(postConfig.filters.startDate)
+          : undefined,
+        endDate: postConfig.filters.endDate
+          ? new Date(postConfig.filters.endDate)
+          : undefined,
+        // Fetch all matching posts
+        limit: 100000, // Large limit to get all matching posts
+      };
+
+      // Fetch posts using PostsService
+      const searchResult = await this.postsService.search(filters);
+      const posts = searchResult.data;
+
+      if (posts.length === 0) {
+        this.logger.log(
+          `[CHUNKING] No posts found matching filters for document ${document.id}`,
+        );
+        // Delete the placeholder document since no posts found
+        await this.documentRepository.delete(document.id);
+        return [];
+      }
+
+      this.logger.log(
+        `[CHUNKING] Found ${posts.length} posts, grouping by source`,
+      );
+
+      // Group posts by source (similar to how CSV rows are grouped by file)
+      const postsBySource = new Map<string, typeof posts>();
+      for (const post of posts) {
+        const source = post.source || 'unknown';
+        if (!postsBySource.has(source)) {
+          postsBySource.set(source, []);
+        }
+        postsBySource.get(source)!.push(post);
+      }
+
+      this.logger.log(`[CHUNKING] Grouped into ${postsBySource.size} sources`);
+
+      // Get the next position for documents in this dataset
+      const existingDocs = await this.documentRepository.find({
+        where: { datasetId },
+        order: { position: 'DESC' },
+        take: 1,
+      });
+
+      let nextPosition =
+        existingDocs.length > 0 ? existingDocs[0].position + 1 : 1;
+
+      const allSegments: DocumentSegment[] = [];
+      const batch = `posts_sync_${Date.now()}`;
+
+      // For each source, create a document and segments for its posts
+      for (const [source, sourcePosts] of postsBySource.entries()) {
+        // Create a document for this source (like one CSV file = one document)
+        const sourceDocument = this.documentRepository.create({
+          datasetId,
+          position: nextPosition++,
+          dataSourceType: 'posts',
+          batch,
+          name: source,
+          createdFrom: 'posts_sync',
+          fileId: undefined,
+          docType: 'post_source', // Mark as post source document
+          docForm: 'text_model',
+          docLanguage: 'en',
+          indexingStatus: 'waiting',
+          enabled: true,
+          archived: false,
+          userId,
+          docMetadata: {
+            source,
+            postCount: sourcePosts.length,
+            syncedAt: new Date(),
+          },
+        });
+
+        const savedSourceDocument =
+          await this.documentRepository.save(sourceDocument);
+
+        // Create segments for each post in this source (like CSV rows = segments)
+        for (let i = 0; i < sourcePosts.length; i++) {
+          const post = sourcePosts[i];
+
+          // Transform post content using PostContentTransformerService
+          const postContent =
+            this.postContentTransformer.transformPostToContent(post);
+
+          const segment = this.segmentRepository.create({
+            datasetId,
+            documentId: savedSourceDocument.id,
+            position: i + 1,
+            content: postContent,
+            wordCount: this.countWords(postContent),
+            tokens: this.estimateTokens(postContent),
+            segmentType: 'post',
+            hierarchyLevel: 1,
+            childCount: 0,
+            hierarchyMetadata: {
+              postId: post.id,
+              postHash: post.hash,
+              provider: post.provider,
+              source: post.source,
+              title: post.title,
+              postedAt: post.postedAt,
+            },
+            status: 'waiting',
+            enabled: true,
+            userId,
+          });
+
+          allSegments.push(segment);
+        }
+
+        this.logger.log(
+          `[CHUNKING] Created document for source "${source}" with ${sourcePosts.length} posts`,
+        );
+      }
+
+      // Save all segments in batches to avoid PostgreSQL parameter limits
+      const batchSize = 100; // Save 100 segments at a time
+      const savedSegments: DocumentSegment[] = [];
+
+      for (let i = 0; i < allSegments.length; i += batchSize) {
+        const batch = allSegments.slice(i, i + batchSize);
+        const savedBatch = await this.segmentRepository.save(batch);
+        savedSegments.push(...savedBatch);
+
+        this.logger.log(
+          `[CHUNKING] Saved batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(allSegments.length / batchSize)} (${savedBatch.length} segments)`,
+        );
+      }
+
+      // Delete the placeholder document since we've created source-specific documents
+      await this.documentRepository.delete(document.id);
+
+      this.logger.log(
+        `[CHUNKING] Created ${postsBySource.size} documents and ${savedSegments.length} segments from ${posts.length} posts`,
+      );
+
+      return savedSegments;
+    } catch (error) {
+      this.logger.error(
+        `[CHUNKING] Failed to process posts document ${document.id}:`,
         error,
       );
       throw error;
@@ -800,7 +997,7 @@ export class ChunkingService {
       }
     }
 
-    return this.postProcessChunks(chunks, chunkSize, chunkOverlap);
+    return this.postProcessChunks(chunks, chunkSize);
   }
 
   private smartSentenceChunking(
@@ -985,7 +1182,6 @@ export class ChunkingService {
   private postProcessChunks(
     chunks: string[],
     targetChunkSize: number,
-    _overlapSize: number,
   ): string[] {
     if (chunks.length <= 1) {
       return chunks;

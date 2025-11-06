@@ -11,7 +11,6 @@ import {
 } from '@/components/ui/dialog'
 import { FileText, Loader2, Calendar, File, ChevronDown, ChevronUp, Eye, EyeOff, Search, Network } from 'lucide-react'
 import { documentSegmentApi, graphApi, type Document, type DocumentSegment } from '@/lib/api'
-import { NerResultsDisplay } from './ner-results-display'
 import { DocumentSearch } from './document-search'
 
 interface DocumentPreviewModalProps {
@@ -30,7 +29,6 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
     const [loadingMore, setLoadingMore] = useState(false)
     const [showAll, setShowAll] = useState(false)
     const [segmentStatusCounts, setSegmentStatusCounts] = useState<Record<string, number>>({})
-    const [showNerResults, setShowNerResults] = useState(true)
     const [viewMode, setViewMode] = useState<'combined' | 'segments'>('segments')
     const [highlightedSegmentId, setHighlightedSegmentId] = useState<string | null>(null)
     const [showSearch, setShowSearch] = useState(false)
@@ -125,12 +123,11 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
     useEffect(() => {
         if (!isOpen || !document) return
 
-        const isDocumentProcessing = ['embedding', 'ner', 'processing', 'parsing', 'splitting', 'indexing'].includes(document.indexingStatus)
+        const isDocumentProcessing = ['embedding', 'processing', 'parsing', 'splitting', 'indexing'].includes(document.indexingStatus)
 
         // Check if there are still segments being processed
         const hasProcessingSegments = segmentStatusCounts && (
             segmentStatusCounts.embedding > 0 ||
-            segmentStatusCounts.ner > 0 ||
             segmentStatusCounts.processing > 0 ||
             segmentStatusCounts.parsing > 0 ||
             segmentStatusCounts.splitting > 0 ||
@@ -233,7 +230,6 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
         const embedded = segmentStatusCounts.embedded || 0
         const embedding = segmentStatusCounts.embedding || 0
         const chunked = segmentStatusCounts.chunked || 0
-        const nerProcessed = segmentStatusCounts.ner_processed || 0
         const parsing = segmentStatusCounts.parsing || 0
         const splitting = segmentStatusCounts.splitting || 0
         const indexing = segmentStatusCounts.indexing || 0
@@ -287,21 +283,9 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                 percentage,
                 details: `Creating vector embeddings for semantic search`
             }
-        } else if (document?.indexingStatus === 'ner') {
-            const remaining = total - nerProcessed
-            const completed = nerProcessed
-            const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
-            return {
-                stage: 'NER Processing',
-                completed,
-                remaining,
-                total,
-                percentage,
-                details: `Extracting named entities and relationships`
-            }
         } else if (document?.indexingStatus === 'processing') {
             // Generic processing status - show overall progress
-            const completed = embedded + nerProcessed
+            const completed = embedded
             const remaining = total - completed
             const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
             return {
@@ -375,7 +359,7 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                 <div className="px-1 py-2 border-b border-gray-200">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            {document.indexingStatus === 'processing' || document.indexingStatus === 'parsing' || document.indexingStatus === 'splitting' || document.indexingStatus === 'indexing' || document.indexingStatus === 'embedding' || document.indexingStatus === 'ner' ? (
+                            {document.indexingStatus === 'processing' || document.indexingStatus === 'parsing' || document.indexingStatus === 'splitting' || document.indexingStatus === 'indexing' || document.indexingStatus === 'embedding' ? (
                                 <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
                             ) : document.indexingStatus === 'completed' ? (
                                 <div className="h-4 w-4 rounded-full bg-green-500"></div>
@@ -388,13 +372,13 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                             )}
                             <span className={`text-sm font-medium ${document.indexingStatus === 'completed' ? 'text-green-700' :
                                 document.indexingStatus === 'error' ? 'text-red-700' :
-                                    document.indexingStatus === 'processing' || document.indexingStatus === 'parsing' || document.indexingStatus === 'splitting' || document.indexingStatus === 'indexing' || document.indexingStatus === 'embedding' || document.indexingStatus === 'ner' ? 'text-blue-700' :
+                                    document.indexingStatus === 'processing' || document.indexingStatus === 'parsing' || document.indexingStatus === 'splitting' || document.indexingStatus === 'indexing' || document.indexingStatus === 'embedding' ? 'text-blue-700' :
                                         'text-gray-700'
                                 }`}>
                                 {document.indexingStatus === 'completed' ? `Processing completed - ${totalSegments} segments processed` :
                                     document.indexingStatus === 'error' ? `Processing failed - Unknown error` :
                                         document.indexingStatus === 'waiting' ? 'Waiting to start processing...' :
-                                            document.indexingStatus === 'processing' || document.indexingStatus === 'parsing' || document.indexingStatus === 'splitting' || document.indexingStatus === 'indexing' || document.indexingStatus === 'embedding' || document.indexingStatus === 'ner' ?
+                                            document.indexingStatus === 'processing' || document.indexingStatus === 'parsing' || document.indexingStatus === 'splitting' || document.indexingStatus === 'indexing' || document.indexingStatus === 'embedding' ?
                                                 (() => {
                                                     const progress = getProcessingProgress()
                                                     if (progress) {
@@ -456,7 +440,6 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                                         {(() => {
                                             const hasProcessingSegments = segmentStatusCounts && (
                                                 segmentStatusCounts.embedding > 0 ||
-                                                segmentStatusCounts.ner > 0 ||
                                                 segmentStatusCounts.processing > 0 ||
                                                 segmentStatusCounts.parsing > 0 ||
                                                 segmentStatusCounts.splitting > 0 ||
@@ -569,17 +552,6 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                                         {showSearch ? 'Hide Search' : 'Search'}
                                     </Button>
 
-                                    {viewMode === 'segments' && (
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => setShowNerResults(!showNerResults)}
-                                            className="flex items-center gap-2"
-                                        >
-                                            {showNerResults ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                                            {showNerResults ? 'Hide NER' : 'Show NER'}
-                                        </Button>
-                                    )}
                                 </div>
                             </div>
 
@@ -617,9 +589,7 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                                                             Segment {segment.position}
                                                         </span>
                                                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${segment.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                                            segment.status === 'ner_processing' ? 'bg-blue-100 text-blue-800' :
-                                                                segment.status === 'ner_failed' ? 'bg-red-100 text-red-800' :
-                                                                    'bg-gray-100 text-gray-800'
+                                                            'bg-gray-100 text-gray-800'
                                                             }`}>
                                                             {segment.status}
                                                         </span>
@@ -635,14 +605,6 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                                                     </div>
                                                 </div>
 
-                                                {showNerResults && segment.keywords && segment.keywords.extracted && segment.keywords.extracted.length > 0 && (
-                                                    <NerResultsDisplay
-                                                        keywords={segment.keywords}
-                                                        status={segment.status}
-                                                        compact={false}
-                                                        showHeader={true}
-                                                    />
-                                                )}
 
                                                 {/* Graph Data Display */}
                                                 {((segment.graphNodes?.length || 0) > 0 || (segment.graphEdges?.length || 0) > 0) && (

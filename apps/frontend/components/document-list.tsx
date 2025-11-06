@@ -85,9 +85,9 @@ export function DocumentList({ datasetId, dataset, onDocumentsChange, onDatasetD
         try {
             setLoading(true)
             setError(null)
-            const docs = await documentApi.getByDataset(datasetId)
-            setDocuments(docs)
-            onDocumentsChange?.(docs)
+            const result = await documentApi.getByDataset(datasetId, 1, 20)
+            setDocuments(result.data)
+            onDocumentsChange?.(result.data)
         } catch (err) {
             console.error('Failed to fetch documents:', err)
             setError('Failed to load documents')

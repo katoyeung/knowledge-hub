@@ -6,9 +6,11 @@ import {
   IsEnum,
   IsObject,
   IsArray,
+  IsDateString,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { CsvConnectorType } from '../../csv-connector/dto/csv-upload-config.dto';
+import { PostSearchFilters } from '../../posts/posts.service';
 
 export class UploadDocumentDto {
   @IsOptional()
@@ -92,4 +94,55 @@ export class UploadDocumentDto {
   @IsArray()
   @IsString({ each: true })
   csvSearchableColumns?: string[]; // For custom connector
+}
+
+export class SyncPostsDto {
+  @IsOptional()
+  @IsString()
+  hash?: string;
+
+  @IsOptional()
+  @IsString()
+  provider?: string;
+
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  metaKey?: string;
+
+  @IsOptional()
+  metaValue?: any;
+
+  @IsOptional()
+  @IsUUID(4)
+  userId?: string;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  postedAtStart?: string;
+
+  @IsOptional()
+  @IsDateString()
+  postedAtEnd?: string;
+
+  @IsOptional()
+  page?: number;
+
+  @IsOptional()
+  limit?: number;
 }
