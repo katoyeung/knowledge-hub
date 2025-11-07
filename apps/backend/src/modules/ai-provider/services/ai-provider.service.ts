@@ -82,15 +82,11 @@ export class AiProviderService extends TypeOrmCrudService<AiProvider> {
     ttl: 3600,
   })
   override async getOne(req: CrudRequest): Promise<AiProvider> {
-    const result = await super.getOne(req);
-    console.log('AI Provider getOne result:', result);
-    return result;
+    return await super.getOne(req);
   }
 
   override async getMany(req: CrudRequest) {
-    const result = await super.getMany(req);
-    console.log('AI Provider getMany result:', result);
-    return result;
+    return await super.getMany(req);
   }
 
   override async createOne(

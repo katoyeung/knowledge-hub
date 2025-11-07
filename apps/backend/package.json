@@ -9,7 +9,7 @@
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "node --experimental-vm-modules dist/main.js",
-    "dev": "nest start --watch --entryFile main-cluster",
+    "dev": "NODE_OPTIONS='--max-old-space-size=8192' nest start --watch --entryFile main-cluster",
     "dev:watch": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node --experimental-vm-modules dist/main-cluster.js",

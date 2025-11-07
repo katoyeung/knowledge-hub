@@ -125,7 +125,7 @@ export function DatasetLeftRightLayout({
                         <div className="flex-1 min-h-0">
                             {activeRightTab === 'chat' && (
                                 <DatasetChatPanel
-                                    key={`chat-${datasetId}-${activeRightTab}`}
+                                    key={`chat-${datasetId}`}
                                     datasetId={datasetId}
                                     selectedDocumentId={selectedDocument?.id}
                                     selectedDocumentIds={selectedDocuments.map(doc => doc.id)}
@@ -213,7 +213,7 @@ export function DatasetLeftRightLayout({
                 <div className="flex-1 min-h-0">
                     {activeRightTab === 'chat' && (
                         <DatasetChatPanel
-                            key={`chat-${datasetId}-${activeRightTab}`}
+                            key={`chat-${datasetId}`}
                             datasetId={datasetId}
                             selectedDocumentId={selectedDocument?.id}
                             selectedDocumentIds={selectedDocuments.map(doc => doc.id)}

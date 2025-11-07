@@ -73,8 +73,10 @@ export function DatasetDocumentUploadModal({
 
     const fileInputRef = useRef<HTMLInputElement>(null)
 
-    // Load CSV templates on component mount
+    // Load CSV templates only when modal is opened (lazy loading)
     useEffect(() => {
+        if (!isOpen) return // Don't load templates until modal is opened
+
         const loadCsvTemplates = async () => {
             try {
                 const templates = await documentApi.getCsvTemplates()
@@ -84,7 +86,7 @@ export function DatasetDocumentUploadModal({
             }
         }
         loadCsvTemplates()
-    }, [])
+    }, [isOpen]) // Only load when modal opens
 
     // Check if any selected files are CSV
     const hasCsvFiles = selectedFiles.some(file =>

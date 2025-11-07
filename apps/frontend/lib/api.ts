@@ -1421,7 +1421,14 @@ export const chatApi = {
             "Content-Type": "application/json",
             Authorization: `Bearer ${localStorage.getItem("authToken")}`,
           },
-          body: JSON.stringify({ ...data, stream: true }),
+          body: JSON.stringify({
+            ...data,
+            // Omit documentIds if it's undefined (optimization: all documents selected)
+            ...(data.documentIds === undefined
+              ? {}
+              : { documentIds: data.documentIds }),
+            stream: true,
+          }),
         }
       );
 

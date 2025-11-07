@@ -1,3 +1,16 @@
+// Set Node.js memory limit at runtime using v8 flags
+// This works even when nest CLI spawns new processes
+try {
+  const v8 = require('v8');
+  v8.setFlagsFromString('--max-old-space-size=8192');
+} catch (e) {
+  // v8 module might not be available in all Node versions, fallback to env
+  if (!process.env.NODE_OPTIONS?.includes('--max-old-space-size')) {
+    process.env.NODE_OPTIONS =
+      (process.env.NODE_OPTIONS || '') + ' --max-old-space-size=8192';
+  }
+}
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';

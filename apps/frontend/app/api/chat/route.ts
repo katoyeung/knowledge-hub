@@ -48,7 +48,8 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         message: lastUserMessage.content,
         datasetId,
-        documentIds: documentIds || [],
+        // Optimization: Only send documentIds if provided (not all documents selected)
+        ...(documentIds && documentIds.length > 0 ? { documentIds } : {}),
         segmentIds: segmentIds || [],
         maxChunks: maxChunks || 5,
         temperature: temperature || 0.7,

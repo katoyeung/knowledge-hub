@@ -129,8 +129,11 @@ export function UnifiedDocumentWizard({
         file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv')
     )
 
-    // Load CSV templates when component mounts
+    // Load CSV templates only when wizard is opened and CSV files are selected (lazy loading)
     React.useEffect(() => {
+        // Only load templates when CSV files are detected - don't load on mount
+        if (!hasCsvFiles) return
+
         const loadCsvTemplates = async () => {
             try {
                 const templates = await documentApi.getCsvTemplates()
@@ -140,7 +143,7 @@ export function UnifiedDocumentWizard({
             }
         }
         loadCsvTemplates()
-    }, [])
+    }, [hasCsvFiles]) // Only load when CSV files are detected
 
     // Handle CSV connector selection
     const handleCsvConnectorSelect = useCallback((connectorType: CsvConnectorType) => {

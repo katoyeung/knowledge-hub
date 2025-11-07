@@ -353,8 +353,6 @@ export class DocumentSegmentService extends TypeOrmCrudService<DocumentSegment> 
     const dimensionInfo =
       await this.getEmbeddingDimensionsForDocument(documentId);
 
-    console.log(`📊 Document dimension info:`, dimensionInfo);
-
     if (!dimensionInfo.hasConsistentDimensions) {
       throw new Error(
         `Cannot search document with inconsistent embedding dimensions. Found: ${Object.keys(dimensionInfo.dimensionCounts).join(', ')} dimensions. Please re-process this document.`,

@@ -62,19 +62,10 @@ export class WorkflowJobsModule {
   constructor(
     private readonly jobRegistry: JobRegistryService,
     private readonly workflowJob: WorkflowJob,
-  ) {
-    console.log('WorkflowJobsModule constructor called');
-    console.log('WorkflowJob jobType:', this.workflowJob.jobType);
-  }
+  ) {}
 
   onModuleInit() {
     // Register workflow job
-    console.log(
-      'Registering WorkflowJob with jobType:',
-      this.workflowJob.jobType,
-    );
     this.jobRegistry.register(this.workflowJob);
-    console.log('WorkflowJob registered successfully');
-    console.log('Total registered jobs:', this.jobRegistry.getAllJobs().length);
   }
 }

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, Edit2, Trash2, Check, X, FileText, ChevronLeft, MoreVertical, CheckSquare, Square, Loader2, RotateCcw, Network, Play, Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { documentApi, datasetApi, queueApi, documentSegmentApi, type Document, type Dataset } from '@/lib/api'
+import { documentApi, datasetApi, queueApi, type Document, type Dataset } from '@/lib/api'
 import { DocumentPreviewModal } from './document-preview-modal'
 import { DatasetDocumentUploadModal } from './dataset-document-upload-modal'
 import { useDocumentProcessingNotifications, useGraphExtractionNotifications } from '@/lib/hooks/use-notifications'
@@ -28,7 +28,7 @@ export function DatasetDocumentsPanel({
     onSelectedDocumentsChange,
     onCollapse,
     showCollapseButton = true,
-    dataset
+    dataset,
 }: DatasetDocumentsPanelProps) {
     const [documents, setDocuments] = useState<Document[]>([])
     const [loading, setLoading] = useState(true)
@@ -53,8 +53,6 @@ export function DatasetDocumentsPanel({
     const hasUserInteracted = useRef<boolean>(false)
     const lastNotifiedSelectedDocs = useRef<Set<string>>(new Set())
     const toast = useToast()
-    const [documentLastUpdated, setDocumentLastUpdated] = useState<Map<string, string>>(new Map())
-    const [documentSegmentCounts, setDocumentSegmentCounts] = useState<Map<string, number>>(new Map())
     const [searchQuery, setSearchQuery] = useState('')
 
 
@@ -152,44 +150,7 @@ export function DatasetDocumentsPanel({
         return () => clearInterval(interval)
     }, [datasetId, getGraphExtractionNotifications, handleGraphExtractionUpdate])
 
-    const fetchLatestSegmentTime = useCallback(async (documentId: string): Promise<string | null> => {
-        try {
-            // Fetch segments for this document, sorted by createdAt descending
-            const segments = await documentSegmentApi.getByDocument(documentId)
-            if (segments && segments.length > 0) {
-                // Sort by createdAt descending and get the latest
-                const sorted = [...segments].sort((a, b) => {
-                    const dateA = new Date(a.createdAt).getTime()
-                    const dateB = new Date(b.createdAt).getTime()
-                    return dateB - dateA
-                })
-                return sorted[0].createdAt
-            }
-            return null
-        } catch (err) {
-            console.error(`Failed to fetch segments for document ${documentId}:`, err)
-            return null
-        }
-    }, [])
 
-    const fetchSegmentCount = useCallback(async (documentId: string): Promise<number | null> => {
-        try {
-            // Use status-counts endpoint which returns totalSegments
-            const result = await documentSegmentApi.getDocumentStatusCounts(documentId)
-            const count = result?.totalSegments ?? 0
-            return count
-        } catch (err) {
-            console.error(`Failed to fetch segment count for document ${documentId}:`, err)
-            // Fallback: try to get count from segments array
-            try {
-                const segments = await documentSegmentApi.getByDocument(documentId)
-                return segments?.length || 0
-            } catch (fallbackErr) {
-                console.error(`Failed to fetch segments as fallback for document ${documentId}:`, fallbackErr)
-                return null
-            }
-        }
-    }, [])
 
     const loadDocuments = useCallback(async (pageNum: number = 1, append: boolean = false) => {
         try {
@@ -233,38 +194,6 @@ export function DatasetDocumentsPanel({
             setTotal(result.total)
             setPage(result.page)
 
-            // Fetch latest segment time and segment count for each document
-            const newDocuments = append ? result.data : result.data
-            const updatedTimes = new Map<string, string>()
-            const segmentCounts = new Map<string, number>()
-            await Promise.all(
-                newDocuments.map(async (doc: Document) => {
-                    const [latestTime, segmentCount] = await Promise.all([
-                        fetchLatestSegmentTime(doc.id),
-                        fetchSegmentCount(doc.id)
-                    ])
-                    if (latestTime) {
-                        updatedTimes.set(doc.id, latestTime)
-                    }
-                    // Always set segment count, even if 0 (null means fetch failed)
-                    if (segmentCount !== null) {
-                        segmentCounts.set(doc.id, segmentCount)
-                    } else {
-                        // Set to 0 if fetch failed to show placeholder
-                        segmentCounts.set(doc.id, 0)
-                    }
-                })
-            )
-            setDocumentLastUpdated(prev => {
-                const merged = new Map(prev)
-                updatedTimes.forEach((value, key) => merged.set(key, value))
-                return merged
-            })
-            setDocumentSegmentCounts(prev => {
-                const merged = new Map(prev)
-                segmentCounts.forEach((value, key) => merged.set(key, value))
-                return merged
-            })
         } catch (err) {
             console.error('Failed to load documents:', err)
             setError('Failed to load documents')
@@ -272,7 +201,7 @@ export function DatasetDocumentsPanel({
             setLoading(false)
             setLoadingMore(false)
         }
-    }, [datasetId, fetchLatestSegmentTime, fetchSegmentCount])
+    }, [datasetId])
 
     // Load more documents when scrolling to bottom
     const loadMoreDocuments = useCallback(() => {
@@ -290,53 +219,20 @@ export function DatasetDocumentsPanel({
             setLoading(propLoading || false)
             // Reset pagination state when using props
             setPage(1)
-            // Fetch total count from API to get accurate total across all pages
+            // Fetch actual total from API to get correct pagination status
+            // propDocuments might only be the first page (20 items), but total could be more
             documentApi.getByDataset(datasetId, 1, 1).then(result => {
                 setTotal(result.total)
-                // Calculate hasMore based on propDocuments length vs total
+                // Calculate hasMore: we have more if propDocuments length is less than total
                 const hasMorePages = propDocuments.length < result.total
                 setHasMore(hasMorePages)
             }).catch(err => {
                 console.error('Failed to fetch total count:', err)
-                // Fallback to current page length if API fails
+                // Fallback: use propDocuments length if API call fails
                 setTotal(propDocuments.length)
                 setHasMore(false)
             })
 
-            // Fetch segment counts for propDocuments
-            const updatedTimes = new Map<string, string>()
-            const segmentCounts = new Map<string, number>()
-            Promise.all(
-                propDocuments.map(async (doc: Document) => {
-                    const [latestTime, segmentCount] = await Promise.all([
-                        fetchLatestSegmentTime(doc.id),
-                        fetchSegmentCount(doc.id)
-                    ])
-                    if (latestTime) {
-                        updatedTimes.set(doc.id, latestTime)
-                    }
-                    // Always set segment count, even if 0 (null means fetch failed)
-                    if (segmentCount !== null) {
-                        segmentCounts.set(doc.id, segmentCount)
-                    } else {
-                        // Set to 0 if fetch failed to show placeholder
-                        segmentCounts.set(doc.id, 0)
-                    }
-                })
-            ).then(() => {
-                setDocumentLastUpdated(prev => {
-                    const merged = new Map(prev)
-                    updatedTimes.forEach((value, key) => merged.set(key, value))
-                    return merged
-                })
-                setDocumentSegmentCounts(prev => {
-                    const merged = new Map(prev)
-                    segmentCounts.forEach((value, key) => merged.set(key, value))
-                    return merged
-                })
-            }).catch(err => {
-                console.error('Failed to fetch segment counts for propDocuments:', err)
-            })
         } else {
             // Reset pagination when dataset changes
             setPage(1)
@@ -344,7 +240,7 @@ export function DatasetDocumentsPanel({
             setDocuments([])
             loadDocuments(1, false)
         }
-    }, [datasetId, propDocuments, propLoading, loadDocuments, fetchLatestSegmentTime, fetchSegmentCount])
+    }, [datasetId, propDocuments, propLoading, loadDocuments])
 
     // Auto-select all documents when documents first load (only if user hasn't interacted)
     useEffect(() => {
@@ -842,14 +738,8 @@ export function DatasetDocumentsPanel({
                                 return document.name.toLowerCase().includes(searchQuery.toLowerCase())
                             })
 
-                            // Sort by segment count (descending), then by name for documents with same count
+                            // Sort by name alphabetically
                             const sortedDocuments = [...filteredDocuments].sort((a, b) => {
-                                const countA = documentSegmentCounts.get(a.id) ?? 0
-                                const countB = documentSegmentCounts.get(b.id) ?? 0
-                                if (countB !== countA) {
-                                    return countB - countA // Descending order by segment count
-                                }
-                                // If segment counts are equal, sort by name alphabetically
                                 return a.name.localeCompare(b.name)
                             })
 
@@ -928,19 +818,14 @@ export function DatasetDocumentsPanel({
                                                                 title="Click to preview document content"
                                                             >
                                                                 {document.name}
-                                                                {documentSegmentCounts.has(document.id) ? (
-                                                                    <span className="text-gray-500 font-normal">
-                                                                        {' '}({documentSegmentCounts.get(document.id)})
-                                                                    </span>
-                                                                ) : null}
                                                             </p>
                                                         </div>
 
                                                         {/* Document metadata */}
                                                         <div className="flex items-center gap-3 text-xs text-gray-500">
-                                                            {documentLastUpdated.has(document.id) && (
+                                                            {document.updatedAt && (
                                                                 <span>
-                                                                    Updated at {new Date(documentLastUpdated.get(document.id)!).toLocaleString()}
+                                                                    Updated at {new Date(document.updatedAt).toLocaleString()}
                                                                 </span>
                                                             )}
                                                             {document.embeddingDimensions && (

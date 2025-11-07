@@ -55,8 +55,8 @@ export class EmbeddingProcessingService {
   ): Promise<{ processedCount: number; embeddingDimensions?: number }> {
     const {
       useWorkerPool = true,
-      batchSize = 2, // Reduced batch size to prevent blocking
-      maxConcurrency = 5, // Reduced concurrency
+      batchSize = 1, // Minimal batch size to reduce memory accumulation
+      maxConcurrency = 3, // Reduced concurrency to prevent memory pressure
     } = options;
 
     this.logger.log(
@@ -138,14 +138,28 @@ export class EmbeddingProcessingService {
       }));
 
       try {
-        // Process batch with worker pool
-        const results =
-          await this.workerPoolService.processEmbeddingsBatch(tasks);
+        // Process batch with worker pool - process results incrementally to avoid memory issues
+        const promises = tasks.map((task, index) =>
+          this.workerPoolService.processEmbedding(task).then((result) => ({
+            result,
+            segment: batch[index],
+          })),
+        );
 
-        // Process results
-        for (let i = 0; i < results.length; i++) {
-          const result = results[i];
-          const segment = batch[i];
+        // Process results as they complete instead of waiting for all
+        const results = await Promise.allSettled(promises);
+
+        // Process results incrementally
+        for (const settledResult of results) {
+          if (settledResult.status === 'rejected') {
+            this.logger.error(
+              `[EMBEDDING] Worker pool task failed:`,
+              settledResult.reason,
+            );
+            continue;
+          }
+
+          const { result, segment } = settledResult.value;
 
           if (result.error) {
             this.logger.error(
@@ -192,6 +206,9 @@ export class EmbeddingProcessingService {
           this.logger.debug(
             `[EMBEDDING] Completed segment ${segment.id} (${processedCount}/${segments.length})`,
           );
+
+          // Clear embedding from result to free memory immediately
+          result.embedding = null as any;
         }
 
         this.logger.log(

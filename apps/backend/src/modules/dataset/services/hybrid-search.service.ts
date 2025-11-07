@@ -82,18 +82,17 @@ export class HybridSearchService {
     );
 
     try {
-      // Get all segments for the document
-      const allSegments = await this.segmentRepository.find({
+      // Check if document has segments without loading them all into memory
+      // This is critical for documents with thousands of segments (e.g., 8000+)
+      const segmentCount = await this.segmentRepository.count({
         where: { documentId, enabled: true },
-        relations: ['embedding'],
-        order: { position: 'ASC' },
       });
 
       this.logger.log(
-        `🔍 Found ${allSegments.length} segments for document ${documentId}`,
+        `🔍 Document ${documentId} has ${segmentCount} enabled segments`,
       );
 
-      if (allSegments.length === 0) {
+      if (segmentCount === 0) {
         this.logger.warn(`❌ No segments found for document ${documentId}`);
         return {
           results: [],
@@ -103,22 +102,16 @@ export class HybridSearchService {
         };
       }
 
-      // Check how many segments have embeddings
-      const segmentsWithEmbeddings = allSegments.filter(
-        (seg) => seg.embedding?.embedding,
-      );
+      // Perform vector search directly - it uses SQL and doesn't need segments in memory
+      // This is much more memory-efficient for large documents
       this.logger.log(
-        `🔍 Found ${segmentsWithEmbeddings.length} segments with embeddings out of ${allSegments.length} total segments`,
-      );
-
-      // Perform only semantic similarity search
-      this.logger.log(
-        `🔍 Starting performSemanticSearch for document ${documentId}`,
+        `🔍 Starting performSemanticSearch for document ${documentId} (using vector search, no segment loading)`,
       );
       const semanticResults = await this.performSemanticSearch(
         documentId,
         query,
-        allSegments,
+        [], // Don't pass segments - vector search doesn't need them
+        limit, // Pass limit to control database query limit
       );
       this.logger.log(
         `🧠 Semantic search found ${semanticResults.length} semantic matches`,
@@ -126,15 +119,56 @@ export class HybridSearchService {
 
       if (semanticResults.length === 0) {
         this.logger.warn(`❌ No semantic results found for query: "${query}"`);
+
+        // Skip fallback for large documents to avoid memory issues
+        // Vector search should work, and if it doesn't, loading all segments would be too expensive
+        if (segmentCount > 1000) {
+          this.logger.warn(
+            `⚠️ Skipping fallback search for large document (${segmentCount} segments) to prevent memory issues`,
+          );
+          return {
+            results: [],
+            query,
+            count: 0,
+            message:
+              'No semantic results found. Vector search returned no matches.',
+          };
+        }
+
         this.logger.warn(
-          `🔍 DEBUG - Trying fallback manual semantic search...`,
+          `🔍 DEBUG - Trying fallback manual semantic search for small document...`,
         );
+
+        // Only load segments for fallback if document is small enough
+        const fallbackSegments = await this.segmentRepository
+          .createQueryBuilder('segment')
+          .leftJoinAndSelect('segment.embedding', 'embedding')
+          .where('segment.documentId = :documentId', { documentId })
+          .andWhere('segment.enabled = :enabled', { enabled: true })
+          .select([
+            'segment.id',
+            'segment.content',
+            'segment.position',
+            'segment.wordCount',
+            'segment.tokens',
+            'segment.keywords',
+            'segment.enabled',
+            'segment.status',
+            'segment.createdAt',
+            'segment.updatedAt',
+            'segment.completedAt',
+            'segment.error',
+            'embedding.id',
+            'embedding.embedding', // Need embeddings for manual search
+            'embedding.modelName',
+          ])
+          .getMany();
 
         // Try fallback manual semantic search
         const fallbackResults = await this.performManualSemanticSearch(
           documentId,
           query,
-          allSegments,
+          fallbackSegments,
         );
 
         if (fallbackResults.length > 0) {
@@ -244,22 +278,17 @@ export class HybridSearchService {
     keywordWeight: number = 0.3,
     rerankerType: RerankerType = RerankerType.NONE,
   ): Promise<HybridSearchResponse> {
-    console.log(
-      `🚀 HYBRID SEARCH CALLED: documentId=${documentId}, query="${query}", limit=${limit}`,
-    );
     this.logger.log(
       `🔍 Starting hybrid search for document ${documentId} with query: "${query}"`,
     );
 
     try {
-      // Step 1: Get all segments for the document
-      const allSegments = await this.segmentRepository.find({
+      // Check if document has segments without loading them all into memory
+      const segmentCount = await this.segmentRepository.count({
         where: { documentId, enabled: true },
-        relations: ['embedding'],
-        order: { position: 'ASC' },
       });
 
-      if (allSegments.length === 0) {
+      if (segmentCount === 0) {
         return {
           results: [],
           query,
@@ -268,29 +297,82 @@ export class HybridSearchService {
         };
       }
 
-      // Step 2: Perform BM25 keyword search
-      const keywordResults = this.performBM25Search(allSegments, query);
-      this.logger.log(`📝 BM25 found ${keywordResults.length} keyword matches`);
+      this.logger.log(
+        `🔍 Document ${documentId} has ${segmentCount} enabled segments`,
+      );
 
-      // Step 3: Perform semantic similarity search
+      // Step 1: Perform semantic similarity search using PostgreSQL vector search
+      // This is memory-efficient and doesn't require loading all segments
       const semanticResults = await this.performSemanticSearch(
         documentId,
         query,
-        allSegments,
+        [], // Don't pass segments - vector search doesn't need them
+        limit, // Pass limit to control database query limit
       );
       this.logger.log(
         `🧠 Semantic search found ${semanticResults.length} semantic matches`,
       );
 
-      // Step 4: Combine and deduplicate results
-      const combinedResults = this.combineResults(
+      // Step 2: Perform BM25 keyword search
+      // For large documents, we need to load segments for BM25, but we can optimize
+      // by only loading segments that weren't already found by semantic search
+      // For now, we'll use a more efficient approach: load segments in batches or use SQL
+      let keywordResults: RankedResult[] = [];
+
+      // Only perform BM25 if keyword weight is significant and document is small
+      // For large documents, skip BM25 to prevent memory issues - vector search is sufficient
+      if (keywordWeight > 0 && segmentCount < 1000) {
+        // Load segments without full embedding arrays for BM25
+        const segmentsForBM25 = await this.segmentRepository
+          .createQueryBuilder('segment')
+          .where('segment.documentId = :documentId', { documentId })
+          .andWhere('segment.enabled = :enabled', { enabled: true })
+          .select([
+            'segment.id',
+            'segment.content',
+            'segment.position',
+            'segment.wordCount',
+            'segment.tokens',
+            'segment.keywords',
+            'segment.enabled',
+            'segment.status',
+            'segment.createdAt',
+            'segment.updatedAt',
+            'segment.completedAt',
+            'segment.error',
+            // Don't load embedding arrays - not needed for BM25
+          ])
+          .getMany();
+
+        keywordResults = this.performBM25Search(segmentsForBM25, query);
+        this.logger.log(
+          `📝 BM25 found ${keywordResults.length} keyword matches`,
+        );
+
+        // Clear segments from memory after BM25 search
+        segmentsForBM25.length = 0;
+      } else if (keywordWeight > 0) {
+        this.logger.warn(
+          `⚠️ Skipping BM25 search for large document (${segmentCount} segments) to prevent memory issues`,
+        );
+      }
+
+      // Step 3: Combine and deduplicate results
+      let combinedResults = this.combineResults(
         keywordResults,
         semanticResults,
       );
       this.logger.log(`🔀 Combined ${combinedResults.length} unique results`);
 
-      // Step 5: Apply reranking (ML or Mathematical)
-      const rerankedResults = await this.applyReranking(
+      // Clear keyword and semantic results from memory
+      keywordResults.length = 0;
+      semanticResults.length = 0;
+
+      // Step 4: Apply reranking (ML or Mathematical)
+      this.logger.log(
+        `📊 Before reranking: combinedResults.length=${combinedResults.length}`,
+      );
+      let rerankedResults = await this.applyReranking(
         combinedResults,
         query,
         semanticWeight,
@@ -298,36 +380,82 @@ export class HybridSearchService {
         rerankerType,
       );
       this.logger.log(
-        `📊 Reranked ${rerankedResults.length} results using ${rerankerType}`,
+        `📊 After reranking: rerankedResults.length=${rerankedResults.length}, type=${typeof rerankedResults}, isArray=${Array.isArray(rerankedResults)}`,
+      );
+      if (rerankedResults.length > 0) {
+        this.logger.log(
+          `📊 First reranked result before formatting: id=${rerankedResults[0].id}, hasContent=${!!rerankedResults[0].content}`,
+        );
+      }
+
+      // Clear combined results from memory (safe now since rerankedResults is a new array)
+      combinedResults.length = 0;
+
+      // Step 5: Format and limit results
+      // Log reranked results before formatting
+      this.logger.log(
+        `📊 Before formatting: rerankedResults.length=${rerankedResults.length}, limit=${limit}`,
+      );
+      if (rerankedResults.length > 0) {
+        this.logger.log(
+          `📊 First reranked result structure: ${JSON.stringify({
+            id: rerankedResults[0].id,
+            hasContent: !!rerankedResults[0].content,
+            contentLength: rerankedResults[0].content?.length,
+            finalScore: rerankedResults[0].finalScore,
+            bm25Score: rerankedResults[0].bm25Score,
+            semanticScore: rerankedResults[0].semanticScore,
+            matchType: rerankedResults[0].matchType,
+          })}`,
+        );
+      }
+
+      // Only include essential fields to minimize memory usage
+      const finalResults = rerankedResults
+        .slice(0, limit)
+        .map((result) => {
+          if (!result.id || !result.content) {
+            this.logger.error(
+              `❌ Invalid result structure: ${JSON.stringify(result)}`,
+            );
+            return null;
+          }
+          return {
+            id: result.id,
+            content: result.content,
+            similarity: result.finalScore,
+            segment: {
+              id: result.id,
+              content: result.content.substring(0, 1000), // Truncate to save memory
+              position: result.position,
+              wordCount: result.wordCount,
+              tokens: result.tokens,
+              enabled: result.enabled,
+              status: result.status,
+              createdAt: result.createdAt,
+              updatedAt: result.updatedAt,
+              completedAt: result.completedAt,
+              error: result.error,
+              keywords: result.keywords,
+            },
+            matchType: result.matchType,
+            scores: {
+              bm25: result.bm25Score,
+              semantic: result.semanticScore,
+              reranker: result.rerankerScore,
+              final: result.finalScore,
+            },
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+
+      // Log final results before clearing
+      this.logger.log(
+        `📊 After formatting: finalResults.length=${finalResults.length}`,
       );
 
-      // Step 6: Format and limit results
-      const finalResults = rerankedResults.slice(0, limit).map((result) => ({
-        id: result.id,
-        content: result.content,
-        similarity: result.finalScore,
-        segment: {
-          id: result.id,
-          content: result.content,
-          position: result.position,
-          wordCount: result.wordCount,
-          tokens: result.tokens,
-          keywords: result.keywords,
-          enabled: result.enabled,
-          status: result.status,
-          createdAt: result.createdAt,
-          updatedAt: result.updatedAt,
-          completedAt: result.completedAt,
-          error: result.error,
-        },
-        matchType: result.matchType,
-        scores: {
-          bm25: result.bm25Score,
-          semantic: result.semanticScore,
-          reranker: result.rerankerScore,
-          final: result.finalScore,
-        },
-      }));
+      // Clear reranked results from memory
+      rerankedResults.length = 0;
 
       return {
         results: finalResults,
@@ -560,6 +688,7 @@ export class HybridSearchService {
     documentId: string,
     query: string,
     segments: DocumentSegment[],
+    limit: number = 10, // Limit for database query
   ): Promise<RankedResult[]> {
     try {
       // Get the actual embedding model from the stored embeddings
@@ -648,11 +777,15 @@ export class HybridSearchService {
       this.logger.log(
         `🔍 Calling performVectorSearch with documentId: ${documentId}, model: ${actualEmbeddingModel}`,
       );
+      // Use a strict limit for vector search - only get what we need
+      // For large documents, we must limit at database level to prevent memory issues
+      const vectorSearchLimit = Math.min(limit * 2, 20); // Max 20, or 2x requested limit
       const results = await this.performVectorSearch(
         documentId,
         queryEmbedding,
         actualEmbeddingModel || 'qwen3-embedding:0.6b', // Fallback to default model
         'hnsw', // Use HNSW with cosine distance for better similarity results
+        vectorSearchLimit,
       );
       this.logger.log(
         `📊 performVectorSearch returned ${results.length} results`,
@@ -661,19 +794,148 @@ export class HybridSearchService {
       return results.sort((a, b) => b.semanticScore - a.semanticScore);
     } catch (error) {
       this.logger.error(`❌ Semantic search failed:`, error.message);
-      // Fallback to manual cosine similarity if vector search fails
-      return this.performManualSemanticSearch(documentId, query, segments);
+      // Don't fallback to manual search - it requires loading all segments into memory
+      // For large documents, this would cause memory issues
+      // Vector search should work, and if it doesn't, we should fix the root cause
+      this.logger.warn(
+        `⚠️ Vector search failed, not using fallback to prevent memory issues`,
+      );
+      return [];
     }
   }
 
   /**
+   * Perform vector search across entire dataset (not per-document)
+   * This is more efficient for finding the best segments across all documents
+   */
+  async performDatasetVectorSearch(
+    datasetId: string,
+    queryEmbedding: number[],
+    modelName: string,
+    limit: number = 50,
+    documentIds?: string[], // Optional: filter to specific documents
+  ): Promise<RankedResult[]> {
+    const queryEmbeddingStr = `[${queryEmbedding.join(',')}]`;
+    const distanceOperator = '<=>';
+    const orderDirection = 'ASC';
+
+    const possibleModelNames = this.getAllPossibleModelNames(modelName);
+    this.logger.log(
+      `🔍 Dataset vector search: datasetId=${datasetId}, limit=${limit}, documentIds=${documentIds?.length || 'all'}`,
+    );
+
+    let rawResults: any[] = [];
+
+    for (const modelNameToTry of possibleModelNames) {
+      // Build WHERE clause - filter by dataset and optionally by documents
+      let whereClause = `
+        d.dataset_id = $2
+        AND e.model_name = $3
+        AND e.embedding IS NOT NULL
+        AND ds.enabled = true
+        AND (1 - (e.embedding ${distanceOperator} $1)) > 0.0
+      `;
+
+      const queryParams: any[] = [queryEmbeddingStr, datasetId, modelNameToTry];
+
+      if (documentIds && documentIds.length > 0) {
+        const placeholders = documentIds
+          .map((_, i) => `$${queryParams.length + 1 + i}`)
+          .join(',');
+        whereClause += ` AND ds.document_id IN (${placeholders})`;
+        queryParams.push(...documentIds);
+      }
+
+      queryParams.push(limit);
+
+      const query = `
+        SELECT 
+          ds.id,
+          ds.content,
+          ds.position,
+          ds.word_count as "wordCount",
+          ds.tokens,
+          ds.keywords,
+          ds.enabled,
+          ds.status,
+          ds.created_at as "createdAt",
+          ds.updated_at as "updatedAt",
+          ds.completed_at as "completedAt",
+          ds.error,
+          ds.document_id as "documentId",
+          (1 - (e.embedding ${distanceOperator} $1)) as similarity
+        FROM document_segments ds
+        JOIN embeddings e ON ds.embedding_id = e.id
+        JOIN documents d ON ds.document_id = d.id
+        WHERE ${whereClause}
+        ORDER BY e.embedding ${distanceOperator} $1 ${orderDirection}
+        LIMIT $${queryParams.length}
+      `;
+
+      try {
+        const results = await this.segmentRepository.query(query, queryParams);
+
+        if (results.length > 0) {
+          rawResults = results;
+          this.logger.log(
+            `✅ Dataset vector search found ${results.length} results with model: ${modelNameToTry}`,
+          );
+          break;
+        }
+      } catch (error) {
+        this.logger.warn(
+          `❌ Dataset vector search failed with model ${modelNameToTry}: ${error.message}`,
+        );
+      }
+    }
+
+    if (rawResults.length === 0) {
+      this.logger.warn(`❌ Dataset vector search found no results`);
+      return [];
+    }
+
+    // Convert to RankedResult format
+    const results: RankedResult[] = rawResults.map((row: any) => {
+      const similarity = Math.max(0, Math.min(1, row.similarity || 0.5));
+
+      return {
+        id: row.id,
+        content: row.content,
+        position: row.position,
+        wordCount: row.wordCount,
+        tokens: row.tokens,
+        keywords: row.keywords || {},
+        enabled: row.enabled,
+        status: row.status,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        completedAt: row.completedAt,
+        error: row.error,
+        bm25Score: 0, // Will be calculated if BM25 is used
+        semanticScore: similarity,
+        rerankerScore: 0,
+        finalScore: similarity,
+        matchType: 'semantic',
+      };
+    });
+
+    this.logger.log(
+      `🚀 Dataset vector search (hnsw) found ${results.length} results`,
+    );
+
+    return results;
+  }
+
+  /**
    * Perform vector search using PostgreSQL indexes
+   * This is memory-efficient as it uses SQL directly without loading all segments
    */
   private async performVectorSearch(
     documentId: string,
     queryEmbedding: number[],
     modelName: string,
     indexType: 'ivfflat' | 'hnsw' = 'hnsw',
+    limit: number = 50, // Default limit, can be overridden
   ): Promise<RankedResult[]> {
     const queryEmbeddingStr = `[${queryEmbedding.join(',')}]`;
 
@@ -688,20 +950,6 @@ export class HybridSearchService {
       `🔍 Trying vector search with model names: ${possibleModelNames.join(', ')}`,
     );
     this.logger.log(`🔍 Original model name: ${modelName}`);
-
-    // Debug: Write to file for easier debugging
-    const fs = require('fs');
-    const debugInfo = {
-      timestamp: new Date().toISOString(),
-      originalModelName: modelName,
-      possibleModelNames: possibleModelNames,
-      queryEmbeddingLength: queryEmbeddingStr.length,
-    };
-    fs.writeFileSync(
-      '/tmp/debug-search.log',
-      JSON.stringify(debugInfo, null, 2) + '\n',
-      { flag: 'a' },
-    );
     this.logger.log(
       `🔍 Query embedding string length: ${queryEmbeddingStr.length}`,
     );
@@ -710,6 +958,11 @@ export class HybridSearchService {
     let rawResults: any[] = [];
 
     for (const modelNameToTry of possibleModelNames) {
+      // Use a strict limit - only get what we need from database
+      // For large documents (8000+ segments), we MUST limit at database level
+      // Fetch only top candidates, not all segments
+      const queryLimit = Math.min(limit + 5, 15); // Max 15 segments per document (e.g., if limit=5, get 10)
+
       const query = `
         SELECT 
           ds.id,
@@ -733,7 +986,7 @@ export class HybridSearchService {
           AND ds.enabled = true
           AND (1 - (e.embedding ${distanceOperator} $1)) > 0.0
         ORDER BY e.embedding ${distanceOperator} $1 ${orderDirection}
-        LIMIT 50
+        LIMIT $4
       `;
 
       try {
@@ -741,6 +994,7 @@ export class HybridSearchService {
           queryEmbeddingStr,
           documentId,
           modelNameToTry,
+          queryLimit,
         ]);
 
         if (results.length > 0) {
@@ -774,9 +1028,6 @@ export class HybridSearchService {
 
     // Convert to RankedResult format
     const results: RankedResult[] = rawResults.map((row: any) => {
-      console.log(
-        `🔍 DEBUG - Raw similarity from DB: ${row.similarity} (type: ${typeof row.similarity})`,
-      );
       return {
         id: row.id,
         content: row.content,
@@ -1307,22 +1558,27 @@ export class HybridSearchService {
       `📊 Simplified reranking - using direct weighted combination like Python script`,
     );
 
-    for (const result of results) {
+    // Create a new array to avoid mutating the input
+    // This prevents issues when the input array is cleared later
+    const reranked = results.map((result) => {
       // Simple weighted combination like the Python script
       // No aggressive scaling, no randomization, no position bias
       const finalScore =
         result.bm25Score * keywordWeight +
         result.semanticScore * semanticWeight;
 
-      result.rerankerScore = finalScore;
-      result.finalScore = finalScore;
-
       this.logger.log(
         `🎯 Segment ${result.position}: BM25=${result.bm25Score.toFixed(3)}, Semantic=${result.semanticScore.toFixed(3)}, Final=${finalScore.toFixed(3)} (${result.matchType})`,
       );
-    }
 
-    return results.sort((a, b) => b.finalScore - a.finalScore);
+      return {
+        ...result,
+        rerankerScore: finalScore,
+        finalScore: finalScore,
+      };
+    });
+
+    return reranked.sort((a, b) => b.finalScore - a.finalScore);
   }
 
   /**

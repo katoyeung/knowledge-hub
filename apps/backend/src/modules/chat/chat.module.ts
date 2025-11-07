@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { HttpModule } from '@nestjs/axios';
 import { ChatMessage } from './entities/chat-message.entity';
 import { ChatConversation } from './entities/chat-conversation.entity';
+import { DocumentSegment } from '../dataset/entities/document-segment.entity';
 import { ChatController } from './chat.controller';
 import { HealthController } from './controllers/health.controller';
 import { ChatService } from './services/chat.service';
@@ -21,7 +22,7 @@ import { OpenRouterApiClient } from '../../common/services/openrouter-api-client
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ChatMessage, ChatConversation]),
+    TypeOrmModule.forFeature([ChatMessage, ChatConversation, DocumentSegment]),
     HttpModule,
     DatasetModule,
     PromptsModule,

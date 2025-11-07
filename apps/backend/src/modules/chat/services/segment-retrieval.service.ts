@@ -12,12 +12,15 @@ import {
 } from '../../dataset/dto/create-dataset-step.dto';
 import { EmbeddingProvider } from '../../../common/enums/embedding-provider.enum';
 import { DebugLogger } from '../../../common/services/debug-logger.service';
+import { DocumentSegment } from '../../dataset/entities/document-segment.entity';
 
 @Injectable()
 export class SegmentRetrievalService {
   private readonly logger = new Logger(SegmentRetrievalService.name);
 
   constructor(
+    @InjectRepository(DocumentSegment)
+    private readonly segmentRepository: Repository<DocumentSegment>,
     private readonly datasetService: DatasetService,
     private readonly documentSegmentService: DocumentSegmentService,
     private readonly documentService: DocumentService,
@@ -32,8 +35,10 @@ export class SegmentRetrievalService {
     documentIds?: string[],
     segmentIds?: string[],
     maxChunks: number = 10,
-    bm25Weight?: number,
-    embeddingWeight?: number,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    bm25Weight?: number, // Unused but kept for API compatibility
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    embeddingWeight?: number, // Unused but kept for API compatibility
   ): Promise<
     Array<{
       id: string;
@@ -50,25 +55,32 @@ export class SegmentRetrievalService {
       return this.retrieveSpecificSegments(segmentIds, query, maxChunks);
     }
 
-    // If specific documents are provided, search within them
+    // If specific documents are provided, use optimized dataset-wide search
+    // This is more efficient than searching per-document
     if (documentIds && documentIds.length > 0) {
-      return this.retrieveFromSpecificDocuments(documentIds, query, maxChunks);
+      return this.retrieveFromSpecificDocumentsOptimized(
+        datasetId,
+        documentIds,
+        query,
+        maxChunks,
+      );
     }
 
-    // If documentIds is an empty array, return no results (no documents selected)
-    if (documentIds && documentIds.length === 0) {
-      this.logger.log('📝 No documents selected, returning empty results');
-      return [];
-    }
-
-    // Search across all documents in the dataset (only when documentIds is undefined)
-    return this.retrieveFromAllDocuments(
+    // If documentIds is undefined or empty array, search across all documents in the dataset
+    // Empty array means "all documents selected" (optimization: frontend doesn't send all IDs)
+    // Use optimized dataset-wide search for better results
+    this.logger.log(
+      `🔍 Searching across all documents in dataset (documentIds: ${documentIds ? 'empty/undefined' : 'undefined'})`,
+    );
+    const segments = await this.retrieveFromAllDocumentsOptimized(
       datasetId,
       query,
       maxChunks,
-      bm25Weight,
-      embeddingWeight,
     );
+    this.logger.log(
+      `🎯 Retrieved ${segments.length} segments from dataset-wide search`,
+    );
+    return segments;
   }
 
   private async retrieveSpecificSegments(
@@ -89,56 +101,175 @@ export class SegmentRetrievalService {
       maxChunks,
     });
 
+    // Load segments without embeddings - we'll use vector search for similarity
     const segments = await this.documentSegmentService.find({
       where: { id: In(segmentIds) },
       relations: ['document'],
+      // Don't load embeddings - use vector search instead
     });
 
-    // Calculate actual similarity scores for specific segments
-    const segmentsWithSimilarity = await Promise.all(
-      segments.map(async (segment) => {
-        // Generate query embedding for similarity calculation
-        const queryEmbedding = await this.generateQueryEmbedding(
-          query,
-          segment.datasetId,
-        );
-        if (!queryEmbedding) {
-          return {
-            id: segment.id,
-            content: segment.content,
-            documentId: segment.documentId,
-            similarity: 0.5, // Default fallback similarity
-          };
-        }
+    if (segments.length === 0) {
+      return [];
+    }
 
-        // Get segment embedding and calculate similarity
-        const segmentEmbedding = await this.getSegmentEmbedding(segment.id);
-        if (!segmentEmbedding) {
-          return {
-            id: segment.id,
-            content: segment.content,
-            documentId: segment.documentId,
-            similarity: 0.5, // Default fallback similarity
-          };
-        }
+    // Get dataset ID from first segment
+    const datasetId = segments[0].datasetId;
 
-        const similarity = this.calculateCosineSimilarity(
-          queryEmbedding,
-          segmentEmbedding,
-        );
+    // Generate query embedding once for all segments
+    const queryEmbedding = await this.generateQueryEmbedding(query, datasetId);
 
-        return {
-          id: segment.id,
-          content: segment.content,
-          documentId: segment.documentId,
-          similarity: Math.max(0, Math.min(1, similarity)), // Clamp between 0 and 1
-        };
-      }),
-    );
+    if (!queryEmbedding) {
+      // Fallback: return segments with default similarity
+      return segments.slice(0, maxChunks).map((segment) => ({
+        id: segment.id,
+        content: segment.content,
+        documentId: segment.documentId,
+        similarity: 0.5,
+      }));
+    }
 
-    return segmentsWithSimilarity.slice(0, maxChunks);
+    // Use PostgreSQL vector search to get similarities for all segments at once
+    // This is much more efficient than loading embeddings one by one
+    const queryEmbeddingStr = `[${queryEmbedding.join(',')}]`;
+
+    // Get dataset embedding model
+    const dataset = await this.datasetService.findById(datasetId);
+    const modelName = dataset?.embeddingModel || 'qwen3-embedding:0.6b';
+
+    // Use vector search to get similarities
+    // Build IN clause safely
+    const segmentIdsPlaceholders = segmentIds
+      .map((_, i) => `$${i + 2}`)
+      .join(',');
+    const similarityQuery = `
+      SELECT 
+        ds.id,
+        ds.content,
+        ds.document_id as "documentId",
+        (1 - (e.embedding <=> $1)) as similarity
+      FROM document_segments ds
+      JOIN embeddings e ON ds.embedding_id = e.id
+      WHERE ds.id IN (${segmentIdsPlaceholders})
+        AND e.model_name = $${segmentIds.length + 2}
+        AND e.embedding IS NOT NULL
+        AND ds.enabled = true
+      ORDER BY e.embedding <=> $1 ASC
+      LIMIT $${segmentIds.length + 3}
+    `;
+
+    try {
+      const results = await this.segmentRepository.query(similarityQuery, [
+        queryEmbeddingStr,
+        ...segmentIds,
+        modelName,
+        maxChunks,
+      ]);
+
+      return results.map((row: any) => ({
+        id: row.id,
+        content: row.content,
+        documentId: row.documentId,
+        similarity: Math.max(0, Math.min(1, row.similarity || 0.5)),
+      }));
+    } catch (error) {
+      this.logger.warn(
+        `Vector search failed for specific segments, using fallback: ${error.message}`,
+      );
+      // Fallback: return segments with default similarity
+      return segments.slice(0, maxChunks).map((segment) => ({
+        id: segment.id,
+        content: segment.content,
+        documentId: segment.documentId,
+        similarity: 0.5,
+      }));
+    }
   }
 
+  /**
+   * Optimized retrieval for specific documents: Search segments across all specified documents
+   * This is more efficient than searching per-document because it gets top K segments
+   * across ALL specified documents in one query
+   */
+  private async retrieveFromSpecificDocumentsOptimized(
+    datasetId: string,
+    documentIds: string[],
+    query: string,
+    maxChunks: number,
+  ): Promise<
+    Array<{
+      id: string;
+      content: string;
+      similarity?: number;
+      documentId?: string;
+    }>
+  > {
+    this.logger.log(
+      `🚀 Using optimized search for ${documentIds.length} specific documents`,
+    );
+
+    try {
+      // Generate query embedding
+      const queryEmbedding = await this.generateQueryEmbedding(
+        query,
+        datasetId,
+      );
+      if (!queryEmbedding) {
+        this.logger.warn('⚠️ Failed to generate query embedding');
+        return [];
+      }
+
+      // Get dataset to find embedding model
+      const dataset = await this.datasetService.findById(datasetId);
+      if (!dataset) {
+        this.logger.warn(`⚠️ Dataset ${datasetId} not found`);
+        return [];
+      }
+
+      const embeddingModel = dataset.embeddingModel || 'Xenova/bge-m3';
+
+      // Search segments across all specified documents in one query
+      // This gets top K segments from ALL specified documents
+      const searchLimit = Math.min(maxChunks * 2, 50);
+      const searchResults =
+        await this.hybridSearchService.performDatasetVectorSearch(
+          datasetId,
+          queryEmbedding,
+          embeddingModel,
+          searchLimit,
+          documentIds, // Filter to specific documents
+        );
+
+      this.logger.log(
+        `✅ Optimized search found ${searchResults.length} segments from ${documentIds.length} documents`,
+      );
+
+      // Map to return format
+      const results = searchResults.slice(0, maxChunks).map((result) => ({
+        id: result.id,
+        content: result.content,
+        similarity: result.semanticScore,
+        documentId: (result as { documentId?: string }).documentId,
+      }));
+
+      this.logger.log(
+        `🎯 Returning ${results.length} top segments from optimized search`,
+      );
+
+      return results;
+    } catch (error) {
+      this.logger.error(
+        `❌ Optimized search failed: ${error.message}`,
+        error.stack,
+      );
+      // Fallback to per-document search
+      return this.retrieveFromSpecificDocuments(documentIds, query, maxChunks);
+    }
+  }
+
+  /**
+   * Legacy per-document search (kept as fallback)
+   * Searches each document separately and combines results
+   */
   private async retrieveFromSpecificDocuments(
     documentIds: string[],
     query: string,
@@ -157,26 +288,201 @@ export class SegmentRetrievalService {
       maxChunks,
     });
 
-    const allSegments = [];
+    // Use priority queue to keep only top K segments across all documents
+    const topSegments: Array<{
+      id: string;
+      content: string;
+      similarity?: number;
+      documentId?: string;
+    }> = [];
+    const seenContent = new Set<string>();
+
     for (const documentId of documentIds) {
-      const searchResults = await this.hybridSearchService.hybridSearch(
-        documentId,
+      this.logger.log(
+        `🔍 Searching document ${documentId} for query: "${query}"`,
+      );
+      // Limit per document to prevent accumulation across multiple documents
+      const perDocumentLimit = Math.min(maxChunks, 5); // Max 5 per document
+
+      try {
+        const searchResults = await this.hybridSearchService.hybridSearch(
+          documentId,
+          query,
+          perDocumentLimit, // Limit per document
+          0.7, // semanticWeight
+          0.3, // keywordWeight
+          RerankerType.MATHEMATICAL, // rerankerType - use mathematical reranker instead
+        );
+
+        // Log search results for debugging
+        this.logger.log(
+          `📊 Search results for document ${documentId}: ${searchResults?.results?.length || 0} results`,
+        );
+        this.logger.log(
+          `📊 Search response structure: ${JSON.stringify({
+            hasResults: !!searchResults,
+            resultsLength: searchResults?.results?.length,
+            count: searchResults?.count,
+            query: searchResults?.query,
+          })}`,
+        );
+
+        if (
+          !searchResults ||
+          !searchResults.results ||
+          searchResults.results.length === 0
+        ) {
+          this.logger.warn(
+            `⚠️ No search results returned for document ${documentId}. Search may have failed or document has no segments.`,
+          );
+          this.logger.warn(
+            `⚠️ Full search response: ${JSON.stringify(searchResults)}`,
+          );
+          continue; // Skip to next document
+        }
+
+        // Add documentId to each search result and add to priority queue
+        const resultsWithDocumentId = searchResults.results.map((result) => ({
+          id: result.id,
+          content: result.content,
+          similarity: result.similarity || 0,
+          documentId: documentId,
+        }));
+
+        this.logger.log(
+          `📊 Mapped ${resultsWithDocumentId.length} segments from search results`,
+        );
+
+        // Add to priority queue, keeping only top K
+        for (const segment of resultsWithDocumentId) {
+          const trimmedContent = segment.content.trim();
+          const similarity = segment.similarity || 0;
+
+          // Skip duplicates
+          if (seenContent.has(trimmedContent)) {
+            continue;
+          }
+
+          if (topSegments.length < maxChunks) {
+            topSegments.push(segment);
+            seenContent.add(trimmedContent);
+          } else {
+            // Find worst segment and replace if this is better
+            const worstIndex = topSegments.findIndex(
+              (s) => (s.similarity || 0) < similarity,
+            );
+            if (worstIndex !== -1) {
+              const removed = topSegments[worstIndex];
+              seenContent.delete(removed.content.trim());
+              topSegments[worstIndex] = segment;
+              seenContent.add(trimmedContent);
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.error(
+          `❌ Error searching document ${documentId}: ${error.message}`,
+          error.stack,
+        );
+        // Continue with next document instead of failing completely
+      }
+    }
+
+    // Sort by similarity (highest first)
+    topSegments.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+
+    this.logger.log(
+      `🎯 Returning ${topSegments.length} segments from ${documentIds.length} specific documents`,
+    );
+
+    return topSegments;
+  }
+
+  /**
+   * Optimized retrieval: Search segments directly across entire dataset
+   * This is more efficient than searching per-document because:
+   * 1. Gets top K segments across ALL documents in one query
+   * 2. Doesn't miss best segments if they're all in one document
+   * 3. Uses single PostgreSQL vector search instead of N queries
+   */
+  private async retrieveFromAllDocumentsOptimized(
+    datasetId: string,
+    query: string,
+    maxChunks: number,
+  ): Promise<
+    Array<{
+      id: string;
+      content: string;
+      similarity?: number;
+      documentId?: string;
+    }>
+  > {
+    this.logger.log(
+      `🚀 Using optimized dataset-wide vector search for query: "${query}"`,
+    );
+
+    try {
+      // Generate query embedding
+      const queryEmbedding = await this.generateQueryEmbedding(
+        query,
+        datasetId,
+      );
+      if (!queryEmbedding) {
+        this.logger.warn('⚠️ Failed to generate query embedding');
+        return [];
+      }
+
+      // Get dataset to find embedding model
+      const dataset = await this.datasetService.findById(datasetId);
+      if (!dataset) {
+        this.logger.warn(`⚠️ Dataset ${datasetId} not found`);
+        return [];
+      }
+
+      const embeddingModel = dataset.embeddingModel || 'Xenova/bge-m3';
+
+      // Search segments directly across entire dataset
+      // This gets top K segments from ALL documents in one query
+      const searchLimit = Math.min(maxChunks * 2, 50); // Get more candidates for reranking
+      const searchResults =
+        await this.hybridSearchService.performDatasetVectorSearch(
+          datasetId,
+          queryEmbedding,
+          embeddingModel,
+          searchLimit,
+        );
+
+      this.logger.log(
+        `✅ Dataset-wide search found ${searchResults.length} segments`,
+      );
+
+      // Map to return format
+      const results = searchResults.slice(0, maxChunks).map((result) => ({
+        id: result.id,
+        content: result.content,
+        similarity: result.semanticScore,
+        documentId: (result as { documentId?: string }).documentId,
+      }));
+
+      this.logger.log(
+        `🎯 Returning ${results.length} top segments from dataset-wide search`,
+      );
+
+      return results;
+    } catch (error) {
+      this.logger.error(
+        `❌ Optimized dataset search failed: ${error.message}`,
+        error.stack,
+      );
+      // Fallback to per-document search
+      return this.retrieveFromAllDocuments(
+        datasetId,
         query,
         maxChunks,
-        0.7, // semanticWeight
-        0.3, // keywordWeight
-        RerankerType.MATHEMATICAL, // rerankerType - use mathematical reranker instead
+        undefined,
+        undefined,
       );
-      // Add documentId to each search result
-      const resultsWithDocumentId =
-        searchResults?.results?.map((result) => ({
-          ...result,
-          documentId: documentId,
-          semanticScore: result.similarity, // Map similarity to semanticScore for consistency
-        })) || [];
-      allSegments.push(...resultsWithDocumentId);
     }
-    return allSegments.slice(0, maxChunks);
   }
 
   private async retrieveFromAllDocuments(
@@ -227,8 +533,26 @@ export class SegmentRetrievalService {
         datasetId,
         documentsCount: documents ? documents.length : 'null',
       });
+      // Return empty array immediately - don't proceed with search
       return [];
     }
+
+    // Filter to only process completed documents (but don't return empty if some are completed)
+    // Some documents might be in 'chunked' status which is also acceptable if they have segments
+    const completedDocuments = documents.filter(
+      (doc) =>
+        doc.indexingStatus === 'completed' || doc.indexingStatus === 'chunked',
+    );
+
+    if (completedDocuments.length === 0) {
+      this.logger.warn(
+        `❌ No completed or chunked documents found in dataset (${documents.length} total documents)`,
+      );
+      return [];
+    }
+
+    // Use completed/chunked documents for search
+    const documentsToSearch = completedDocuments;
 
     this.debugLogger.logSegmentRetrieval('documents-found', {
       datasetId,
@@ -241,12 +565,26 @@ export class SegmentRetrievalService {
     });
 
     // Search across all documents in the dataset
-    this.logger.log(`🔍 Searching across ${documents.length} documents`);
+    this.logger.log(
+      `🔍 Searching across ${documentsToSearch.length} documents (${documents.length} total, ${completedDocuments.length} completed/chunked)`,
+    );
 
-    const allSegments = [];
-    this.logger.log(`🔍 Processing ${documents.length} documents:`);
+    // Use a priority queue approach: keep only top K segments by similarity
+    // This prevents accumulating thousands of segments in memory
+    const topSegments: Array<{
+      id: string;
+      content: string;
+      similarity?: number;
+      documentId?: string;
+    }> = [];
+    const minSimilarity = { value: -1 }; // Track minimum similarity in top K
+    const seenContent = new Set<string>(); // Track seen content across all documents
 
-    for (const document of documents) {
+    this.logger.log(
+      `🔍 Processing ${documentsToSearch.length} documents (${documents.length} total)`,
+    );
+
+    for (const document of documentsToSearch) {
       this.debugLogger.logSegmentRetrieval('processing-document', {
         documentId: document.id,
         documentName: document.name,
@@ -280,10 +618,13 @@ export class SegmentRetrievalService {
             maxChunks: maxChunks,
           });
 
+          // Limit to small number per document to prevent memory issues
+          // We'll use priority queue to get top K across all documents
+          const perDocumentLimit = Math.min(maxChunks, 3); // Max 3 per document
           searchResults = await this.hybridSearchService.semanticOnlySearch(
             document.id,
             query,
-            maxChunks,
+            perDocumentLimit, // Limit per document to prevent accumulation
             0.0, // No threshold filtering - just take top K results
           );
 
@@ -380,63 +721,62 @@ export class SegmentRetrievalService {
           `  First segment preview: ${searchResults.results[0].content.substring(0, 100)}...`,
         );
       }
-      // Add documentId to each search result
+      // Add documentId to each search result and add to priority queue
       const resultsWithDocumentId =
         searchResults?.results?.map((result) => ({
-          ...result,
+          id: result.id,
+          content: result.content,
+          similarity: result.similarity || 0,
           documentId: document.id,
-          semanticScore: result.similarity, // Map similarity to semanticScore for consistency
         })) || [];
-      allSegments.push(...resultsWithDocumentId);
-    }
 
-    this.logger.log(`📊 Found ${allSegments.length} segments`);
+      // Add segments to priority queue, keeping only top K
+      // seenContent is shared across all documents to prevent duplicates
 
-    // Debug: Log all segments found
-    allSegments.forEach((segment, index) => {
-      this.logger.log(
-        `🔍 Segment ${index + 1}: similarity=${segment.similarity}, content=${segment.content.substring(0, 100)}...`,
-      );
-    });
+      for (const segment of resultsWithDocumentId) {
+        const trimmedContent = segment.content.trim();
+        const similarity = segment.similarity || 0;
 
-    // Remove duplicate segments (same content) before sorting
-    const uniqueSegments = [];
-    const seenContent = new Set();
+        // Skip duplicates
+        if (seenContent.has(trimmedContent)) {
+          continue;
+        }
 
-    for (const segment of allSegments) {
-      const trimmedContent = segment.content.trim();
-      if (!seenContent.has(trimmedContent)) {
-        seenContent.add(trimmedContent);
-        uniqueSegments.push(segment);
+        // If we have space or this segment is better than the worst one
+        if (topSegments.length < maxChunks) {
+          topSegments.push(segment);
+          seenContent.add(trimmedContent);
+          // Update minimum similarity
+          if (similarity < minSimilarity.value || minSimilarity.value === -1) {
+            minSimilarity.value = similarity;
+          }
+        } else if (similarity > minSimilarity.value) {
+          // Replace the worst segment
+          const worstIndex = topSegments.findIndex(
+            (s) => (s.similarity || 0) === minSimilarity.value,
+          );
+          if (worstIndex !== -1) {
+            const removed = topSegments[worstIndex];
+            seenContent.delete(removed.content.trim());
+            topSegments[worstIndex] = segment;
+            seenContent.add(trimmedContent);
+            // Update minimum similarity
+            minSimilarity.value = Math.min(
+              ...topSegments.map((s) => s.similarity || 0),
+            );
+          }
+        }
       }
     }
 
-    this.logger.log(
-      `🔍 After deduplication: ${uniqueSegments.length} unique segments`,
-    );
-
-    // Sort segments by similarity score (highest first) before final selection
-    const sortedSegments = uniqueSegments.sort(
-      (a, b) => (b.similarity || 0) - (a.similarity || 0),
-    );
-
-    // Take top K segments by similarity (no quality filtering)
-    const finalSegments = sortedSegments.slice(0, maxChunks);
+    // Sort final segments by similarity (highest first)
+    topSegments.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
 
     this.logger.log(
-      `🔍 Selected top ${finalSegments.length} segments by similarity (no quality filtering)`,
+      `🎯 Returning ${topSegments.length} final segments (from ${documents.length} documents)`,
     );
 
-    this.logger.log(`🎯 Returning ${finalSegments.length} final segments`);
-
-    // Debug: Log final segments
-    finalSegments.forEach((segment, index) => {
-      this.logger.log(
-        `🎯 Final segment ${index + 1}: similarity=${segment.similarity}, content=${segment.content.substring(0, 100)}...`,
-      );
-    });
-
-    return finalSegments;
+    return topSegments;
   }
 
   /**

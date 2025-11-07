@@ -9,6 +9,8 @@ import { DocumentSegment } from './entities/document-segment.entity';
 import { Embedding } from './entities/embedding.entity';
 import { ChatConversation } from '../chat/entities/chat-conversation.entity';
 import { ChatMessage } from '../chat/entities/chat-message.entity';
+import { promises as fs } from 'fs';
+import { join } from 'path';
 import { TypeOrmCrudService } from '@dataui/crud-typeorm';
 import { Cache } from 'cache-manager';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -62,9 +64,12 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
   }
 
   async findById(id: string): Promise<Dataset | null> {
+    // Don't load 'segments' relation - it can contain thousands of segments
+    // and cause memory issues. Load segments separately if needed.
     return this.datasetRepository.findOne({
       where: { id },
-      relations: ['user', 'documents', 'segments', 'keywordTable'],
+      relations: ['user', 'documents', 'keywordTable'],
+      // Explicitly exclude segments to prevent loading thousands into memory
     });
   }
 
@@ -115,7 +120,36 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
         `🗑️ Found ${segmentCount} segments and ${documentCount} documents to delete`,
       );
 
-      // Step 1: Delete all segments for this dataset
+      // Step 1: Get documents before deletion to delete physical files later
+      const documents = await queryRunner.manager.find(Document, {
+        where: { datasetId: id },
+        select: ['id', 'fileId', 'datasetId'],
+      });
+      this.logger.log(`📄 Found ${documents.length} documents to delete`);
+
+      // Step 2: Delete graph-related entities FIRST (they reference documents)
+      // This must happen before deleting documents due to foreign key constraints
+      this.logger.log(`🗑️ Deleting graph nodes and edges for dataset ${id}...`);
+
+      // Delete graph edges first (they reference nodes)
+      const deletedGraphEdges = await queryRunner.query(
+        `DELETE FROM graph_edges WHERE dataset_id = $1`,
+        [id],
+      );
+      this.logger.log(
+        `✅ Deleted ${deletedGraphEdges.length || 0} graph edges`,
+      );
+
+      // Delete graph nodes (they reference documents, so must be deleted before documents)
+      const deletedGraphNodes = await queryRunner.query(
+        `DELETE FROM graph_nodes WHERE dataset_id = $1`,
+        [id],
+      );
+      this.logger.log(
+        `✅ Deleted ${deletedGraphNodes.length || 0} graph nodes`,
+      );
+
+      // Step 3: Delete all segments for this dataset
       this.logger.log(`🗑️ Deleting segments for dataset ${id}...`);
 
       // First, clear parent_id references to break foreign key chains
@@ -132,7 +166,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
       );
       this.logger.log(`✅ Deleted ${deletedSegments.length || 0} segments`);
 
-      // Step 2: Delete all documents for this dataset
+      // Step 4: Delete all documents for this dataset (now safe since graph_nodes are deleted)
       this.logger.log(`🗑️ Deleting documents for dataset ${id}...`);
       const deletedDocuments = await queryRunner.query(
         `DELETE FROM documents WHERE dataset_id = $1`,
@@ -140,7 +174,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
       );
       this.logger.log(`✅ Deleted ${deletedDocuments.length || 0} documents`);
 
-      // Step 3: Delete embeddings that are no longer referenced by any segments
+      // Step 5: Delete embeddings that are no longer referenced by any segments
       this.logger.log(`🗑️ Cleaning up orphaned embeddings...`);
       const deletedEmbeddings = await queryRunner.query(`
         DELETE FROM embeddings 
@@ -154,7 +188,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
         `✅ Deleted ${deletedEmbeddings.length || 0} orphaned embeddings`,
       );
 
-      // Delete all chat messages related to this dataset first
+      // Step 6: Delete all chat messages related to this dataset
       const deletedChatMessages = await queryRunner.manager.delete(
         ChatMessage,
         {
@@ -165,7 +199,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
         `✅ Deleted ${deletedChatMessages.affected || 0} chat messages`,
       );
 
-      // Delete all chat conversations related to this dataset
+      // Step 7: Delete all chat conversations related to this dataset
       const deletedChatConversations = await queryRunner.manager.delete(
         ChatConversation,
         {
@@ -176,6 +210,38 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
         `✅ Deleted ${deletedChatConversations.affected || 0} chat conversations`,
       );
 
+      // Step 8: Delete predefined entities
+      this.logger.log(`🗑️ Deleting predefined entities for dataset ${id}...`);
+      const deletedPredefinedEntities = await queryRunner.query(
+        `DELETE FROM predefined_entities WHERE dataset_id = $1`,
+        [id],
+      );
+      this.logger.log(
+        `✅ Deleted ${deletedPredefinedEntities.length || 0} predefined entities`,
+      );
+
+      // Step 9: Delete entity normalization logs
+      this.logger.log(
+        `🗑️ Deleting entity normalization logs for dataset ${id}...`,
+      );
+      const deletedNormalizationLogs = await queryRunner.query(
+        `DELETE FROM entity_normalization_logs WHERE dataset_id = $1`,
+        [id],
+      );
+      this.logger.log(
+        `✅ Deleted ${deletedNormalizationLogs.length || 0} normalization logs`,
+      );
+
+      // Step 10: Delete dataset keyword table
+      this.logger.log(`🗑️ Deleting keyword table for dataset ${id}...`);
+      const deletedKeywordTable = await queryRunner.query(
+        `DELETE FROM dataset_keyword_tables WHERE dataset_id = $1`,
+        [id],
+      );
+      this.logger.log(
+        `✅ Deleted ${deletedKeywordTable.length || 0} keyword table(s)`,
+      );
+
       // Finally, delete the dataset itself
       const deletedDataset = await queryRunner.manager.delete(Dataset, id);
       this.logger.log(
@@ -184,6 +250,36 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
 
       // Commit the transaction
       await queryRunner.commitTransaction();
+
+      // After successful database deletion, delete physical files
+      this.logger.log(
+        `🗑️ Deleting physical files for ${documents.length} documents...`,
+      );
+      for (const document of documents) {
+        if (document.fileId) {
+          try {
+            const filePath = join(
+              process.cwd(),
+              'uploads',
+              'documents',
+              document.fileId,
+            );
+            await fs.unlink(filePath);
+            this.logger.log(`✅ Deleted physical file: ${document.fileId}`);
+          } catch (error) {
+            if (error.code === 'ENOENT') {
+              this.logger.warn(
+                `⚠️ Physical file not found (may have been already deleted): ${document.fileId}`,
+              );
+            } else {
+              this.logger.error(
+                `❌ Failed to delete physical file ${document.fileId}: ${error.message}`,
+              );
+              // Don't throw error - file deletion failure shouldn't prevent dataset deletion
+            }
+          }
+        }
+      }
 
       await this.invalidateDatasetCache(id);
       this.logger.log(`🎉 Dataset deletion completed successfully: ${id}`);

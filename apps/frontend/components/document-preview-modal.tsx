@@ -35,6 +35,16 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
 
     const SEGMENTS_PER_PAGE = 100
 
+    // Calculate status counts from segments array (helper function)
+    const calculateStatusCounts = useCallback((segments: DocumentSegment[]): Record<string, number> => {
+        const counts: Record<string, number> = {}
+        segments.forEach(segment => {
+            const status = segment.status || 'unknown'
+            counts[status] = (counts[status] || 0) + 1
+        })
+        return counts
+    }, [])
+
     const fetchSegments = useCallback(async (page: number = 1, reset: boolean = false) => {
         if (!document) return
 
@@ -48,14 +58,11 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
         }
 
         try {
-            // Fetch segments and total status counts in parallel
-            const [response, statusCountsResponse] = await Promise.all([
-                documentSegmentApi.getByDocumentPaginated(document.id, {
-                    page,
-                    limit: SEGMENTS_PER_PAGE
-                }),
-                documentSegmentApi.getDocumentStatusCounts(document.id)
-            ])
+            // Fetch segments only (removed status-counts API call for performance)
+            const response = await documentSegmentApi.getByDocumentPaginated(document.id, {
+                page,
+                limit: SEGMENTS_PER_PAGE
+            })
 
             // Enhance segments with graph data (with better error handling)
             const enhancedSegments = await Promise.allSettled(
@@ -88,15 +95,17 @@ export function DocumentPreviewModal({ document, isOpen, onClose }: DocumentPrev
                 setTotalSegments(response.total)
                 setHasMore(enhancedSegments.length === SEGMENTS_PER_PAGE && enhancedSegments.length < response.total)
 
-                // Use the total status counts from the API instead of calculating from loaded segments
-                setSegmentStatusCounts(statusCountsResponse.statusCounts)
+                // Calculate status counts from loaded segments (approximate, not total)
+                const counts = calculateStatusCounts(enhancedSegments)
+                setSegmentStatusCounts(counts)
             } else {
                 setSegments(prev => {
                     const newSegments = [...prev, ...enhancedSegments]
                     setHasMore(enhancedSegments.length === SEGMENTS_PER_PAGE && newSegments.length < response.total)
 
-                    // Use the total status counts from the API instead of calculating from loaded segments
-                    setSegmentStatusCounts(statusCountsResponse.statusCounts)
+                    // Calculate status counts from all loaded segments (approximate, not total)
+                    const counts = calculateStatusCounts(newSegments)
+                    setSegmentStatusCounts(counts)
 
                     return newSegments
                 })

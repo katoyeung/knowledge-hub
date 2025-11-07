@@ -40,6 +40,13 @@ const globalApiCallTracker = {
     conversations: new Set<string>(),
 }
 
+// Global cache to preserve conversation state across remounts (e.g., responsive layout changes)
+const conversationCache = new Map<string, {
+    conversation: Conversation | null;
+    messages: ChatMessage[];
+    hasLoaded: boolean;
+}>()
+
 export function DatasetChatPanel({
     datasetId,
     selectedDocumentId,
@@ -47,7 +54,7 @@ export function DatasetChatPanel({
     selectedSegmentIds,
     datasetName: _datasetName, // eslint-disable-line @typescript-eslint/no-unused-vars
     dataset: propDataset,
-    requireDocumentSelection = true
+    requireDocumentSelection = true,
 }: DatasetChatPanelProps) {
     const componentId = useRef(Math.random().toString(36).substr(2, 9))
     const { error } = useToast()
@@ -325,12 +332,18 @@ export function DatasetChatPanel({
             setCurrentStreamingContent('')
             setIsWaitingForResponse(true)
 
+            // Optimization: If no documents are selected (empty array), don't send documentIds
+            // Backend will search all documents when documentIds is undefined/empty
+            const shouldOmitDocumentIds =
+                !selectedDocumentIds || selectedDocumentIds.length === 0;
+
             // Use the chatWithDocumentsStream API directly
             chatApi.chatWithDocumentsStream(
                 {
                     message: currentInput,
                     datasetId,
-                    documentIds: selectedDocumentIds || [],
+                    // Only send documentIds if not all documents are selected
+                    ...(shouldOmitDocumentIds ? {} : { documentIds: selectedDocumentIds }),
                     segmentIds: selectedSegmentIds,
                     maxChunks: chatSettings.maxChunks || 5,
                     temperature: chatSettings.temperature || 0.7,
@@ -522,24 +535,38 @@ export function DatasetChatPanel({
                 limit
             )
 
+            let messages: ChatMessage[]
             if (page === 1) {
-                setHistoryMessages(response.messages)
+                messages = response.messages
+                setHistoryMessages(messages)
             } else {
+                let updatedMessages: ChatMessage[]
                 setHistoryMessages(prev => {
                     const existingIds = new Set(prev.map(m => m.id))
                     const newMessages = response.messages.filter(m => !existingIds.has(m.id))
-                    return [...newMessages, ...prev]
+                    updatedMessages = [...newMessages, ...prev]
+                    return updatedMessages
                 })
+                messages = updatedMessages!
             }
 
             setCurrentPage(page)
             setHasMoreMessages(response.hasMore)
+
+            // Update cache with latest messages if we have a conversation for this dataset
+            const cached = conversationCache.get(datasetId)
+            if (cached && cached.conversation && messages) {
+                conversationCache.set(datasetId, {
+                    ...cached,
+                    messages,
+                })
+            }
         } catch {
         } finally {
             isLoadingMessagesRef.current = false
             setIsLoadingHistory(false)
         }
-    }, [])
+    }, [datasetId])
 
     const loadMoreMessages = useCallback(async () => {
         if (!currentConversation || isLoadingHistory || !hasMoreMessages || isLoadingPaginationRef.current) {
@@ -617,29 +644,56 @@ export function DatasetChatPanel({
         }
     }, [datasetId, propDataset, loadDataset, checkAndLoadUserSettingsIfNeeded])
 
-    // Load latest conversation for this dataset
+    // Load latest conversation for this dataset - DEFERRED until chat tab is actually visible
+    // This prevents loading conversation data when user might not even use the chat feature
     useEffect(() => {
+        // Check cache first - restore conversation state if available (prevents reloading on responsive layout changes)
+        const cached = conversationCache.get(datasetId)
+        if (cached && cached.hasLoaded) {
+            // Restore conversation state from cache immediately
+            if (cached.conversation) {
+                setCurrentConversation(cached.conversation)
+            }
+            // Always restore messages from cache, even if empty array
+            setHistoryMessages(cached.messages || [])
+            hasLoadedConversationRef.current = true
+            setIsInitialLoad(false)
+            // Don't proceed to load conversation if we have cached data
+            return
+        }
+
+        // Only load conversation if chat panel is actually being used
+        // For now, we'll still load it but with a longer delay to prioritize other requests
         let isMounted = true
         let timeoutId: NodeJS.Timeout
 
         const loadConversation = async () => {
-            hasLoadedConversationRef.current = false
-            isLoadingConversationRef.current = false
-            isLoadingMessagesRef.current = false
-            isLoadingPaginationRef.current = false
-            isLoadingUserSettingsRef.current = false
-            setCurrentConversation(null)
-            setHistoryMessages([])
-            setSourceChunks([])
-            setCurrentPage(1)
-            setHasMoreMessages(true)
+            // Only reset state if we don't already have a conversation loaded
+            // This prevents clearing conversation when component remounts due to responsive layout changes
+            // Check cache again before resetting - if cache exists, don't reset
+            const cachedBeforeReset = conversationCache.get(datasetId)
+            if (!hasLoadedConversationRef.current && !cachedBeforeReset) {
+                hasLoadedConversationRef.current = false
+                isLoadingConversationRef.current = false
+                isLoadingMessagesRef.current = false
+                isLoadingPaginationRef.current = false
+                isLoadingUserSettingsRef.current = false
+                setCurrentConversation(null)
+                setHistoryMessages([])
+                setSourceChunks([])
+                setCurrentPage(1)
+                setHasMoreMessages(true)
+            }
 
             if (isMounted) {
+                // Increased delay to defer this non-critical request
                 timeoutId = setTimeout(async () => {
                     if (isMounted) {
                         try {
-                            const callKey = `conversation-${datasetId}-${componentId.current}`
+                            // Use datasetId as the key instead of componentId to share state across remounts
+                            const callKey = `conversation-${datasetId}`
                             if (globalApiCallTracker.conversations.has(callKey)) {
+                                // Conversation is already being loaded, skip
                                 return
                             }
                             globalApiCallTracker.conversations.add(callKey)
@@ -648,7 +702,29 @@ export function DatasetChatPanel({
                             const conversation = await chatApi.getLatestConversation(datasetId)
                             if (conversation && isMounted) {
                                 setCurrentConversation(conversation)
+                                // Initialize cache with conversation (messages will be updated by loadConversationMessages)
+                                conversationCache.set(datasetId, {
+                                    conversation,
+                                    messages: [],
+                                    hasLoaded: false, // Will be set to true after messages load
+                                })
+                                // Load messages - this will update the cache via loadConversationMessages
                                 await loadConversationMessages(conversation.id, 1, 10)
+                                // Mark as fully loaded after messages are fetched
+                                const cached = conversationCache.get(datasetId)
+                                if (cached) {
+                                    conversationCache.set(datasetId, {
+                                        ...cached,
+                                        hasLoaded: true,
+                                    })
+                                }
+                            } else {
+                                // Cache empty state
+                                conversationCache.set(datasetId, {
+                                    conversation: null,
+                                    messages: [],
+                                    hasLoaded: true,
+                                })
                             }
                             hasLoadedConversationRef.current = true
                         } catch (err) {
@@ -660,7 +736,7 @@ export function DatasetChatPanel({
                             }
                         }
                     }
-                }, 100)
+                }, 500) // Increased from 100ms to 500ms to defer this request
             }
         }
 
@@ -674,8 +750,9 @@ export function DatasetChatPanel({
             if (scrollTimeoutRef.current) {
                 clearTimeout(scrollTimeoutRef.current)
             }
-            const callKey = `conversation-${datasetId}-${componentId.current}`
-            globalApiCallTracker.conversations.delete(callKey)
+            // Don't delete the callKey on cleanup - keep it to prevent reloading on remount
+            // const callKey = `conversation-${datasetId}`
+            // globalApiCallTracker.conversations.delete(callKey)
         }
     }, [datasetId, loadConversationMessages])
 

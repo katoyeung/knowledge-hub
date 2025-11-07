@@ -40,17 +40,23 @@ export class DocumentService extends TypeOrmCrudService<Document> {
   }
 
   async findById(id: string): Promise<Document | null> {
+    // Don't load 'segments' relation - it can contain thousands of segments
+    // and cause memory issues. Load segments separately if needed.
     return this.documentRepository.findOne({
       where: { id },
-      relations: ['dataset', 'user', 'segments'],
+      relations: ['dataset', 'user'],
+      // Explicitly exclude segments to prevent loading thousands into memory
     });
   }
 
   async findByDatasetId(datasetId: string): Promise<Document[]> {
+    // Don't load 'segments' relation - it can contain thousands of segments per document
+    // and cause memory issues. Load segments separately if needed.
     return this.documentRepository.find({
       where: { datasetId },
-      relations: ['user', 'segments'],
+      relations: ['user'],
       order: { position: 'ASC' },
+      // Explicitly exclude segments to prevent loading thousands into memory
     });
   }
 

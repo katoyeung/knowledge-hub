@@ -214,9 +214,11 @@ export class ChatService {
     segmentIds?: string[],
   ): Promise<ChatConversation> {
     if (conversationId) {
+      // Don't load messages here - load them separately with limit when needed
+      // This prevents loading thousands of messages into memory
       const conversation = await this.conversationRepository.findOne({
         where: { id: conversationId, userId },
-        relations: ['messages'],
+        // Removed relations: ['messages'] to prevent memory issues
       });
       if (conversation) {
         return conversation;
@@ -263,10 +265,12 @@ export class ChatService {
       where.datasetId = datasetId;
     }
 
+    // Don't load messages here - they can be loaded separately with limit when needed
+    // This prevents memory issues with conversations that have many messages
     return await this.conversationRepository.find({
       where,
       order: { updatedAt: 'DESC' },
-      relations: ['messages'],
+      // Removed relations: ['messages'] to prevent memory issues
     });
   }
 
@@ -421,6 +425,9 @@ export class ChatService {
       });
 
       // 5. Retrieve relevant segments
+      this.logger.log(
+        `🔍 Retrieving segments for query: "${dto.message}", documentIds: ${dto.documentIds?.length || 0}, maxChunks: ${effectiveConfig.maxChunks}`,
+      );
       const retrievedSegments =
         await this.segmentRetrievalService.retrieveRelevantSegments(
           dto.datasetId,
@@ -431,6 +438,30 @@ export class ChatService {
           effectiveConfig.bm25Weight,
           effectiveConfig.embeddingWeight,
         );
+      this.logger.log(
+        `✅ Retrieved ${retrievedSegments.length} segments for chat response`,
+      );
+      if (retrievedSegments.length === 0) {
+        this.logger.warn(
+          `⚠️ No segments retrieved! This might cause the LLM to use general knowledge instead of document context.`,
+        );
+      }
+
+      // 6. Load conversation history with limit if needed (don't load all messages)
+      let conversationHistory: ChatMessage[] = [];
+      if (effectiveConfig.includeConversationHistory) {
+        const historyLimit = effectiveConfig.conversationHistoryLimit || 10;
+        conversationHistory = await this.messageRepository.find({
+          where: { conversationId: conversation.id, userId },
+          order: { createdAt: 'DESC' },
+          take: historyLimit, // Only load the most recent messages
+        });
+        // Reverse to get chronological order
+        conversationHistory.reverse();
+        this.logger.log(
+          `📚 Loaded ${conversationHistory.length} messages for conversation history (limit: ${historyLimit})`,
+        );
+      }
 
       // 6. Generate streaming response
       const assistantMessage =
@@ -438,9 +469,7 @@ export class ChatService {
           dto.message,
           retrievedSegments,
           effectiveConfig,
-          effectiveConfig.includeConversationHistory
-            ? conversation.messages || []
-            : [],
+          conversationHistory,
           (token: string) => {
             observer.next({
               data: JSON.stringify({
@@ -451,6 +480,24 @@ export class ChatService {
           },
         );
 
+      // Extract segment IDs and document IDs before clearing segments from memory
+      const sourceChunkIds = retrievedSegments.map((s) => s.id);
+      const sourceDocuments = retrievedSegments.map(
+        (s) => s.documentId || s.id,
+      );
+
+      // Create lightweight source chunks for response (truncate content to prevent memory issues)
+      const sourceChunks = retrievedSegments.map((segment) => ({
+        id: segment.id,
+        content: segment.content?.substring(0, 500) || '', // Truncate to 500 chars to save memory
+        documentId: segment.documentId || segment.id,
+        documentName: 'Document',
+        similarity: segment.similarity || 0,
+      }));
+
+      // Clear retrievedSegments from memory after extracting needed data
+      retrievedSegments.length = 0;
+
       // 7. Save assistant message
       const savedAssistantMessage = await this.saveMessage({
         content: assistantMessage.content,
@@ -459,10 +506,8 @@ export class ChatService {
         userId,
         datasetId: dto.datasetId,
         conversationId: conversation.id,
-        sourceChunkIds: JSON.stringify(retrievedSegments.map((s) => s.id)),
-        sourceDocuments: JSON.stringify(
-          retrievedSegments.map((s) => s.documentId || s.id),
-        ),
+        sourceChunkIds: JSON.stringify(sourceChunkIds),
+        sourceDocuments: JSON.stringify(sourceDocuments),
         metadata: {
           tokensUsed: assistantMessage.tokensUsed,
           model: assistantMessage.model,
@@ -472,19 +517,16 @@ export class ChatService {
 
       const processingTime = Date.now() - startTime;
 
+      // Clear conversation history from memory
+      conversationHistory.length = 0;
+
       // Send final response
       observer.next({
         data: JSON.stringify({
           type: 'complete',
           message: savedAssistantMessage,
           conversationId: conversation.id,
-          sourceChunks: retrievedSegments.map((segment) => ({
-            id: segment.id,
-            content: segment.content,
-            documentId: segment.documentId || segment.id,
-            documentName: 'Document',
-            similarity: segment.similarity || 0,
-          })),
+          sourceChunks,
           metadata: {
             tokensUsed: assistantMessage.tokensUsed,
             processingTime,

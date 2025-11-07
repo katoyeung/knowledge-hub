@@ -5,6 +5,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ChatMessage } from '../src/modules/chat/entities/chat-message.entity';
 import { ChatConversation } from '../src/modules/chat/entities/chat-conversation.entity';
 import { AiProvider } from '../src/modules/ai-provider/entities/ai-provider.entity';
+import { DocumentSegment } from '../src/modules/dataset/entities/document-segment.entity';
 import { DocumentSegmentService } from '../src/modules/dataset/document-segment.service';
 import { DocumentService } from '../src/modules/dataset/document.service';
 import { HybridSearchService } from '../src/modules/dataset/services/hybrid-search.service';
@@ -13,6 +14,11 @@ import { ApiClientFactory } from '../src/common/services/api-client-factory.serv
 import { ModelConfigService } from '../src/modules/chat/services/model-config.service';
 import { PromptService } from '../src/modules/prompts/services/prompt.service';
 import { AiProviderService } from '../src/modules/ai-provider/services/ai-provider.service';
+import { SegmentRetrievalService } from '../src/modules/chat/services/segment-retrieval.service';
+import { ResponseGeneratorService } from '../src/modules/chat/services/response-generator.service';
+import { AiProviderConfigResolver } from '../src/modules/ai-provider/services/ai-provider-config-resolver.service';
+import { LLMClientFactory } from '../src/modules/ai-provider/services/llm-client-factory.service';
+import { DebugLogger } from '../src/common/services/debug-logger.service';
 import { ChatWithDocumentsDto } from '../src/modules/chat/dto/chat-with-documents.dto';
 import { LLMProvider } from '../src/modules/chat/services/model-config.service';
 
@@ -65,6 +71,28 @@ describe('Default Chat Settings Fallback', () => {
     findAiProviderByType: jest.fn(),
   };
 
+  const mockSegmentRetrievalService = {
+    retrieveRelevantSegments: jest.fn(),
+  };
+
+  const mockResponseGeneratorService = {
+    generateResponse: jest.fn(),
+  };
+
+  const mockAiProviderConfigResolver = {
+    resolveForDataset: jest.fn(),
+  };
+
+  const mockLLMClientFactory = {
+    createClient: jest.fn(),
+    getLLMClient: jest.fn(),
+  };
+
+  const mockDebugLogger = {
+    logChatProcess: jest.fn(),
+    logSegmentRetrieval: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -79,6 +107,10 @@ describe('Default Chat Settings Fallback', () => {
         },
         {
           provide: getRepositoryToken(AiProvider),
+          useValue: mockRepository,
+        },
+        {
+          provide: getRepositoryToken(DocumentSegment),
           useValue: mockRepository,
         },
         {
@@ -117,6 +149,26 @@ describe('Default Chat Settings Fallback', () => {
           provide: AiProviderService,
           useValue: mockAiProviderService,
         },
+        {
+          provide: SegmentRetrievalService,
+          useValue: mockSegmentRetrievalService,
+        },
+        {
+          provide: ResponseGeneratorService,
+          useValue: mockResponseGeneratorService,
+        },
+        {
+          provide: AiProviderConfigResolver,
+          useValue: mockAiProviderConfigResolver,
+        },
+        {
+          provide: LLMClientFactory,
+          useValue: mockLLMClientFactory,
+        },
+        {
+          provide: DebugLogger,
+          useValue: mockDebugLogger,
+        },
       ],
     }).compile();
 
@@ -144,52 +196,40 @@ describe('Default Chat Settings Fallback', () => {
     };
 
     mockDatasetService.findById.mockResolvedValue(mockDataset);
-    mockHybridSearchService.search.mockResolvedValue([]);
-    mockDocumentService.findByDatasetId.mockResolvedValue([]);
     mockRepository.findOne.mockResolvedValue({ id: 'test-conversation-id' });
     mockRepository.save.mockResolvedValue({ id: 'test-message-id' });
 
-    // Mock AI provider lookup
-    mockAiProviderService.findAiProviderByType.mockResolvedValue({
-      id: 'openrouter-provider-id',
-      type: 'openrouter',
-    });
-    mockAiProviderService.findAiProviderById.mockResolvedValue({
-      id: 'openrouter-provider-id',
-      type: 'openrouter',
-      models: [
-        {
-          id: 'qwen/qwen3-30b-a3b:free',
-          name: 'Qwen3 30B A3B Free',
-          provider: 'openrouter',
-        },
-      ],
+    // Mock AI provider config resolver
+    mockAiProviderConfigResolver.resolveForDataset.mockResolvedValue({
+      provider: {
+        id: 'openrouter-provider-id',
+        type: 'openrouter',
+      },
+      model: 'qwen/qwen3-30b-a3b:free',
+      temperature: 0.7,
+      maxChunks: 5,
+      includeConversationHistory: false,
+      conversationHistoryLimit: 10,
+      bm25Weight: 0.3,
+      embeddingWeight: 0.7,
     });
 
-    // Mock API client
-    const mockClient = {
-      generateResponse: jest.fn().mockResolvedValue({
-        content: 'Test response',
-        tokensUsed: 100,
-        model: 'qwen/qwen3-30b-a3b:free',
-      }),
-      chatCompletion: jest.fn().mockResolvedValue({
-        data: {
-          choices: [
-            {
-              message: {
-                content: 'Test response',
-              },
-            },
-          ],
-          usage: {
-            total_tokens: 100,
-          },
-        },
-      }),
-    };
-    mockApiClientFactory.createClient.mockReturnValue(mockClient);
-    mockApiClientFactory.getLLMClient.mockReturnValue(mockClient);
+    // Mock segment retrieval
+    mockSegmentRetrievalService.retrieveRelevantSegments.mockResolvedValue([
+      {
+        id: 'segment-1',
+        content: 'Test segment content',
+        similarity: 0.9,
+        documentId: 'doc-1',
+      },
+    ]);
+
+    // Mock response generator
+    mockResponseGeneratorService.generateResponse.mockResolvedValue({
+      content: 'Test response',
+      tokensUsed: 100,
+      model: 'qwen/qwen3-30b-a3b:free',
+    });
 
     const dto: ChatWithDocumentsDto = {
       message: 'Test message',
@@ -205,14 +245,19 @@ describe('Default Chat Settings Fallback', () => {
       chatService.chatWithDocuments(dto, userId),
     ).resolves.toBeDefined();
 
-    // Verify that the AI provider lookup was called with 'openrouter'
-    expect(mockAiProviderService.findAiProviderByType).toHaveBeenCalledWith(
-      'openrouter',
+    // Verify that the AI provider config resolver was called
+    expect(mockAiProviderConfigResolver.resolveForDataset).toHaveBeenCalledWith(
+      'test-dataset-id',
       userId,
     );
 
-    // Verify that the API client was created with the correct provider
-    expect(mockApiClientFactory.getLLMClient).toHaveBeenCalled();
+    // Verify that segment retrieval was called
+    expect(
+      mockSegmentRetrievalService.retrieveRelevantSegments,
+    ).toHaveBeenCalled();
+
+    // Verify that response generation was called
+    expect(mockResponseGeneratorService.generateResponse).toHaveBeenCalled();
   });
 
   it('should use default chat settings when dataset has no settings', async () => {
@@ -224,52 +269,40 @@ describe('Default Chat Settings Fallback', () => {
     };
 
     mockDatasetService.findById.mockResolvedValue(mockDataset);
-    mockHybridSearchService.search.mockResolvedValue([]);
-    mockDocumentService.findByDatasetId.mockResolvedValue([]);
     mockRepository.findOne.mockResolvedValue({ id: 'test-conversation-id' });
     mockRepository.save.mockResolvedValue({ id: 'test-message-id' });
 
-    // Mock AI provider lookup
-    mockAiProviderService.findAiProviderByType.mockResolvedValue({
-      id: 'openrouter-provider-id',
-      type: 'openrouter',
-    });
-    mockAiProviderService.findAiProviderById.mockResolvedValue({
-      id: 'openrouter-provider-id',
-      type: 'openrouter',
-      models: [
-        {
-          id: 'qwen/qwen3-30b-a3b:free',
-          name: 'Qwen3 30B A3B Free',
-          provider: 'openrouter',
-        },
-      ],
+    // Mock AI provider config resolver
+    mockAiProviderConfigResolver.resolveForDataset.mockResolvedValue({
+      provider: {
+        id: 'openrouter-provider-id',
+        type: 'openrouter',
+      },
+      model: 'qwen/qwen3-30b-a3b:free',
+      temperature: 0.7,
+      maxChunks: 5,
+      includeConversationHistory: false,
+      conversationHistoryLimit: 10,
+      bm25Weight: 0.3,
+      embeddingWeight: 0.7,
     });
 
-    // Mock API client
-    const mockClient = {
-      generateResponse: jest.fn().mockResolvedValue({
-        content: 'Test response',
-        tokensUsed: 100,
-        model: 'qwen/qwen3-30b-a3b:free',
-      }),
-      chatCompletion: jest.fn().mockResolvedValue({
-        data: {
-          choices: [
-            {
-              message: {
-                content: 'Test response',
-              },
-            },
-          ],
-          usage: {
-            total_tokens: 100,
-          },
-        },
-      }),
-    };
-    mockApiClientFactory.createClient.mockReturnValue(mockClient);
-    mockApiClientFactory.getLLMClient.mockReturnValue(mockClient);
+    // Mock segment retrieval
+    mockSegmentRetrievalService.retrieveRelevantSegments.mockResolvedValue([
+      {
+        id: 'segment-1',
+        content: 'Test segment content',
+        similarity: 0.9,
+        documentId: 'doc-1',
+      },
+    ]);
+
+    // Mock response generator
+    mockResponseGeneratorService.generateResponse.mockResolvedValue({
+      content: 'Test response',
+      tokensUsed: 100,
+      model: 'qwen/qwen3-30b-a3b:free',
+    });
 
     const dto: ChatWithDocumentsDto = {
       message: 'Test message',
@@ -285,13 +318,18 @@ describe('Default Chat Settings Fallback', () => {
       chatService.chatWithDocuments(dto, userId),
     ).resolves.toBeDefined();
 
-    // Verify that the AI provider lookup was called with 'openrouter'
-    expect(mockAiProviderService.findAiProviderByType).toHaveBeenCalledWith(
-      'openrouter',
+    // Verify that the AI provider config resolver was called
+    expect(mockAiProviderConfigResolver.resolveForDataset).toHaveBeenCalledWith(
+      'test-dataset-id',
       userId,
     );
 
-    // Verify that the API client was created with the correct provider
-    expect(mockApiClientFactory.getLLMClient).toHaveBeenCalled();
+    // Verify that segment retrieval was called
+    expect(
+      mockSegmentRetrievalService.retrieveRelevantSegments,
+    ).toHaveBeenCalled();
+
+    // Verify that response generation was called
+    expect(mockResponseGeneratorService.generateResponse).toHaveBeenCalled();
   });
 });

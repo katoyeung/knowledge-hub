@@ -220,6 +220,9 @@ export class ResponseGeneratorService {
       tokensUsed,
     });
 
+    // Clear messages array from memory after use
+    messages.length = 0;
+
     return {
       content: fullContent,
       tokensUsed,

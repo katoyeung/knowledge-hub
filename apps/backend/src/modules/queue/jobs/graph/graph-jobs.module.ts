@@ -82,12 +82,7 @@ export class GraphJobsModule {
     private readonly jobRegistry: JobRegistryService,
     private readonly graphExtractionJob: GraphExtractionJob,
   ) {
-    console.log('GraphJobsModule constructor called');
-    console.log('GraphExtractionJob jobType:', this.graphExtractionJob.jobType);
-
     // Register the job with the registry
     this.jobRegistry.register(this.graphExtractionJob);
-    console.log('GraphExtractionJob registered with job registry');
-    console.log('Total registered jobs:', this.jobRegistry.getAllJobs().length);
   }
 }
