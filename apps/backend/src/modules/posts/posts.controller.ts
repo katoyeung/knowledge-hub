@@ -10,6 +10,7 @@ import {
   Param,
   Query,
   BadRequestException,
+  Request,
 } from '@nestjs/common';
 import { Crud, CrudController } from '@dataui/crud';
 import { validate } from 'class-validator';
@@ -29,8 +30,15 @@ import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { BulkCreatePostsDto } from './dto/bulk-create-posts.dto';
 import { DeduplicationStrategy } from './enums/deduplication-strategy.enum';
+import { PostStatus } from './enums/post-status.enum';
 import { UpsertConfigDto } from './dto/upsert-config.dto';
+import {
+  TriggerPostApprovalDto,
+  BatchTriggerPostApprovalDto,
+} from './dto/trigger-post-approval.dto';
 import { Logger } from '@nestjs/common';
+import { PostApprovalJob } from '@modules/queue/jobs/posts/post-approval.job';
+import { UserService } from '@modules/user/user.service';
 
 @Crud({
   model: {
@@ -77,7 +85,11 @@ import { Logger } from '@nestjs/common';
 export class PostsController implements CrudController<Post> {
   private readonly logger = new Logger(PostsController.name);
 
-  constructor(public readonly service: PostsService) {}
+  constructor(
+    public readonly service: PostsService,
+    private readonly postApprovalJob: PostApprovalJob,
+    private readonly userService: UserService,
+  ) {}
 
   @PostDecorator('upsert')
   @ApiOperation({
@@ -301,6 +313,7 @@ export class PostsController implements CrudController<Post> {
     @Query('userId') userId?: string,
     @Query('metaKey') metaKey?: string,
     @Query('metaValue') metaValue?: string,
+    @Query('status') status?: PostStatus,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('postedAtStart') postedAtStart?: string,
@@ -343,6 +356,7 @@ export class PostsController implements CrudController<Post> {
         userId,
         metaKey,
         metaValue: parsedMetaValue,
+        status,
         startDate: startDate ? new Date(startDate) : undefined,
         endDate: endDate ? new Date(endDate) : undefined,
         postedAtStart: postedAtStart ? new Date(postedAtStart) : undefined,
@@ -540,6 +554,297 @@ export class PostsController implements CrudController<Post> {
     } catch (error) {
       throw new BadRequestException(
         `Failed to delete all posts: ${error.message}`,
+      );
+    }
+  }
+
+  @PostDecorator(':id/approve')
+  @ApiOperation({
+    summary: 'Trigger post approval job for a single post',
+    description:
+      'Uses user post settings if not provided, or provided settings override user settings',
+  })
+  @ApiParam({ name: 'id', description: 'Post ID' })
+  @ApiBody({ type: TriggerPostApprovalDto, required: false })
+  async triggerPostApproval(
+    @Param('id') postId: string,
+    @Body() dto: TriggerPostApprovalDto,
+    @Request() req: any,
+  ) {
+    try {
+      const userId = req.user.id;
+
+      // Get user post settings if not provided
+      let settings = dto;
+      if (!dto.aiProviderId || !dto.promptId || !dto.model) {
+        const userSettings = await this.userService.getUserPostSettings(userId);
+        settings = {
+          ...userSettings,
+          ...dto,
+        } as TriggerPostApprovalDto;
+      }
+
+      // Validate required fields
+      if (!settings.aiProviderId || !settings.promptId || !settings.model) {
+        throw new BadRequestException(
+          'Missing required fields: aiProviderId, promptId, and model must be provided either in request body or user post settings',
+        );
+      }
+
+      // Dispatch the job
+      this.logger.log(
+        `[POSTS_CONTROLLER] Dispatching post approval job for post ${postId}`,
+      );
+      this.logger.log(
+        `[POSTS_CONTROLLER] Job data: ${JSON.stringify({
+          postId,
+          promptId: settings.promptId,
+          aiProviderId: settings.aiProviderId,
+          model: settings.model,
+          temperature: settings.temperature,
+          userId,
+        })}`,
+      );
+
+      const jobDispatcher = PostApprovalJob.dispatch({
+        postId,
+        promptId: settings.promptId,
+        aiProviderId: settings.aiProviderId,
+        model: settings.model,
+        temperature: settings.temperature,
+        userId,
+      });
+
+      this.logger.log(
+        `[POSTS_CONTROLLER] Job dispatcher created, calling dispatch()...`,
+      );
+
+      await jobDispatcher.dispatch();
+
+      this.logger.log(
+        `[POSTS_CONTROLLER] Post approval job dispatched successfully for post ${postId}`,
+      );
+
+      return {
+        success: true,
+        message: 'Post approval job queued successfully',
+        postId,
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to trigger post approval: ${error.message}`,
+      );
+    }
+  }
+
+  @PostDecorator('batch-approve')
+  @ApiOperation({
+    summary: 'Trigger post approval jobs for multiple posts',
+    description:
+      'Uses user post settings if not provided, or provided settings override user settings',
+  })
+  @ApiBody({ type: BatchTriggerPostApprovalDto })
+  async batchTriggerPostApproval(
+    @Body() dto: BatchTriggerPostApprovalDto,
+    @Request() req: any,
+  ) {
+    try {
+      const userId = req.user.id;
+      const { postIds, ...approvalSettings } = dto;
+
+      if (!postIds || postIds.length === 0) {
+        throw new BadRequestException('At least one post ID is required');
+      }
+
+      // Get user post settings if not provided
+      let settings = { ...approvalSettings };
+      const needsUserSettings =
+        !settings.aiProviderId || !settings.promptId || !settings.model;
+
+      if (needsUserSettings) {
+        const userSettings = await this.userService.getUserPostSettings(userId);
+        // Merge user settings with provided settings (provided settings take precedence)
+        settings = {
+          ...userSettings,
+          ...approvalSettings,
+        } as TriggerPostApprovalDto;
+      }
+
+      // Validate required fields
+      if (!settings.aiProviderId || !settings.promptId || !settings.model) {
+        const missingFields = [];
+        if (!settings.aiProviderId) missingFields.push('aiProviderId');
+        if (!settings.promptId) missingFields.push('promptId');
+        if (!settings.model) missingFields.push('model');
+
+        throw new BadRequestException(
+          `Missing required fields: ${missingFields.join(', ')}. These must be provided either in the request body or configured in user post settings.`,
+        );
+      }
+
+      // Dispatch jobs for all posts
+      this.logger.log(
+        `[POSTS_CONTROLLER] Dispatching batch post approval jobs for ${postIds.length} posts`,
+      );
+      this.logger.log(
+        `[POSTS_CONTROLLER] Settings: ${JSON.stringify({
+          promptId: settings.promptId,
+          aiProviderId: settings.aiProviderId,
+          model: settings.model,
+          temperature: settings.temperature,
+          userId,
+        })}`,
+      );
+
+      const jobPromises = postIds.map(async (postId) => {
+        this.logger.log(
+          `[POSTS_CONTROLLER] Creating job dispatcher for post ${postId}`,
+        );
+        const jobDispatcher = PostApprovalJob.dispatch({
+          postId,
+          promptId: settings.promptId!,
+          aiProviderId: settings.aiProviderId!,
+          model: settings.model!,
+          temperature: settings.temperature,
+          userId,
+        });
+        this.logger.log(
+          `[POSTS_CONTROLLER] Job dispatcher created for post ${postId}, calling dispatch()...`,
+        );
+        await jobDispatcher.dispatch();
+        this.logger.log(
+          `[POSTS_CONTROLLER] Job dispatched successfully for post ${postId}`,
+        );
+      });
+
+      await Promise.all(jobPromises);
+
+      this.logger.log(
+        `[POSTS_CONTROLLER] All ${postIds.length} batch post approval jobs dispatched successfully`,
+      );
+
+      return {
+        success: true,
+        message: `${postIds.length} post approval jobs queued successfully`,
+        postIds,
+        jobCount: postIds.length,
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to trigger batch post approval: ${error.message}`,
+      );
+    }
+  }
+
+  @PostDecorator('approve-all')
+  @ApiOperation({
+    summary: 'Trigger post approval jobs for all posts matching filters',
+    description:
+      'Uses user post settings if not provided, or provided settings override user settings',
+  })
+  @ApiBody({ type: TriggerPostApprovalDto, required: false })
+  async approveAllPosts(
+    @Body() dto: TriggerPostApprovalDto,
+    @Query() query: any,
+    @Request() req: any,
+  ) {
+    try {
+      const userId = req.user.id;
+
+      // Get user post settings if not provided
+      let settings = dto;
+      if (!dto.aiProviderId || !dto.promptId || !dto.model) {
+        const userSettings = await this.userService.getUserPostSettings(userId);
+        settings = {
+          ...userSettings,
+          ...dto,
+        } as TriggerPostApprovalDto;
+      }
+
+      // Validate required fields
+      if (!settings.aiProviderId || !settings.promptId || !settings.model) {
+        throw new BadRequestException(
+          'Missing required fields: aiProviderId, promptId, and model must be provided either in request body or user post settings',
+        );
+      }
+
+      // Get all posts matching filters (similar to search endpoint)
+      // Build filters from query params
+      const filters: PostSearchFilters = {
+        hash: query['filter[hash]'] as string | undefined,
+        provider: query['filter[provider]'] as string | undefined,
+        source: query['filter[source]'] as string | undefined,
+        title: query['filter[title]'] as string | undefined,
+        metaKey: query['filter[metaKey]'] as string | undefined,
+        metaValue: query['filter[metaValue]'] as string | undefined,
+        postedAtStart: query['filter[postedAtStart]']
+          ? new Date(query['filter[postedAtStart]'] as string)
+          : undefined,
+        postedAtEnd: query['filter[postedAtEnd]']
+          ? new Date(query['filter[postedAtEnd]'] as string)
+          : undefined,
+        limit: 10000, // Large limit for "all"
+      };
+
+      const searchResult = await this.service.search(filters);
+
+      if (!searchResult.data || searchResult.data.length === 0) {
+        return {
+          success: true,
+          message: 'No posts found to approve',
+          jobCount: 0,
+        };
+      }
+
+      // Dispatch jobs for all posts
+      this.logger.log(
+        `[POSTS_CONTROLLER] Dispatching approve-all jobs for ${searchResult.data.length} posts`,
+      );
+      this.logger.log(
+        `[POSTS_CONTROLLER] Settings: ${JSON.stringify({
+          promptId: settings.promptId,
+          aiProviderId: settings.aiProviderId,
+          model: settings.model,
+          temperature: settings.temperature,
+          userId,
+        })}`,
+      );
+
+      const jobPromises = searchResult.data.map(async (post: Post) => {
+        this.logger.log(
+          `[POSTS_CONTROLLER] Creating job dispatcher for post ${post.id}`,
+        );
+        const jobDispatcher = PostApprovalJob.dispatch({
+          postId: post.id,
+          promptId: settings.promptId!,
+          aiProviderId: settings.aiProviderId!,
+          model: settings.model!,
+          temperature: settings.temperature,
+          userId,
+        });
+        this.logger.log(
+          `[POSTS_CONTROLLER] Job dispatcher created for post ${post.id}, calling dispatch()...`,
+        );
+        await jobDispatcher.dispatch();
+        this.logger.log(
+          `[POSTS_CONTROLLER] Job dispatched successfully for post ${post.id}`,
+        );
+      });
+
+      await Promise.all(jobPromises);
+
+      this.logger.log(
+        `[POSTS_CONTROLLER] All ${searchResult.data.length} approve-all jobs dispatched successfully`,
+      );
+
+      return {
+        success: true,
+        message: `${searchResult.data.length} post approval jobs queued successfully`,
+        jobCount: searchResult.data.length,
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to trigger approve all: ${error.message}`,
       );
     }
   }

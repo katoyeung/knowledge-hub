@@ -11,6 +11,8 @@ export enum NotificationType {
   WORKFLOW_EXECUTION_UPDATE = 'WORKFLOW_EXECUTION_UPDATE',
   WORKFLOW_EXECUTION_COMPLETED = 'WORKFLOW_EXECUTION_COMPLETED',
   WORKFLOW_EXECUTION_FAILED = 'WORKFLOW_EXECUTION_FAILED',
+  POST_APPROVAL_COMPLETED = 'POST_APPROVAL_COMPLETED',
+  POST_APPROVAL_FAILED = 'POST_APPROVAL_FAILED',
 }
 
 export interface NotificationMessage {
@@ -118,6 +120,20 @@ export class NotificationService {
     this.sendNotification(NotificationType.WORKFLOW_EXECUTION_FAILED, {
       executionId,
       workflowId,
+      error,
+    });
+  }
+
+  sendPostApprovalCompleted(postId: string, data: any) {
+    this.sendNotification(NotificationType.POST_APPROVAL_COMPLETED, {
+      postId,
+      ...data,
+    });
+  }
+
+  sendPostApprovalFailed(postId: string, error: string) {
+    this.sendNotification(NotificationType.POST_APPROVAL_FAILED, {
+      postId,
       error,
     });
   }

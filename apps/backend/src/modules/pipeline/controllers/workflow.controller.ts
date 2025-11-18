@@ -61,7 +61,7 @@ export class WorkflowController {
     @Request() req: any,
   ): Promise<any> {
     // Handle data source configuration (keep this async but don't wait if not needed)
-    let inputData = request.inputData || [];
+    const inputData = request.inputData || [];
 
     // Prepare data source config update asynchronously (don't block response)
     const dataSourceUpdatePromise = request.dataSourceConfig

@@ -1,19 +1,13 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
-import { useNotifications } from '@/lib/hooks/use-notifications'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { notificationService, type GraphExtractionNotification } from '@/lib/notification-service'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-// import {
-//     Select,
-//     SelectContent,
-//     SelectItem,
-//     SelectTrigger,
-//     SelectValue,
-// } from '@/components/ui/select' // Removed - using HTML select instead
+import { Checkbox } from '@/components/ui/checkbox'
 import {
     ChevronLeft,
     ChevronRight,
@@ -26,8 +20,11 @@ import {
     AlertCircle,
     RefreshCw,
     Eye,
+    Search,
+    X,
+    Trash2,
 } from 'lucide-react'
-import { documentApi, documentSegmentApi, graphApi, type Document, type DocumentSegment, type GraphExtractionConfig, type GraphNode, type GraphEdge } from '@/lib/api'
+import { documentApi, documentSegmentApi, graphApi, apiClient, type Document, type DocumentSegment, type GraphExtractionConfig, type GraphNode, type GraphEdge } from '@/lib/api'
 import { useToast } from '@/components/ui/simple-toast'
 import { SegmentGraphDetailModal } from '@/components/segment-graph-detail-modal'
 
@@ -45,218 +42,297 @@ interface SegmentWithGraphData extends DocumentSegment {
     error?: string
 }
 
+interface GraphDataCache {
+    nodes: GraphNode[]
+    edges: GraphEdge[]
+    lastExtracted: Date
+    isEmpty: boolean
+    error?: string
+}
+
 export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerProps) {
     const [documents, setDocuments] = useState<Document[]>([])
     const [selectedDocumentId, setSelectedDocumentId] = useState<string>('')
     const [segments, setSegments] = useState<SegmentWithGraphData[]>([])
-    const [loadingDocuments, setLoadingDocuments] = useState(false)
+    const [, setLoadingDocuments] = useState(false)
     const [loadingSegments, setLoadingSegments] = useState(false)
     const [extractingSegments, setExtractingSegments] = useState<Set<string>>(new Set())
     const [currentPage, setCurrentPage] = useState(1)
     const [totalPages, setTotalPages] = useState(1)
     const [totalSegments, setTotalSegments] = useState(0)
-    const [pageSize] = useState(10)
-    const [searchQuery, setSearchQuery] = useState(() => {
-        if (typeof window !== 'undefined') {
-            return localStorage.getItem('graph-segment-search-query') || ''
-        }
-        return ''
-    })
-    const [nodeFilter, setNodeFilter] = useState<'all' | 'with-nodes' | 'without-nodes'>(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('graph-segment-node-filter')
-            console.log('🚀 Initializing nodeFilter from localStorage:', saved)
-            const result = (saved as 'all' | 'with-nodes' | 'without-nodes') || 'all'
-            console.log('🚀 Initial nodeFilter value:', result)
-            return result
-        }
-        console.log('🚀 No window, using default nodeFilter: all')
-        return 'all'
-    })
+    const [pageSize] = useState(20)
+    const [searchQuery, setSearchQuery] = useState('')
+    const [nodeFilter, setNodeFilter] = useState<'all' | 'with-nodes' | 'without-nodes'>('all')
+    const [documentSearchQuery, setDocumentSearchQuery] = useState('')
+    const [showDocumentDropdown, setShowDocumentDropdown] = useState(false)
+    const [selectedSegmentIds, setSelectedSegmentIds] = useState<Set<string>>(new Set())
+    const [isExtractingBatch, setIsExtractingBatch] = useState(false)
+    const [loadingGraphData, setLoadingGraphData] = useState<Set<string>>(new Set())
+    const [expandedSegments, setExpandedSegments] = useState<Set<string>>(new Set())
+    const documentSearchRef = useRef<HTMLDivElement>(null)
     const { success, error: showError } = useToast()
 
     // Modal state
     const [selectedSegment, setSelectedSegment] = useState<SegmentWithGraphData | null>(null)
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
 
-    // Reload segments with current filters (triggers API call)
-    const reloadSegments = useCallback((page: number = 1, filterOverride?: 'all' | 'with-nodes' | 'without-nodes') => {
-        if (selectedDocumentId) {
-            const currentFilter = filterOverride || nodeFilter
-            console.log(`🔄 reloadSegments called with page: ${page}, filter: ${currentFilter}`)
-            // Call loadSegments directly to avoid circular dependency
-            loadSegments(selectedDocumentId, page, currentFilter)
-        }
-    }, [selectedDocumentId, nodeFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+    // Filter documents based on search query
+    const filteredDocuments = documents.filter(doc =>
+        doc.name.toLowerCase().includes(documentSearchQuery.toLowerCase())
+    )
 
-    // Handle node filter change and persist to localStorage
+    // Handle document selection
+    const handleDocumentSelect = (documentId: string) => {
+        setSelectedDocumentId(documentId)
+        setDocumentSearchQuery('')
+        setShowDocumentDropdown(false)
+        setCurrentPage(1)
+        setSelectedSegmentIds(new Set())
+    }
+
+    // Handle clearing document selection
+    const handleClearDocument = () => {
+        setSelectedDocumentId('')
+        setDocumentSearchQuery('')
+        setShowDocumentDropdown(false)
+        setCurrentPage(1)
+        setSelectedSegmentIds(new Set())
+    }
+
+    // Handle node filter change
     const handleNodeFilterChange = (value: 'all' | 'with-nodes' | 'without-nodes') => {
-        console.log(`🔄 Changing node filter from ${nodeFilter} to ${value}`)
-        console.log(`🔄 Current nodeFilter state before change:`, nodeFilter)
         setNodeFilter(value)
-        if (typeof window !== 'undefined') {
-            localStorage.setItem('graph-segment-node-filter', value)
-            console.log(`💾 Saved to localStorage: ${value}`)
+        setCurrentPage(1)
+        setSelectedSegmentIds(new Set())
+    }
+
+    // Close document dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (documentSearchRef.current && !documentSearchRef.current.contains(event.target as Node)) {
+                setShowDocumentDropdown(false)
+            }
         }
 
-        // Reload segments with new filter (triggers API call)
-        console.log(`🔄 Calling reloadSegments(1) with new filter: ${value}`)
-        reloadSegments(1, value) // Reset to page 1 when filter changes, pass the new filter value
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [])
+
+    // Handle checkbox toggle
+    const handleSegmentToggle = (segmentId: string) => {
+        setSelectedSegmentIds(prev => {
+            const newSet = new Set(prev)
+            if (newSet.has(segmentId)) {
+                newSet.delete(segmentId)
+            } else {
+                newSet.add(segmentId)
+            }
+            return newSet
+        })
     }
 
-    // Handle search query change and persist to localStorage
-    const handleSearchQueryChange = (value: string) => {
-        console.log(`🔍 Changing search query from "${searchQuery}" to "${value}"`)
-        setSearchQuery(value)
-        // Search will be applied via debounced useEffect
+    // Handle select all on current page
+    const handleSelectAllPage = () => {
+        const allPageIds = segments.map(s => s.id)
+        const allSelected = allPageIds.every(id => selectedSegmentIds.has(id))
+
+        if (allSelected) {
+            // Deselect all on page
+            setSelectedSegmentIds(prev => {
+                const newSet = new Set(prev)
+                allPageIds.forEach(id => newSet.delete(id))
+                return newSet
+            })
+        } else {
+            // Select all on page
+            setSelectedSegmentIds(prev => {
+                const newSet = new Set(prev)
+                allPageIds.forEach(id => newSet.add(id))
+                return newSet
+            })
+        }
     }
 
-    // Monitor nodeFilter changes
-    useEffect(() => {
-        console.log('🔄 nodeFilter state changed to:', nodeFilter)
-    }, [nodeFilter])
+    // Check if all segments on current page are selected
+    const allPageSelected = segments.length > 0 && segments.every(s => selectedSegmentIds.has(s.id))
 
-    // Debounced search query persistence and reload
-    useEffect(() => {
-        const timeoutId = setTimeout(() => {
-            if (typeof window !== 'undefined') {
-                if (searchQuery.trim()) {
-                    localStorage.setItem('graph-segment-search-query', searchQuery)
-                } else {
-                    localStorage.removeItem('graph-segment-search-query')
+    // Get graph data for a specific segment
+    const getSegmentGraphData = useCallback(async (segmentId: string) => {
+        try {
+            const result = await graphApi.getSegmentGraphData(segmentId)
+            if (!result || ((!result.nodes || result.nodes.length === 0) && (!result.edges || result.edges.length === 0))) {
+                return {
+                    nodes: [],
+                    edges: [],
+                    lastExtracted: new Date(),
+                    isEmpty: true
                 }
             }
-
-            // Reload segments with new search query after debounce
-            console.log(`🔍 Debounced search application with query: "${searchQuery}"`)
-            reloadSegments(1) // Reset to page 1 when search changes
-        }, 300) // 300ms debounce
-
-        return () => clearTimeout(timeoutId)
-    }, [searchQuery, reloadSegments])
-
-    // Timeout for stuck extractions
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setSegments(prev => {
-                const now = Date.now()
-                const stuckSegments = prev.filter(s =>
-                    s.extractionStatus === 'extracting' &&
-                    s.lastExtracted &&
-                    (now - s.lastExtracted.getTime()) > 30000 // 30 seconds timeout
-                )
-
-                if (stuckSegments.length > 0) {
-                    console.log('Found stuck extractions, refreshing:', stuckSegments.map(s => s.id))
-
-                    // Refresh stuck segments
-                    stuckSegments.forEach(async (segment) => {
-                        try {
-                            const graphData = await getSegmentGraphData(segment.id)
-                            setSegments(currentSegments =>
-                                currentSegments.map(s =>
-                                    s.id === segment.id
-                                        ? {
-                                            ...s,
-                                            extractionStatus: graphData?.nodes?.length > 0 ? 'completed' as const : 'idle' as const,
-                                            graphNodes: graphData?.nodes || [],
-                                            graphEdges: graphData?.edges || [],
-                                            lastExtracted: graphData?.lastExtracted,
-                                            isEmpty: graphData?.isEmpty || false,
-                                            error: graphData?.error
-                                        }
-                                        : s
-                                )
-                            )
-                        } catch (err) {
-                            setSegments(currentSegments =>
-                                currentSegments.map(s =>
-                                    s.id === segment.id
-                                        ? {
-                                            ...s,
-                                            extractionStatus: 'error' as const,
-                                            isEmpty: true,
-                                            error: err instanceof Error ? err.message : 'Unknown error'
-                                        }
-                                        : s
-                                )
-                            )
-                        }
-                    })
-                }
-
-                return prev
-            })
-        }, 10000) // Check every 10 seconds
-
-        return () => clearInterval(interval)
+            return {
+                nodes: result.nodes || [],
+                edges: result.edges || [],
+                lastExtracted: new Date(),
+                isEmpty: false
+            }
+        } catch (err) {
+            return {
+                nodes: [],
+                edges: [],
+                lastExtracted: new Date(),
+                isEmpty: true,
+                error: err instanceof Error ? err.message : 'Unknown error'
+            }
+        }
     }, [])
 
     // Set up notification handling for graph extraction updates
-    useNotifications({
-        onGraphExtractionUpdate: (notification) => {
+    useEffect(() => {
+        const handleGraphExtractionUpdate = (notification: GraphExtractionNotification) => {
+            console.log('📢 Graph extraction notification received:', notification)
             if (notification.datasetId === datasetId) {
-                console.log('Graph extraction update:', notification)
-
-                if (notification.stage === 'completed') {
-                    // Update all extracting segments to completed and refresh their data
-                    const refreshExtractingSegments = async () => {
-                        setSegments(prev => {
-                            const extractingSegments = prev.filter(s => s.extractionStatus === 'extracting')
-
-                            // Update status to completed first
-                            const updatedSegments = prev.map(s =>
-                                s.extractionStatus === 'extracting'
-                                    ? { ...s, extractionStatus: 'completed' as const }
+                if (notification.stage === 'started') {
+                    // Update segments to show extraction started
+                    setSegments(prev =>
+                        prev.map(s => {
+                            // Check if this segment is being extracted (we track this via extractingSegments state)
+                            if (extractingSegments.has(s.id)) {
+                                return { ...s, extractionStatus: 'extracting' as const }
+                            }
+                            return s
+                        })
+                    )
+                } else if (notification.stage === 'processing_segment') {
+                    // Update specific segment being processed
+                    if (notification.segmentIds && notification.segmentIds.length > 0) {
+                        setSegments(prev =>
+                            prev.map(s =>
+                                notification.segmentIds!.includes(s.id)
+                                    ? { ...s, extractionStatus: 'extracting' as const }
                                     : s
                             )
+                        )
+                    }
+                } else if (notification.stage === 'completed') {
+                    console.log('✅ Extraction completed notification received', {
+                        segmentIds: notification.segmentIds,
+                        datasetId: notification.datasetId,
+                        documentId: notification.documentId
+                    })
+                    // Get segment IDs that were being extracted
+                    setSegments(prev => {
+                        // Find all segments that are currently extracting
+                        const extractingSegmentIds = prev
+                            .filter(s => s.extractionStatus === 'extracting')
+                            .map(s => s.id)
 
-                            // Refresh graph data for extracting segments
-                            extractingSegments.forEach(async (segment) => {
+                        console.log('🔍 Currently extracting segments:', extractingSegmentIds)
+
+                        // Use segmentIds from notification if available, otherwise use extracting segments
+                        const segmentIdsToUpdate = notification.segmentIds && notification.segmentIds.length > 0
+                            ? notification.segmentIds
+                            : extractingSegmentIds
+
+                        console.log('📝 Segments to update:', segmentIdsToUpdate)
+
+                        if (segmentIdsToUpdate.length === 0) {
+                            // Fallback: update all extracting segments to idle
+                            console.log('⚠️ No specific segments to update, updating all extracting segments')
+                            return prev.map(s =>
+                                s.extractionStatus === 'extracting'
+                                    ? { ...s, extractionStatus: 'idle' as const, isEmpty: true }
+                                    : s
+                            )
+                        }
+
+                        // Store segmentIds in a const to ensure closure captures it correctly
+                        const segmentIds = [...segmentIdsToUpdate]
+
+                        // Immediately update status to idle temporarily while we fetch graph data
+                        // This prevents the "extracting" status from staying stuck
+                        const updatedSegments = prev.map(s =>
+                            segmentIds.includes(s.id)
+                                ? { ...s, extractionStatus: 'idle' as const }
+                                : s
+                        )
+
+                        // Fetch graph data for all segments asynchronously
+                        Promise.all(
+                            segmentIds.map(async (segmentId) => {
                                 try {
-                                    const graphData = await getSegmentGraphData(segment.id)
-                                    setSegments(currentSegments =>
-                                        currentSegments.map(s =>
-                                            s.id === segment.id
-                                                ? {
-                                                    ...s,
-                                                    graphNodes: graphData?.nodes || [],
-                                                    graphEdges: graphData?.edges || [],
-                                                    lastExtracted: graphData?.lastExtracted,
-                                                    isEmpty: graphData?.isEmpty || false,
-                                                    error: graphData?.error
-                                                }
-                                                : s
-                                        )
-                                    )
+                                    const graphData = await getSegmentGraphData(segmentId)
+                                    return { segmentId, graphData, error: null }
                                 } catch (err) {
-                                    setSegments(currentSegments =>
-                                        currentSegments.map(s =>
-                                            s.id === segment.id
-                                                ? {
-                                                    ...s,
-                                                    extractionStatus: 'error' as const,
-                                                    isEmpty: true,
-                                                    error: err instanceof Error ? err.message : 'Unknown error'
-                                                }
-                                                : s
-                                        )
-                                    )
+                                    return {
+                                        segmentId,
+                                        graphData: null,
+                                        error: err instanceof Error ? err.message : 'Unknown error'
+                                    }
                                 }
                             })
+                        ).then(results => {
+                            console.log('📊 Graph data fetch results:', results)
+                            setSegments(currentSegments => {
+                                const updated = currentSegments.map(s => {
+                                    if (!segmentIds.includes(s.id)) {
+                                        return s
+                                    }
 
-                            return updatedSegments
+                                    const result = results.find(r => r.segmentId === s.id)
+                                    if (!result) {
+                                        // No result found, set to idle
+                                        console.log(`⚠️ No result for segment ${s.id}, setting to idle`)
+                                        return {
+                                            ...s,
+                                            extractionStatus: 'idle' as const,
+                                            isEmpty: true
+                                        }
+                                    }
+
+                                    if (result.error) {
+                                        console.log(`❌ Error for segment ${s.id}:`, result.error)
+                                        return {
+                                            ...s,
+                                            extractionStatus: 'error' as const,
+                                            isEmpty: true,
+                                            error: result.error
+                                        }
+                                    }
+
+                                    // Update with graph data
+                                    const hasGraphData = (result.graphData?.nodes?.length || 0) > 0 ||
+                                        (result.graphData?.edges?.length || 0) > 0
+
+                                    console.log(`✅ Updating segment ${s.id}: hasGraphData=${hasGraphData}, nodes=${result.graphData?.nodes?.length || 0}, edges=${result.graphData?.edges?.length || 0}`)
+
+                                    return {
+                                        ...s,
+                                        graphNodes: result.graphData?.nodes || [],
+                                        graphEdges: result.graphData?.edges || [],
+                                        extractionStatus: hasGraphData ? 'completed' as const : 'idle' as const,
+                                        lastExtracted: result.graphData?.lastExtracted || new Date(),
+                                        isEmpty: !hasGraphData,
+                                        error: result.graphData?.error
+                                    }
+                                })
+                                console.log('🔄 Updated segments:', updated.map(s => ({ id: s.id, status: s.extractionStatus })))
+                                return updated
+                            })
+                        }).catch(err => {
+                            console.error('❌ Error fetching graph data:', err)
+                            // On error, update all segments to error state
+                            setSegments(currentSegments =>
+                                currentSegments.map(s =>
+                                    segmentIds.includes(s.id)
+                                        ? { ...s, extractionStatus: 'error' as const, isEmpty: true, error: err.message }
+                                        : s
+                                )
+                            )
                         })
-                    }
 
-                    refreshExtractingSegments()
-
-                    success(
-                        'Segment Extraction Complete',
-                        `Graph extraction completed successfully`
-                    )
+                        return updatedSegments
+                    })
+                    success('Segment Extraction Complete', 'Graph extraction completed successfully')
                 } else if (notification.stage === 'error') {
-                    // Handle error case
                     setSegments(prev =>
                         prev.map(s =>
                             s.extractionStatus === 'extracting'
@@ -264,16 +340,17 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
                                 : s
                         )
                     )
-                    showError(
-                        'Extraction Failed',
-                        notification.message || 'Graph extraction failed'
-                    )
-                } else if (notification.stage === 'processing_segment') {
-                    // Handle processing case - no specific action needed as status is set during extraction
+                    showError('Extraction Failed', notification.message || 'Graph extraction failed')
                 }
             }
         }
-    })
+
+        notificationService.onGraphExtractionUpdate(handleGraphExtractionUpdate)
+
+        return () => {
+            // Cleanup handled by notification service
+        }
+    }, [datasetId, success, showError, getSegmentGraphData, extractingSegments])
 
     // Load documents for the dataset
     const loadDocuments = useCallback(async () => {
@@ -282,72 +359,84 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
             const result = await documentApi.getByDataset(datasetId, 1, 100)
             const docs = result.data || []
             setDocuments(docs)
-            if (docs.length > 0 && !selectedDocumentId) {
-                setSelectedDocumentId(docs[0].id)
-            }
+            // Don't auto-select - keep empty by default
         } catch (err) {
             console.error('Failed to load documents:', err)
             showError('Failed to load documents')
         } finally {
             setLoadingDocuments(false)
         }
-    }, [datasetId, selectedDocumentId, showError])
+    }, [datasetId, showError])
 
-    // Load segments for selected document with proper pagination and filtering
-    const loadSegments = useCallback(async (documentId: string, page: number = 1, filterOverride?: 'all' | 'with-nodes' | 'without-nodes') => {
+    // Load segments - either for a specific document or all segments from dataset
+    const loadSegments = useCallback(async (documentId: string | null, page: number = 1) => {
         try {
             setLoadingSegments(true)
-            const currentFilter = filterOverride || nodeFilter
-            console.log(`🔄 Loading segments for document ${documentId}, page ${page}, filter: ${currentFilter}, search: "${searchQuery}"`)
+            const hasGraphDataParam = nodeFilter === 'with-nodes' ? 'true' : nodeFilter === 'without-nodes' ? 'false' : 'all'
 
-            // Use the new filtered API endpoint
-            const hasGraphDataParam = currentFilter === 'with-nodes' ? 'true' : currentFilter === 'without-nodes' ? 'false' : 'all'
-            console.log(`🔍 API Call - currentFilter: ${currentFilter}, hasGraphDataParam: ${hasGraphDataParam}`)
+            let response: {
+                data: DocumentSegment[]
+                count: number
+                total: number
+                page: number
+                pageCount: number
+                graphDataCache?: Map<string, GraphDataCache>
+            }
 
-            const response = await documentSegmentApi.getByDocumentWithFilters(documentId, {
-                page,
-                limit: pageSize,
-                search: searchQuery.trim() || undefined,
-                hasGraphData: hasGraphDataParam
-            })
-
-            console.log(`📊 API Response:`, {
-                data: response.data.length,
-                total: response.total,
-                page: response.page,
-                pageCount: response.pageCount
-            })
-
-            // Enhance segments with graph data (only for current page)
-            const enhancedSegments = await Promise.all(
-                response.data.map(async (segment) => {
-                    try {
-                        // Get graph data for this segment (if any)
-                        const graphData = await getSegmentGraphData(segment.id)
-                        return {
-                            ...segment,
-                            graphNodes: graphData?.nodes || [],
-                            graphEdges: graphData?.edges || [],
-                            extractionStatus: (graphData?.nodes?.length || 0) > 0 ? 'completed' as const : 'idle' as const,
-                            lastExtracted: graphData?.lastExtracted,
-                            isEmpty: graphData?.isEmpty || false,
-                            error: graphData?.error
-                        }
-                    } catch (err) {
-                        console.log(`❌ Error loading graph data for segment ${segment.id}:`, err)
-                        return {
-                            ...segment,
-                            graphNodes: [],
-                            graphEdges: [],
-                            extractionStatus: 'idle' as const,
-                            isEmpty: true,
-                            error: err instanceof Error ? err.message : 'Unknown error'
-                        }
-                    }
+            if (documentId) {
+                // Load segments for specific document
+                response = await documentSegmentApi.getByDocumentWithFilters(documentId, {
+                    page,
+                    limit: pageSize,
+                    search: searchQuery.trim() || undefined,
+                    hasGraphData: hasGraphDataParam
                 })
-            )
+            } else {
+                // Load segments from dataset using filtered endpoint with SQL JOINs
+                // This uses efficient SQL queries instead of individual API calls
+                response = await documentSegmentApi.getByDatasetWithFilters(datasetId, {
+                    page,
+                    limit: pageSize,
+                    search: searchQuery.trim() || undefined,
+                    hasGraphData: hasGraphDataParam
+                })
 
-            // Update state with paginated results
+                // Initialize empty graph data cache (will be loaded lazily when needed)
+                response.graphDataCache = new Map<string, GraphDataCache>()
+            }
+
+            // Enhance segments with graph data (lazy loading - only when needed)
+            // Use cached data if available (from node filter step)
+            // Otherwise, don't fetch graph data on initial load - fetch it lazily when user needs it
+            const enhancedSegments = response.data.map((segment) => {
+                // Check if we have cached graph data (from node filter step)
+                const cachedData = response.graphDataCache?.get(segment.id)
+
+                if (cachedData) {
+                    // Use cached data - no need to call API again
+                    return {
+                        ...segment,
+                        graphNodes: cachedData?.nodes || [],
+                        graphEdges: cachedData?.edges || [],
+                        extractionStatus: (cachedData?.nodes?.length || 0) > 0 ? 'completed' as const : 'idle' as const,
+                        lastExtracted: cachedData?.lastExtracted,
+                        isEmpty: cachedData?.isEmpty || false,
+                        error: cachedData?.error
+                    }
+                } else {
+                    // Don't fetch graph data on initial load - will be fetched lazily when needed
+                    // This significantly reduces API calls
+                    return {
+                        ...segment,
+                        graphNodes: undefined,
+                        graphEdges: undefined,
+                        extractionStatus: 'idle' as const,
+                        isEmpty: undefined,
+                        error: undefined
+                    }
+                }
+            })
+
             setSegments(enhancedSegments)
             setTotalPages(response.pageCount)
             setTotalSegments(response.total)
@@ -358,42 +447,7 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
         } finally {
             setLoadingSegments(false)
         }
-    }, [nodeFilter, searchQuery, showError, pageSize])
-
-    // Get graph data for a specific segment
-    const getSegmentGraphData = async (segmentId: string) => {
-        try {
-            const result = await graphApi.getSegmentGraphData(segmentId)
-            console.log('Graph data received for segment', segmentId, ':', result)
-
-            // Check if we have valid data
-            if (!result || (!result.nodes || result.nodes.length === 0) && (!result.edges || result.edges.length === 0)) {
-                console.log('No graph data found for segment', segmentId)
-                return {
-                    nodes: [],
-                    edges: [],
-                    lastExtracted: new Date(),
-                    isEmpty: true
-                }
-            }
-
-            return {
-                nodes: result.nodes || [],
-                edges: result.edges || [],
-                lastExtracted: new Date(), // We could get this from the API if needed
-                isEmpty: false
-            }
-        } catch (err) {
-            console.error('Failed to get segment graph data:', err)
-            return {
-                nodes: [],
-                edges: [],
-                lastExtracted: new Date(),
-                isEmpty: true,
-                error: err instanceof Error ? err.message : 'Unknown error'
-            }
-        }
-    }
+    }, [datasetId, nodeFilter, searchQuery, showError, pageSize])
 
     // Handle opening detail modal
     const handleOpenDetailModal = (segment: SegmentWithGraphData) => {
@@ -407,82 +461,131 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
         setSelectedSegment(null)
     }
 
+    // Lazy load graph data for a specific segment (only when needed)
+    const loadSegmentGraphData = async (segmentId: string) => {
+        // Check if already loaded
+        const segment = segments.find(s => s.id === segmentId)
+        if (segment && (segment.graphNodes !== undefined || segment.graphEdges !== undefined)) {
+            return // Already loaded
+        }
+
+        if (loadingGraphData.has(segmentId)) {
+            return // Already loading
+        }
+
+        try {
+            setLoadingGraphData(prev => new Set(prev).add(segmentId))
+            const graphData = await getSegmentGraphData(segmentId)
+            setSegments(prev =>
+                prev.map(s =>
+                    s.id === segmentId
+                        ? {
+                            ...s,
+                            graphNodes: graphData.nodes,
+                            graphEdges: graphData.edges,
+                            extractionStatus: graphData.nodes.length > 0 ? 'completed' as const : 'idle' as const,
+                            lastExtracted: graphData.lastExtracted,
+                            isEmpty: graphData.isEmpty || false,
+                            error: graphData.error
+                        }
+                        : s
+                )
+            )
+        } catch (err) {
+            console.error('Failed to load segment graph data:', err)
+            setSegments(prev =>
+                prev.map(s =>
+                    s.id === segmentId
+                        ? {
+                            ...s,
+                            graphNodes: [],
+                            graphEdges: [],
+                            extractionStatus: 'error' as const,
+                            isEmpty: true,
+                            error: err instanceof Error ? err.message : 'Unknown error'
+                        }
+                        : s
+                )
+            )
+        } finally {
+            setLoadingGraphData(prev => {
+                const newSet = new Set(prev)
+                newSet.delete(segmentId)
+                return newSet
+            })
+        }
+    }
+
     // Refresh graph data for a specific segment
     const refreshSegmentGraphData = async (segmentId: string) => {
-        try {
-            console.log('Refreshing graph data for segment:', segmentId)
-            const graphData = await getSegmentGraphData(segmentId)
-            console.log('Refreshed graph data:', graphData)
+        await loadSegmentGraphData(segmentId)
+    }
 
-            if (graphData) {
-                // Update current segments
-                setSegments(prev =>
-                    prev.map(s =>
-                        s.id === segmentId
-                            ? {
-                                ...s,
-                                graphNodes: graphData.nodes,
-                                graphEdges: graphData.edges,
-                                extractionStatus: graphData.nodes.length > 0 ? 'completed' as const : 'idle' as const,
-                                lastExtracted: graphData.lastExtracted,
-                                isEmpty: graphData.isEmpty || false,
-                                error: graphData.error
-                            }
-                            : s
-                    )
-                )
-                console.log('Updated segment with new graph data')
+    // Toggle segment expansion (to show/hide graph data)
+    const toggleSegmentExpansion = (segmentId: string) => {
+        setExpandedSegments(prev => {
+            const newSet = new Set(prev)
+            if (newSet.has(segmentId)) {
+                newSet.delete(segmentId)
+            } else {
+                newSet.add(segmentId)
+                // Load graph data when expanding
+                loadSegmentGraphData(segmentId)
             }
-        } catch (err) {
-            console.error('Failed to refresh segment graph data:', err)
-        }
+            return newSet
+        })
     }
 
     // Extract graph from specific segment
     const extractFromSegment = async (segment: SegmentWithGraphData) => {
         try {
             setExtractingSegments(prev => new Set(prev).add(segment.id))
-
-            const config: GraphExtractionConfig = {
-                syncMode: false, // Use async mode to avoid timeout issues
-            }
-
-            // Call the graph extraction API with specific segment
-            const result = await graphApi.triggerSegmentExtraction(
-                segment.documentId,
-                [segment.id],
-                config
-            )
+            const config: GraphExtractionConfig = { syncMode: false }
+            const result = await graphApi.triggerSegmentExtraction(segment.documentId, [segment.id], config)
 
             if (result.success) {
-                // Update segment status to processing
                 setSegments(prev =>
                     prev.map(s => s.id === segment.id ? { ...s, extractionStatus: 'extracting' as const } : s)
                 )
 
-                success(
-                    'Segment Extraction Started',
-                    'Graph extraction has been started. You will receive updates as it progresses.'
-                )
+                // Set up fallback to check status after extraction
+                setTimeout(async () => {
+                    setSegments(prev => {
+                        const currentSegment = prev.find(s => s.id === segment.id)
+                        if (currentSegment && currentSegment.extractionStatus === 'extracting') {
+                            // Still extracting, refresh graph data
+                            getSegmentGraphData(segment.id).then(graphData => {
+                                setSegments(currentSegments =>
+                                    currentSegments.map(s =>
+                                        s.id === segment.id
+                                            ? {
+                                                ...s,
+                                                graphNodes: graphData.nodes || [],
+                                                graphEdges: graphData.edges || [],
+                                                extractionStatus: (graphData.nodes?.length || 0) > 0 ? 'completed' as const : 'idle' as const,
+                                                lastExtracted: graphData.lastExtracted || new Date(),
+                                                isEmpty: graphData.isEmpty || false,
+                                                error: graphData.error
+                                            }
+                                            : s
+                                    )
+                                )
+                            }).catch(err => {
+                                console.error(`Failed to refresh segment ${segment.id}:`, err)
+                            })
+                        }
+                        return prev
+                    })
+                }, 5000)
 
-                // The actual completion will be handled by the notification system
+                success('Segment Extraction Started', 'Graph extraction has been started. You will receive updates as it progresses.')
             } else {
                 throw new Error(result.message)
             }
         } catch (err) {
-            console.error('Failed to extract from segment:', err)
-            showError(
-                'Extraction Failed',
-                err instanceof Error ? err.message : 'Failed to extract from segment'
-            )
-
-            // Update segment status to error
+            showError('Extraction Failed', err instanceof Error ? err.message : 'Failed to extract from segment')
             setSegments(prev =>
-                prev.map(s =>
-                    s.id === segment.id
-                        ? { ...s, extractionStatus: 'error' as const }
-                        : s
-                )
+                prev.map(s => s.id === segment.id ? { ...s, extractionStatus: 'error' as const } : s)
             )
         } finally {
             setExtractingSegments(prev => {
@@ -493,71 +596,428 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
         }
     }
 
-    // Clear graph data for a specific segment
-    const clearSegmentGraph = async (segmentId: string) => {
+    // Batch extract from selected segments
+    const extractBatch = async (segmentIds: string[]) => {
+        if (segmentIds.length === 0) return
+
         try {
-            // Call the API to clear graph data for this segment
-            await graphApi.clearSegmentGraph(segmentId)
+            setIsExtractingBatch(true)
+            const config: GraphExtractionConfig = { syncMode: false }
 
-            // Update the segment in the local state to remove graph data
+            // Group segments by document
+            const segmentsByDocument = new Map<string, string[]>()
+            segments.forEach(segment => {
+                if (segmentIds.includes(segment.id)) {
+                    if (!segmentsByDocument.has(segment.documentId)) {
+                        segmentsByDocument.set(segment.documentId, [])
+                    }
+                    segmentsByDocument.get(segment.documentId)!.push(segment.id)
+                }
+            })
+
+            // Extract from each document
+            const promises = Array.from(segmentsByDocument.entries()).map(([documentId, segIds]) =>
+                graphApi.triggerSegmentExtraction(documentId, segIds, config)
+            )
+
+            const results = await Promise.all(promises)
+            console.log('📤 Extraction API responses:', results)
+
+            // Update segment statuses to extracting
             setSegments(prev =>
-                prev.map(s =>
-                    s.id === segmentId
-                        ? {
-                            ...s,
-                            graphNodes: [],
-                            graphEdges: [],
-                            extractionStatus: 'idle' as const,
-                            lastExtracted: undefined,
-                            isEmpty: true
+                prev.map(s => segmentIds.includes(s.id) ? { ...s, extractionStatus: 'extracting' as const } : s)
+            )
+
+            // Set up a fallback mechanism to check status after extraction
+            // This handles cases where notifications might not be received
+            const checkStatusAfterDelay = async () => {
+                // Wait 5 seconds, then check if segments are still extracting
+                setTimeout(async () => {
+                    setSegments(prev => {
+                        const stillExtracting = prev.filter(s =>
+                            segmentIds.includes(s.id) && s.extractionStatus === 'extracting'
+                        )
+
+                        if (stillExtracting.length > 0) {
+                            console.log('⏰ Fallback: Checking status for segments still extracting:', stillExtracting.map(s => s.id))
+                            // Refresh graph data for segments still extracting
+                            stillExtracting.forEach(async (segment) => {
+                                try {
+                                    const graphData = await getSegmentGraphData(segment.id)
+                                    setSegments(currentSegments =>
+                                        currentSegments.map(s =>
+                                            s.id === segment.id
+                                                ? {
+                                                    ...s,
+                                                    graphNodes: graphData.nodes || [],
+                                                    graphEdges: graphData.edges || [],
+                                                    extractionStatus: (graphData.nodes?.length || 0) > 0 ? 'completed' as const : 'idle' as const,
+                                                    lastExtracted: graphData.lastExtracted || new Date(),
+                                                    isEmpty: graphData.isEmpty || false,
+                                                    error: graphData.error
+                                                }
+                                                : s
+                                        )
+                                    )
+                                } catch (err) {
+                                    console.error(`Failed to refresh segment ${segment.id}:`, err)
+                                    // Keep as extracting if refresh fails - will retry on next check
+                                }
+                            })
                         }
-                        : s
-                )
-            )
+                        return prev
+                    })
+                }, 5000) // Check after 5 seconds
+            }
 
-            success(
-                'Graph Cleared',
-                'Graph data has been cleared for this segment.'
+            checkStatusAfterDelay()
+
+            success('Batch Extraction Started', `Graph extraction started for ${segmentIds.length} segment(s).`)
+            setSelectedSegmentIds(new Set())
+        } catch (err) {
+            console.error('❌ Extraction error:', err)
+            // On error, update segments to error state
+            setSegments(prev =>
+                prev.map(s => segmentIds.includes(s.id) ? { ...s, extractionStatus: 'error' as const } : s)
             )
-        } catch (error) {
-            console.error('Failed to clear segment graph:', error)
-            showError(
-                'Clear Failed',
-                error instanceof Error ? error.message : 'Failed to clear graph data'
-            )
+            showError('Batch Extraction Failed', err instanceof Error ? err.message : 'Failed to extract from segments')
+        } finally {
+            setIsExtractingBatch(false)
         }
     }
 
-    // Handle document selection
-    const handleDocumentChange = (documentId: string) => {
-        setSelectedDocumentId(documentId)
-        setCurrentPage(1)
-        if (documentId) {
-            loadSegments(documentId, 1, nodeFilter)
+    // Extract all segments from dataset (respecting filters)
+    const extractAll = async () => {
+        if (totalSegments === 0) return
+
+        try {
+            setIsExtractingBatch(true)
+            const config: GraphExtractionConfig = { syncMode: false }
+
+            // Get all segment IDs that match current filters
+            const allSegmentIds: string[] = []
+            const segmentsByDocument = new Map<string, string[]>()
+            let page = 1
+            let hasMore = true
+            const hasGraphDataParam = nodeFilter === 'with-nodes' ? 'true' : nodeFilter === 'without-nodes' ? 'false' : 'all'
+
+            while (hasMore) {
+                let response: {
+                    data: DocumentSegment[]
+                    pageCount: number
+                }
+
+                if (selectedDocumentId) {
+                    response = await documentSegmentApi.getByDocumentWithFilters(selectedDocumentId, {
+                        page,
+                        limit: 100,
+                        search: searchQuery.trim() || undefined,
+                        hasGraphData: hasGraphDataParam
+                    })
+                } else {
+                    const searchFilter = searchQuery.trim()
+                        ? `&filter=content||cont||${encodeURIComponent(searchQuery.trim())}`
+                        : ''
+                    const crudResponse = await apiClient.get(
+                        `/document-segments?filter=datasetId||eq||${datasetId}${searchFilter}&page=${page}&limit=100&sort=position,ASC`
+                    )
+                    const crudData = crudResponse.data?.data || crudResponse.data || []
+                    const crudPageCount = crudResponse.data?.pageCount || Math.ceil((crudResponse.data?.total || crudData.length) / 100)
+
+                    let paginatedData = crudData
+
+                    // Apply node filter if needed
+                    if (hasGraphDataParam !== 'all') {
+                        const segmentsWithGraphData = await Promise.all(
+                            paginatedData.map(async (seg: DocumentSegment) => {
+                                try {
+                                    const graphData = await getSegmentGraphData(seg.id)
+                                    const hasNodes = (graphData?.nodes?.length || 0) > 0
+                                    return { segment: seg, hasNodes }
+                                } catch {
+                                    return { segment: seg, hasNodes: false }
+                                }
+                            })
+                        )
+
+                        if (hasGraphDataParam === 'true') {
+                            paginatedData = segmentsWithGraphData
+                                .filter(item => item.hasNodes)
+                                .map(item => item.segment)
+                        } else {
+                            paginatedData = segmentsWithGraphData
+                                .filter(item => !item.hasNodes)
+                                .map(item => item.segment)
+                        }
+                    }
+
+                    response = {
+                        data: paginatedData,
+                        pageCount: crudPageCount
+                    }
+                }
+
+                if (response.data && response.data.length > 0) {
+                    response.data.forEach(seg => {
+                        allSegmentIds.push(seg.id)
+                        if (!segmentsByDocument.has(seg.documentId)) {
+                            segmentsByDocument.set(seg.documentId, [])
+                        }
+                        segmentsByDocument.get(seg.documentId)!.push(seg.id)
+                    })
+                    page++
+                    hasMore = page <= response.pageCount
+                } else {
+                    hasMore = false
+                }
+            }
+
+            if (allSegmentIds.length === 0) {
+                showError('No Segments', 'No segments match the current filters.')
+                return
+            }
+
+            // Extract from each document
+            const promises = Array.from(segmentsByDocument.entries()).map(([documentId, segIds]) =>
+                graphApi.triggerSegmentExtraction(documentId, segIds, config)
+            )
+
+            const results = await Promise.all(promises)
+            console.log('📤 Extract All API responses:', results)
+
+            // Update segment statuses to extracting
+            setSegments(prev =>
+                prev.map(s => allSegmentIds.includes(s.id) ? { ...s, extractionStatus: 'extracting' as const } : s)
+            )
+
+            // Set up fallback mechanism to check status after extraction
+            setTimeout(async () => {
+                setSegments(prev => {
+                    const stillExtracting = prev.filter(s =>
+                        allSegmentIds.includes(s.id) && s.extractionStatus === 'extracting'
+                    )
+
+                    if (stillExtracting.length > 0) {
+                        stillExtracting.forEach(async (segment) => {
+                            try {
+                                const graphData = await getSegmentGraphData(segment.id)
+                                setSegments(currentSegments =>
+                                    currentSegments.map(s =>
+                                        s.id === segment.id
+                                            ? {
+                                                ...s,
+                                                graphNodes: graphData.nodes || [],
+                                                graphEdges: graphData.edges || [],
+                                                extractionStatus: (graphData.nodes?.length || 0) > 0 ? 'completed' as const : 'idle' as const,
+                                                lastExtracted: graphData.lastExtracted || new Date(),
+                                                isEmpty: graphData.isEmpty || false,
+                                                error: graphData.error
+                                            }
+                                            : s
+                                    )
+                                )
+                            } catch (err) {
+                                console.error(`Failed to refresh segment ${segment.id}:`, err)
+                            }
+                        })
+                    }
+                    return prev
+                })
+            }, 5000)
+
+            success('Extraction Started', `Graph extraction started for ${allSegmentIds.length} filtered segment(s).`)
+        } catch (err) {
+            showError('Extraction Failed', err instanceof Error ? err.message : 'Failed to extract all segments')
+        } finally {
+            setIsExtractingBatch(false)
         }
     }
 
-    // Handle page change
-    const handlePageChange = (page: number) => {
-        reloadSegments(page)
+    // Remove graph data from selected segments
+    const removeSelectedGraphs = async () => {
+        if (selectedSegmentIds.size === 0) return
+
+        const segmentIds = Array.from(selectedSegmentIds)
+        const confirmed = window.confirm(
+            `Are you sure you want to remove graph data from ${segmentIds.length} selected segment(s)?`
+        )
+        if (!confirmed) return
+
+        try {
+            setIsExtractingBatch(true)
+
+            await Promise.all(
+                segmentIds.map(async (segmentId) => {
+                    try {
+                        const result = await graphApi.clearSegmentGraph(segmentId)
+                        if (result.success) {
+                            // Update segment state
+                            setSegments(prev =>
+                                prev.map(s =>
+                                    s.id === segmentId
+                                        ? {
+                                            ...s,
+                                            graphNodes: [],
+                                            graphEdges: [],
+                                            extractionStatus: 'idle' as const,
+                                            isEmpty: true,
+                                            lastExtracted: undefined
+                                        }
+                                        : s
+                                )
+                            )
+                        }
+                    } catch (err) {
+                        console.error(`Failed to remove graph for segment ${segmentId}:`, err)
+                    }
+                })
+            )
+
+            success('Graph Data Removed', `Removed graph data from ${segmentIds.length} segment(s)`)
+            setSelectedSegmentIds(new Set())
+        } catch (err) {
+            showError('Removal Failed', err instanceof Error ? err.message : 'Failed to remove graph data')
+        } finally {
+            setIsExtractingBatch(false)
+        }
     }
 
-    // Segments are now pre-filtered by the API
-    const filteredSegments = segments
+    // Remove graph data from all segments in dataset (respecting filters)
+    const removeAllGraphs = async () => {
+        const confirmed = window.confirm(
+            `Are you sure you want to remove graph data from all ${totalSegments} filtered segment(s)?`
+        )
+        if (!confirmed) return
+
+        try {
+            setIsExtractingBatch(true)
+
+            // Get all segment IDs that match current filters
+            const allSegmentIds: string[] = []
+            let page = 1
+            let hasMore = true
+            const hasGraphDataParam = nodeFilter === 'with-nodes' ? 'true' : nodeFilter === 'without-nodes' ? 'false' : 'all'
+
+            while (hasMore) {
+                let response: {
+                    data: DocumentSegment[]
+                    pageCount: number
+                }
+
+                if (selectedDocumentId) {
+                    response = await documentSegmentApi.getByDocumentWithFilters(selectedDocumentId, {
+                        page,
+                        limit: 100,
+                        search: searchQuery.trim() || undefined,
+                        hasGraphData: hasGraphDataParam
+                    })
+                } else {
+                    const searchFilter = searchQuery.trim()
+                        ? `&filter=content||cont||${encodeURIComponent(searchQuery.trim())}`
+                        : ''
+                    const crudResponse = await apiClient.get(
+                        `/document-segments?filter=datasetId||eq||${datasetId}${searchFilter}&page=${page}&limit=100&sort=position,ASC`
+                    )
+                    const crudData = crudResponse.data?.data || crudResponse.data || []
+                    const crudPageCount = crudResponse.data?.pageCount || Math.ceil((crudResponse.data?.total || crudData.length) / 100)
+
+                    let paginatedData = crudData
+
+                    // Apply node filter if needed
+                    if (hasGraphDataParam !== 'all') {
+                        const segmentsWithGraphData = await Promise.all(
+                            paginatedData.map(async (seg: DocumentSegment) => {
+                                try {
+                                    const graphData = await getSegmentGraphData(seg.id)
+                                    const hasNodes = (graphData?.nodes?.length || 0) > 0
+                                    return { segment: seg, hasNodes }
+                                } catch {
+                                    return { segment: seg, hasNodes: false }
+                                }
+                            })
+                        )
+
+                        if (hasGraphDataParam === 'true') {
+                            paginatedData = segmentsWithGraphData
+                                .filter(item => item.hasNodes)
+                                .map(item => item.segment)
+                        } else {
+                            paginatedData = segmentsWithGraphData
+                                .filter(item => !item.hasNodes)
+                                .map(item => item.segment)
+                        }
+                    }
+
+                    response = {
+                        data: paginatedData,
+                        pageCount: crudPageCount
+                    }
+                }
+
+                if (response.data && response.data.length > 0) {
+                    allSegmentIds.push(...response.data.map(s => s.id))
+                    page++
+                    hasMore = page <= response.pageCount
+                } else {
+                    hasMore = false
+                }
+            }
+
+            if (allSegmentIds.length === 0) {
+                showError('No Segments', 'No segments match the current filters.')
+                return
+            }
+
+            // Remove graph data from all filtered segments
+            await Promise.all(
+                allSegmentIds.map(async (segmentId) => {
+                    try {
+                        await graphApi.clearSegmentGraph(segmentId)
+                    } catch (err) {
+                        console.error(`Failed to remove graph for segment ${segmentId}:`, err)
+                    }
+                })
+            )
+
+            // Refresh current page segments
+            await loadSegments(selectedDocumentId || null, currentPage)
+
+            success('Graph Data Removed', `Removed graph data from ${allSegmentIds.length} filtered segment(s)`)
+        } catch (err) {
+            showError('Removal Failed', err instanceof Error ? err.message : 'Failed to remove graph data')
+        } finally {
+            setIsExtractingBatch(false)
+        }
+    }
 
     // Load documents on mount
     useEffect(() => {
         loadDocuments()
     }, [datasetId, loadDocuments])
 
-    // Load segments when document changes
+    // Debounced search query reload
     useEffect(() => {
-        if (selectedDocumentId) {
-            loadSegments(selectedDocumentId, currentPage)
-        }
-    }, [selectedDocumentId, currentPage, loadSegments])
+        const timeoutId = setTimeout(() => {
+            loadSegments(selectedDocumentId || null, 1)
+        }, 300)
+
+        return () => clearTimeout(timeoutId)
+    }, [searchQuery, selectedDocumentId, loadSegments])
+
+    // Load segments when document or filters change (including initial load)
+    useEffect(() => {
+        loadSegments(selectedDocumentId || null, currentPage)
+    }, [selectedDocumentId, currentPage, nodeFilter, loadSegments])
 
     const selectedDocument = documents.find(doc => doc.id === selectedDocumentId)
+    const selectedCount = selectedSegmentIds.size
+
+    // Update document search query when document is selected
+    useEffect(() => {
+        if (selectedDocument) {
+            setDocumentSearchQuery(selectedDocument.name)
+        }
+    }, [selectedDocument])
 
     return (
         <div className="space-y-6">
@@ -566,11 +1026,11 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
                 <div>
                     <h2 className="text-xl font-semibold text-gray-900">Document & Segment Explorer</h2>
                     <p className="text-sm text-gray-600">
-                        Explore documents and extract graphs from specific segments
+                        Explore all segments and extract graphs from specific segments
                     </p>
                 </div>
                 <Button
-                    onClick={() => selectedDocumentId && loadSegments(selectedDocumentId, currentPage, nodeFilter)}
+                    onClick={() => loadSegments(selectedDocumentId || null, currentPage)}
                     variant="outline"
                     size="sm"
                 >
@@ -579,181 +1039,213 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
                 </Button>
             </div>
 
-            {/* Document-Level Controls */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center space-x-2">
-                        <Network className="h-5 w-5" />
-                        <span>Document Graph Controls</span>
-                    </CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="flex flex-wrap gap-2">
-                        <Button
-                            onClick={() => {/* TODO: Add extract all segments function */ }}
-                            disabled={false}
-                            size="sm"
-                        >
-                            <Play className="h-4 w-4 mr-2" />
-                            Extract All Segments
-                        </Button>
-                        <Button
-                            onClick={() => {/* TODO: Add sync extract function */ }}
-                            disabled={false}
-                            variant="secondary"
-                            size="sm"
-                        >
-                            <Play className="h-4 w-4 mr-2" />
-                            Sync Extract
-                        </Button>
-                        <Button
-                            onClick={() => {/* TODO: Add refresh function */ }}
-                            variant="outline"
-                            size="sm"
-                        >
-                            <RefreshCw className="h-4 w-4 mr-2" />
-                            Refresh Graph Data
-                        </Button>
-                        <Button
-                            onClick={() => {/* TODO: Add export function */ }}
-                            variant="outline"
-                            size="sm"
-                        >
-                            <Database className="h-4 w-4 mr-2" />
-                            Export Graph
-                        </Button>
-                        <Button
-                            onClick={() => {/* TODO: Add clear function */ }}
-                            variant="destructive"
-                            size="sm"
-                        >
-                            <AlertCircle className="h-4 w-4 mr-2" />
-                            Clear All Graphs
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* Document Selection */}
+            {/* Filters */}
             <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center space-x-2">
                         <FileText className="h-5 w-5" />
-                        <span>Select Document</span>
+                        <span>Filters</span>
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="document-select">Document</Label>
-                            <select
-                                value={selectedDocumentId}
-                                onChange={(e) => handleDocumentChange(e.target.value)}
-                                disabled={loadingDocuments}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            >
-                                <option value="">Select a document...</option>
-                                {documents.map((doc) => (
-                                    <option key={doc.id} value={doc.id}>
-                                        {doc.name} ({doc.indexingStatus})
-                                    </option>
-                                ))}
-                            </select>
-                            {loadingDocuments && (
-                                <p className="text-sm text-gray-500">Loading documents...</p>
-                            )}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* Document Autocomplete */}
+                        <div className="space-y-2" ref={documentSearchRef}>
+                            <Label>Document</Label>
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                                <div className="flex items-center">
+                                    <Input
+                                        placeholder="Search documents..."
+                                        value={showDocumentDropdown ? documentSearchQuery : (selectedDocument ? selectedDocument.name : '')}
+                                        onChange={(e) => {
+                                            setDocumentSearchQuery(e.target.value)
+                                            setShowDocumentDropdown(true)
+                                        }}
+                                        onFocus={() => {
+                                            if (selectedDocument) {
+                                                setDocumentSearchQuery(selectedDocument.name)
+                                            }
+                                            setShowDocumentDropdown(true)
+                                        }}
+                                        onBlur={() => {
+                                            // Delay to allow click on dropdown items
+                                            setTimeout(() => setShowDocumentDropdown(false), 200)
+                                        }}
+                                        className="pl-10 cursor-pointer"
+                                    />
+                                    {selectedDocumentId && (
+                                        <button
+                                            onClick={handleClearDocument}
+                                            className="ml-2 p-1 text-gray-400 hover:text-gray-600"
+                                            title="Clear document selection"
+                                        >
+                                            <X className="h-4 w-4" />
+                                        </button>
+                                    )}
+                                </div>
+                                {showDocumentDropdown && filteredDocuments.length > 0 && (
+                                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
+                                        {filteredDocuments.map((doc) => (
+                                            <button
+                                                key={doc.id}
+                                                onClick={() => handleDocumentSelect(doc.id)}
+                                                className="w-full text-left px-4 py-2 hover:bg-gray-100 flex items-center justify-between"
+                                            >
+                                                <span>{doc.name}</span>
+                                                <Badge variant="outline" className="text-xs">
+                                                    {doc.indexingStatus}
+                                                </Badge>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
-                        {selectedDocument && (
-                            <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                    <span className="font-medium">Status:</span>
-                                    <Badge
-                                        variant={selectedDocument.indexingStatus === 'completed' ? 'default' : 'secondary'}
-                                        className="ml-2"
-                                    >
-                                        {selectedDocument.indexingStatus}
-                                    </Badge>
-                                </div>
-                                <div>
-                                    <span className="font-medium">Segments:</span>
-                                    <span className="ml-2">{totalSegments}</span>
-                                </div>
-                            </div>
-                        )}
+                        {/* Segment Search */}
+                        <div className="space-y-2">
+                            <Label>Search Segments</Label>
+                            <Input
+                                placeholder="Search segment content..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                        </div>
+
+                        {/* Node Filter */}
+                        <div className="space-y-2">
+                            <Label>Has Nodes</Label>
+                            <select
+                                value={nodeFilter}
+                                onChange={(e) => handleNodeFilterChange(e.target.value as 'all' | 'with-nodes' | 'without-nodes')}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                <option value="all">All segments</option>
+                                <option value="with-nodes">With nodes only</option>
+                                <option value="without-nodes">Without nodes only</option>
+                            </select>
+                        </div>
                     </div>
                 </CardContent>
             </Card>
 
             {/* Segments List */}
-            {selectedDocumentId && (
-                <Card>
-                    <CardHeader>
-                        <div className="flex items-center justify-between">
+
+            <Card>
+                <CardHeader>
+                    <div className="flex items-center justify-between flex-wrap gap-4">
+                        <div className="flex items-center space-x-2">
                             <CardTitle className="flex items-center space-x-2">
                                 <Database className="h-5 w-5" />
                                 <span>Segments</span>
                                 <Badge variant="outline">{totalSegments}</Badge>
                             </CardTitle>
+                        </div>
 
-                            {/* Search and Filters */}
-                            <div className="flex items-center space-x-4">
-                                <div className="w-64">
-                                    <Input
-                                        placeholder="Search segments..."
-                                        value={searchQuery}
-                                        onChange={(e) => handleSearchQueryChange(e.target.value)}
-                                    />
-                                </div>
-
-                                {/* Node Filter */}
-                                <div className="flex items-center space-x-2">
-                                    <Label className="text-sm text-gray-600">Filter by nodes:</Label>
-                                    <select
-                                        value={nodeFilter}
-                                        onChange={(e) => {
-                                            const value = e.target.value as 'all' | 'with-nodes' | 'without-nodes'
-                                            handleNodeFilterChange(value)
-                                        }}
-                                        className="w-48 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        {/* Batch Actions */}
+                        <div className="flex items-center space-x-2 flex-wrap gap-2">
+                            {selectedCount > 0 && (
+                                <>
+                                    <Button
+                                        onClick={() => extractBatch(Array.from(selectedSegmentIds))}
+                                        disabled={isExtractingBatch}
+                                        size="sm"
+                                        variant="default"
                                     >
-                                        <option value="all">All segments</option>
-                                        <option value="with-nodes">With nodes only</option>
-                                        <option value="without-nodes">Without nodes only</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            {/* Filter Status */}
-                            {nodeFilter !== 'all' && (
-                                <div className="mt-2 text-sm text-gray-600">
-                                    Showing {filteredSegments.length} of {totalSegments} segments
-                                    {nodeFilter === 'with-nodes' && ` (${totalSegments - filteredSegments.length} segments without nodes hidden)`}
-                                    {nodeFilter === 'without-nodes' && ` (${totalSegments - filteredSegments.length} segments with nodes hidden)`}
-                                    <span className="ml-2 text-xs text-blue-600">• Filter saved</span>
-                                </div>
+                                        {isExtractingBatch ? (
+                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        ) : (
+                                            <Play className="h-4 w-4 mr-2" />
+                                        )}
+                                        Extract Selected ({selectedCount})
+                                    </Button>
+                                    <Button
+                                        onClick={removeSelectedGraphs}
+                                        disabled={isExtractingBatch}
+                                        size="sm"
+                                        variant="destructive"
+                                    >
+                                        {isExtractingBatch ? (
+                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        ) : (
+                                            <Trash2 className="h-4 w-4 mr-2" />
+                                        )}
+                                        Remove Selected ({selectedCount})
+                                    </Button>
+                                </>
                             )}
-                            {searchQuery && (
-                                <div className="mt-1 text-sm text-gray-600">
-                                    <span className="text-xs text-blue-600">• Search saved</span>
-                                </div>
+                            {allPageSelected && totalSegments > 0 && (
+                                <>
+                                    <Button
+                                        onClick={extractAll}
+                                        disabled={isExtractingBatch || totalSegments === 0}
+                                        size="sm"
+                                        variant="outline"
+                                    >
+                                        {isExtractingBatch ? (
+                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        ) : (
+                                            <Play className="h-4 w-4 mr-2" />
+                                        )}
+                                        Extract All ({totalSegments})
+                                    </Button>
+                                    <Button
+                                        onClick={removeAllGraphs}
+                                        disabled={isExtractingBatch}
+                                        size="sm"
+                                        variant="destructive"
+                                    >
+                                        {isExtractingBatch ? (
+                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        ) : (
+                                            <Trash2 className="h-4 w-4 mr-2" />
+                                        )}
+                                        Remove All ({totalSegments})
+                                    </Button>
+                                </>
                             )}
                         </div>
-                    </CardHeader>
-                    <CardContent>
-                        {loadingSegments ? (
-                            <div className="flex items-center justify-center py-8">
-                                <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                                <span>Loading segments...</span>
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                {filteredSegments.map((segment) => (
-                                    <div
-                                        key={segment.id}
-                                        className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
-                                    >
-                                        <div className="flex items-start justify-between">
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    {loadingSegments ? (
+                        <div className="flex items-center justify-center py-8">
+                            <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                            <span>Loading segments...</span>
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {/* Select All Checkbox */}
+                            {segments.length > 0 && (
+                                <div className="flex items-center space-x-2 pb-2 border-b">
+                                    <Checkbox
+                                        checked={allPageSelected}
+                                        onCheckedChange={handleSelectAllPage}
+                                    />
+                                    <Label className="text-sm font-medium">
+                                        Select all on this page ({segments.length})
+                                    </Label>
+                                    {selectedCount > 0 && (
+                                        <span className="text-sm text-gray-500 ml-2">
+                                            ({selectedCount} selected)
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+
+                            {segments.map((segment) => (
+                                <div
+                                    key={segment.id}
+                                    className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
+                                >
+                                    <div className="flex items-start justify-between">
+                                        <div className="flex items-start space-x-3 flex-1">
+                                            <Checkbox
+                                                checked={selectedSegmentIds.has(segment.id)}
+                                                onCheckedChange={() => handleSegmentToggle(segment.id)}
+                                                className="mt-1"
+                                            />
                                             <div className="flex-1 space-y-2">
                                                 <div className="flex items-center space-x-2">
                                                     <Badge variant="outline" className="text-xs">
@@ -783,239 +1275,280 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
                                                     {segment.content}
                                                 </p>
 
-                                                {/* Graph Data Summary */}
-                                                {((segment.graphNodes?.length || 0) > 0 || (segment.graphEdges?.length || 0) > 0 || segment.extractionStatus === 'extracting') && (
-                                                    <div className="space-y-2">
-                                                        <div className="flex items-center space-x-4 text-xs text-gray-600">
-                                                            <div className="flex items-center space-x-1">
-                                                                <Network className="h-3 w-3" />
-                                                                <span>{segment.graphNodes?.length || 0} nodes</span>
-                                                            </div>
-                                                            <div className="flex items-center space-x-1">
-                                                                <Network className="h-3 w-3" />
-                                                                <span>{segment.graphEdges?.length || 0} edges</span>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Detailed Graph Data */}
-                                                        <div className="bg-gray-50 rounded-md p-3 space-y-2">
-                                                            <div className="flex items-center justify-between">
-                                                                <div className="text-xs font-medium text-gray-700">
-                                                                    {segment.extractionStatus === 'extracting' ? 'Extracting Graph Data...' :
-                                                                        segment.isEmpty ? 'No Graph Data Found' : 'Extracted Graph Data:'}
-                                                                </div>
-                                                                <div className="flex items-center space-x-2">
-                                                                    <Button
-                                                                        onClick={() => refreshSegmentGraphData(segment.id)}
-                                                                        size="sm"
-                                                                        variant="ghost"
-                                                                        className="h-6 px-2 text-xs"
-                                                                    >
-                                                                        <RefreshCw className="h-3 w-3 mr-1" />
-                                                                        Refresh
-                                                                    </Button>
-                                                                    {((segment.graphNodes?.length || 0) > 0 || (segment.graphEdges?.length || 0) > 0) && (
-                                                                        <Button
-                                                                            onClick={() => handleOpenDetailModal(segment)}
-                                                                            size="sm"
-                                                                            variant="outline"
-                                                                            className="h-6 px-2 text-xs"
-                                                                        >
-                                                                            <Eye className="h-3 w-3 mr-1" />
-                                                                            View Details
-                                                                        </Button>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-
-                                                            {segment.extractionStatus === 'extracting' ? (
-                                                                <div className="flex items-center space-x-2 text-xs text-gray-500">
-                                                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                                                    <span>Processing segment with AI model...</span>
-                                                                </div>
-                                                            ) : segment.isEmpty ? (
-                                                                <div className="text-center py-4 text-xs text-gray-500">
-                                                                    <div className="mb-2">
-                                                                        <AlertCircle className="h-6 w-6 mx-auto text-gray-400" />
-                                                                    </div>
-                                                                    <div className="font-medium mb-1">No graph data extracted</div>
-                                                                    <div className="text-xs">
-                                                                        {segment.error ? `Error: ${segment.error}` : 'Try running graph extraction on this segment'}
-                                                                    </div>
-                                                                </div>
-                                                            ) : (
-                                                                <>
-                                                                    {/* Nodes */}
-                                                                    {segment.graphNodes && segment.graphNodes.length > 0 && (
-                                                                        <div>
-                                                                            <div className="text-xs font-medium text-gray-600 mb-1">Nodes:</div>
-                                                                            <div className="space-y-1">
-                                                                                {segment.graphNodes.slice(0, 5).map((node, index) => {
-                                                                                    console.log('Rendering node:', node)
-                                                                                    return (
-                                                                                        <div key={index} className="flex items-center space-x-2 text-xs">
-                                                                                            <Badge variant="outline" className="text-xs">
-                                                                                                {node.type || 'Unknown'}
-                                                                                            </Badge>
-                                                                                            <span className="font-medium">{node.label}</span>
-                                                                                            {node.properties?.confidence && typeof node.properties.confidence === 'number' && (
-                                                                                                <span className="text-gray-500">
-                                                                                                    ({(node.properties.confidence * 100).toFixed(0)}%)
-                                                                                                </span>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    )
-                                                                                })}
-                                                                                {segment.graphNodes.length > 5 && (
-                                                                                    <div className="text-xs text-gray-500">
-                                                                                        ... and {segment.graphNodes.length - 5} more nodes
-                                                                                    </div>
-                                                                                )}
-                                                                            </div>
-                                                                        </div>
-                                                                    )}
-
-                                                                    {/* Edges */}
-                                                                    {segment.graphEdges && segment.graphEdges.length > 0 && (
-                                                                        <div>
-                                                                            <div className="text-xs font-medium text-gray-600 mb-1">Relationships:</div>
-                                                                            <div className="space-y-1">
-                                                                                {segment.graphEdges.slice(0, 3).map((edge, index) => (
-                                                                                    <div key={index} className="flex items-center space-x-2 text-xs">
-                                                                                        <span className="font-medium">{edge.sourceNodeId}</span>
-                                                                                        <span className="text-gray-400">→</span>
-                                                                                        <Badge variant="outline" className="text-xs">
-                                                                                            {edge.type || 'Unknown'}
-                                                                                        </Badge>
-                                                                                        <span className="font-medium">{edge.targetNodeId}</span>
-                                                                                        {edge.properties?.confidence && typeof edge.properties.confidence === 'number' && (
-                                                                                            <span className="text-gray-500">
-                                                                                                ({(edge.properties.confidence * 100).toFixed(0)}%)
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                ))}
-                                                                                {segment.graphEdges.length > 3 && (
-                                                                                    <div className="text-xs text-gray-500">
-                                                                                        ... and {segment.graphEdges.length - 3} more relationships
-                                                                                    </div>
-                                                                                )}
-                                                                            </div>
-                                                                        </div>
-                                                                    )}
-                                                                </>
-                                                            )}
-                                                        </div>
+                                                {/* Graph Data - Lazy loaded only when needed */}
+                                                {loadingGraphData.has(segment.id) && (
+                                                    <div className="flex items-center space-x-2 text-xs text-gray-500 mt-2">
+                                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                                        <span>Loading graph data...</span>
                                                     </div>
                                                 )}
-                                            </div>
 
-                                            <div className="ml-4 flex flex-col space-y-2">
-                                                <Button
-                                                    onClick={() => extractFromSegment(segment)}
-                                                    disabled={extractingSegments.has(segment.id)}
-                                                    size="sm"
-                                                    variant="outline"
-                                                >
-                                                    {extractingSegments.has(segment.id) ? (
-                                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                                    ) : (
-                                                        <Play className="h-4 w-4" />
+                                                {/* Show graph data if loaded or extracting */}
+                                                {(segment.extractionStatus === 'extracting' ||
+                                                    (segment.graphNodes !== undefined || segment.graphEdges !== undefined)) && (
+                                                        <div className="space-y-2 mt-2">
+                                                            {((segment.graphNodes?.length || 0) > 0 || (segment.graphEdges?.length || 0) > 0) && (
+                                                                <div className="flex items-center space-x-4 text-xs text-gray-600">
+                                                                    <div className="flex items-center space-x-1">
+                                                                        <Network className="h-3 w-3" />
+                                                                        <span>{segment.graphNodes?.length || 0} nodes</span>
+                                                                    </div>
+                                                                    <div className="flex items-center space-x-1">
+                                                                        <Network className="h-3 w-3" />
+                                                                        <span>{segment.graphEdges?.length || 0} edges</span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Detailed Graph Data - Only show if expanded or has data */}
+                                                            {(expandedSegments.has(segment.id) ||
+                                                                (segment.graphNodes !== undefined || segment.graphEdges !== undefined) ||
+                                                                segment.extractionStatus === 'extracting') && (
+                                                                    <div className="bg-gray-50 rounded-md p-3 space-y-2">
+                                                                        <div className="flex items-center justify-between">
+                                                                            <div className="text-xs font-medium text-gray-700">
+                                                                                {segment.extractionStatus === 'extracting' ? 'Extracting Graph Data...' :
+                                                                                    segment.isEmpty ? 'No Graph Data Found' : 'Extracted Graph Data:'}
+                                                                            </div>
+                                                                            <div className="flex items-center space-x-2">
+                                                                                {!expandedSegments.has(segment.id) && segment.graphNodes === undefined && segment.graphEdges === undefined && (
+                                                                                    <Button
+                                                                                        onClick={() => toggleSegmentExpansion(segment.id)}
+                                                                                        size="sm"
+                                                                                        variant="ghost"
+                                                                                        className="h-6 px-2 text-xs"
+                                                                                        disabled={loadingGraphData.has(segment.id)}
+                                                                                    >
+                                                                                        {loadingGraphData.has(segment.id) ? (
+                                                                                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                                                        ) : (
+                                                                                            <Eye className="h-3 w-3 mr-1" />
+                                                                                        )}
+                                                                                        Load Graph Data
+                                                                                    </Button>
+                                                                                )}
+                                                                                {(segment.graphNodes !== undefined || segment.graphEdges !== undefined) && (
+                                                                                    <>
+                                                                                        <Button
+                                                                                            onClick={() => refreshSegmentGraphData(segment.id)}
+                                                                                            size="sm"
+                                                                                            variant="ghost"
+                                                                                            className="h-6 px-2 text-xs"
+                                                                                        >
+                                                                                            <RefreshCw className="h-3 w-3 mr-1" />
+                                                                                            Refresh
+                                                                                        </Button>
+                                                                                        {((segment.graphNodes?.length || 0) > 0 || (segment.graphEdges?.length || 0) > 0) && (
+                                                                                            <Button
+                                                                                                onClick={() => handleOpenDetailModal(segment)}
+                                                                                                size="sm"
+                                                                                                variant="outline"
+                                                                                                className="h-6 px-2 text-xs"
+                                                                                            >
+                                                                                                <Eye className="h-3 w-3 mr-1" />
+                                                                                                View Details
+                                                                                            </Button>
+                                                                                        )}
+                                                                                    </>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+
+                                                                        {segment.extractionStatus === 'extracting' ? (
+                                                                            <div className="flex items-center space-x-2 text-xs text-gray-500">
+                                                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                                                                <span>Processing segment with AI model...</span>
+                                                                            </div>
+                                                                        ) : segment.isEmpty ? (
+                                                                            <div className="text-center py-4 text-xs text-gray-500">
+                                                                                <div className="mb-2">
+                                                                                    <AlertCircle className="h-6 w-6 mx-auto text-gray-400" />
+                                                                                </div>
+                                                                                <div className="font-medium mb-1">No graph data extracted</div>
+                                                                                <div className="text-xs">
+                                                                                    {segment.error ? `Error: ${segment.error}` : 'Try running graph extraction on this segment'}
+                                                                                </div>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <>
+                                                                                {/* Nodes */}
+                                                                                {segment.graphNodes && segment.graphNodes.length > 0 && (
+                                                                                    <div>
+                                                                                        <div className="text-xs font-medium text-gray-600 mb-1">Nodes:</div>
+                                                                                        <div className="space-y-1">
+                                                                                            {segment.graphNodes.slice(0, 5).map((node, index) => (
+                                                                                                <div key={`node-${node.id || index}`} className="flex items-center space-x-2 text-xs">
+                                                                                                    <Badge variant="outline" className="text-xs">
+                                                                                                        {node.type || 'Unknown'}
+                                                                                                    </Badge>
+                                                                                                    <span className="font-medium">{node.label}</span>
+                                                                                                    {node.properties?.confidence && typeof node.properties.confidence === 'number' && (
+                                                                                                        <span className="text-gray-500">
+                                                                                                            ({(node.properties.confidence * 100).toFixed(0)}%)
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                            {segment.graphNodes.length > 5 && (
+                                                                                                <div className="text-xs text-gray-500">
+                                                                                                    ... and {segment.graphNodes.length - 5} more nodes
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
+
+                                                                                {/* Edges */}
+                                                                                {segment.graphEdges && segment.graphEdges.length > 0 && (
+                                                                                    <div>
+                                                                                        <div className="text-xs font-medium text-gray-600 mb-1">Relationships:</div>
+                                                                                        <div className="space-y-1">
+                                                                                            {segment.graphEdges.slice(0, 3).map((edge, index) => (
+                                                                                                <div key={index} className="flex items-center space-x-2 text-xs">
+                                                                                                    <span className="font-medium">{edge.sourceNodeId}</span>
+                                                                                                    <span className="text-gray-400">→</span>
+                                                                                                    <Badge variant="outline" className="text-xs">
+                                                                                                        {edge.type || 'Unknown'}
+                                                                                                    </Badge>
+                                                                                                    <span className="font-medium">{edge.targetNodeId}</span>
+                                                                                                    {edge.properties?.confidence && typeof edge.properties.confidence === 'number' && (
+                                                                                                        <span className="text-gray-500">
+                                                                                                            ({(edge.properties.confidence * 100).toFixed(0)}%)
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                            {segment.graphEdges.length > 3 && (
+                                                                                                <div className="text-xs text-gray-500">
+                                                                                                    ... and {segment.graphEdges.length - 3} more relationships
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
+                                                                            </>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                        </div>
                                                     )}
-                                                    <span className="ml-1">Extract</span>
-                                                </Button>
 
-                                                {/* View Graph Button - only show if segment has graph data */}
-                                                {((segment.graphNodes?.length || 0) > 0 || (segment.graphEdges?.length || 0) > 0) && (
+                                                {/* Show button to load graph data if not loaded yet */}
+                                                {segment.graphNodes === undefined && segment.graphEdges === undefined && segment.extractionStatus !== 'extracting' && !loadingGraphData.has(segment.id) && (
                                                     <Button
-                                                        onClick={() => handleOpenDetailModal(segment)}
-                                                        size="sm"
-                                                        variant="secondary"
-                                                    >
-                                                        <Network className="h-4 w-4" />
-                                                        <span className="ml-1">View Graph</span>
-                                                    </Button>
-                                                )}
-
-                                                {/* Clear Graph Button - only show if segment has graph data */}
-                                                {((segment.graphNodes?.length || 0) > 0 || (segment.graphEdges?.length || 0) > 0) && (
-                                                    <Button
-                                                        onClick={() => clearSegmentGraph(segment.id)}
-                                                        size="sm"
-                                                        variant="destructive"
-                                                        className="h-6 px-2 text-xs"
-                                                    >
-                                                        <RefreshCw className="h-3 w-3 mr-1" />
-                                                        Clear Graph
-                                                    </Button>
-                                                )}
-
-                                                {/* Force Refresh Button - show if segment was extracting for too long */}
-                                                {segment.extractionStatus === 'extracting' && (
-                                                    <Button
-                                                        onClick={() => refreshSegmentGraphData(segment.id)}
+                                                        onClick={() => toggleSegmentExpansion(segment.id)}
                                                         size="sm"
                                                         variant="outline"
-                                                        className="h-6 px-2 text-xs"
+                                                        className="mt-2"
                                                     >
-                                                        <RefreshCw className="h-3 w-3 mr-1" />
-                                                        Force Refresh
+                                                        <Network className="h-3 w-3 mr-1" />
+                                                        Load Graph Data
                                                     </Button>
                                                 )}
                                             </div>
+
+                                        </div>
+                                        <div className="ml-4 flex flex-col space-y-2">
+                                            <Button
+                                                onClick={() => extractFromSegment(segment)}
+                                                disabled={extractingSegments.has(segment.id)}
+                                                size="sm"
+                                                variant="outline"
+                                            >
+                                                {extractingSegments.has(segment.id) ? (
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <Play className="h-4 w-4" />
+                                                )}
+                                                <span className="ml-1">Extract</span>
+                                            </Button>
+
+                                            {(segment.graphNodes !== undefined || segment.graphEdges !== undefined) &&
+                                                ((segment.graphNodes?.length || 0) > 0 || (segment.graphEdges?.length || 0) > 0) && (
+                                                    <Button
+                                                        onClick={() => {
+                                                            // Ensure graph data is loaded before opening modal
+                                                            if (segment.graphNodes === undefined && segment.graphEdges === undefined) {
+                                                                loadSegmentGraphData(segment.id).then(() => {
+                                                                    const updatedSegment = segments.find(s => s.id === segment.id)
+                                                                    if (updatedSegment) {
+                                                                        handleOpenDetailModal(updatedSegment)
+                                                                    }
+                                                                })
+                                                            } else {
+                                                                handleOpenDetailModal(segment)
+                                                            }
+                                                        }}
+                                                        size="sm"
+                                                        variant="secondary"
+                                                        disabled={loadingGraphData.has(segment.id)}
+                                                    >
+                                                        {loadingGraphData.has(segment.id) ? (
+                                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                                        ) : (
+                                                            <>
+                                                                <Network className="h-4 w-4" />
+                                                                <span className="ml-1">View Graph</span>
+                                                            </>
+                                                        )}
+                                                    </Button>
+                                                )}
                                         </div>
                                     </div>
-                                ))}
-
-                                {filteredSegments.length === 0 && (
-                                    <div className="text-center py-8 text-gray-500">
-                                        {searchQuery
-                                            ? 'No segments match your search.'
-                                            : nodeFilter === 'with-nodes'
-                                                ? 'No segments with nodes found. Try changing the filter or extract graph data from segments.'
-                                                : nodeFilter === 'without-nodes'
-                                                    ? 'No segments without nodes found. All segments have graph data.'
-                                                    : 'No segments found.'
-                                        }
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Pagination */}
-                        {totalPages > 1 && (
-                            <div className="flex items-center justify-between mt-6">
-                                <div className="text-sm text-gray-600">
-                                    Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalSegments)} of {totalSegments} segments
                                 </div>
-                                <div className="flex items-center space-x-2">
-                                    <Button
-                                        onClick={() => handlePageChange(currentPage - 1)}
-                                        disabled={currentPage === 1}
-                                        variant="outline"
-                                        size="sm"
-                                    >
-                                        <ChevronLeft className="h-4 w-4" />
-                                        Previous
-                                    </Button>
-                                    <span className="text-sm">
-                                        Page {currentPage} of {totalPages}
-                                    </span>
-                                    <Button
-                                        onClick={() => handlePageChange(currentPage + 1)}
-                                        disabled={currentPage === totalPages}
-                                        variant="outline"
-                                        size="sm"
-                                    >
-                                        Next
-                                        <ChevronRight className="h-4 w-4" />
-                                    </Button>
+                            ))}
+
+                            {segments.length === 0 && (
+                                <div className="text-center py-8 text-gray-500">
+                                    {searchQuery
+                                        ? 'No segments match your search.'
+                                        : nodeFilter === 'with-nodes'
+                                            ? 'No segments with nodes found. Try changing the filter or extract graph data from segments.'
+                                            : nodeFilter === 'without-nodes'
+                                                ? 'No segments without nodes found. All segments have graph data.'
+                                                : selectedDocumentId
+                                                    ? 'No segments found in this document.'
+                                                    : 'No segments found in this dataset.'
+                                    }
                                 </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Pagination */}
+                    {totalPages > 1 && (
+                        <div className="flex items-center justify-between mt-6">
+                            <div className="text-sm text-gray-600">
+                                Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalSegments)} of {totalSegments} segments
                             </div>
-                        )}
-                    </CardContent>
-                </Card>
-            )}
+                            <div className="flex items-center space-x-2">
+                                <Button
+                                    onClick={() => setCurrentPage(currentPage - 1)}
+                                    disabled={currentPage === 1}
+                                    variant="outline"
+                                    size="sm"
+                                >
+                                    <ChevronLeft className="h-4 w-4" />
+                                    Previous
+                                </Button>
+                                <span className="text-sm">
+                                    Page {currentPage} of {totalPages}
+                                </span>
+                                <Button
+                                    onClick={() => setCurrentPage(currentPage + 1)}
+                                    disabled={currentPage === totalPages}
+                                    variant="outline"
+                                    size="sm"
+                                >
+                                    Next
+                                    <ChevronRight className="h-4 w-4" />
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
 
             {/* Graph Detail Modal */}
             {selectedSegment && (
@@ -1038,3 +1571,4 @@ export function DocumentSegmentExplorer({ datasetId }: DocumentSegmentExplorerPr
         </div>
     )
 }
+

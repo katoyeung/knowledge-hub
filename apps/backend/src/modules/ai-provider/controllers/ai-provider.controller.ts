@@ -8,6 +8,7 @@ import {
   Delete,
   Param,
   Body,
+  BadRequestException,
 } from '@nestjs/common';
 import { Crud, CrudController } from '@dataui/crud';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
@@ -19,6 +20,9 @@ import { AddModelDto, UpdateModelDto } from '../dto/model.dto';
 import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
 import { CrudAuthFilter } from '@modules/access/decorators/crud-auth-filter.decorator';
 import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id.interceptor';
+import { LLMMessage } from '@common/interfaces/llm-client.interface';
+import { LLMClientFactory } from '../services/llm-client-factory.service';
+import { NotFoundException } from '@nestjs/common';
 
 @Crud({
   model: {
@@ -59,7 +63,10 @@ import { PopulateUserIdInterceptor } from '@common/interceptors/populate-user-id
 @CrudAuthFilter('userId')
 @ApiTags('AI Providers')
 export class AiProviderController implements CrudController<AiProvider> {
-  constructor(public readonly service: AiProviderService) {}
+  constructor(
+    public readonly service: AiProviderService,
+    private readonly llmClientFactory: LLMClientFactory,
+  ) {}
 
   // Model Management Endpoints
 
@@ -109,5 +116,67 @@ export class AiProviderController implements CrudController<AiProvider> {
     // Decode URL-encoded modelId to handle special characters
     const decodedModelId = decodeURIComponent(modelId);
     return await this.service.removeModel(id, decodedModelId);
+  }
+
+  @Post(':id/chat-completion')
+  @ApiOperation({ summary: 'Call chat completion API for an AI provider' })
+  @ApiResponse({ status: 200, description: 'Chat completion successful' })
+  async chatCompletion(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      messages: LLMMessage[];
+      model: string;
+      jsonSchema?: Record<string, any>;
+      temperature?: number;
+    },
+  ) {
+    if (
+      !body.messages ||
+      !Array.isArray(body.messages) ||
+      body.messages.length === 0
+    ) {
+      throw new BadRequestException(
+        'Messages array is required and must not be empty',
+      );
+    }
+    if (!body.model) {
+      throw new BadRequestException('Model is required');
+    }
+
+    // Get and validate AI provider
+    const aiProvider = await this.service.findAiProviderById(id);
+    if (!aiProvider) {
+      throw new NotFoundException(`AI Provider with ID ${id} not found`);
+    }
+
+    if (!aiProvider.isActive) {
+      throw new BadRequestException(
+        `AI Provider ${aiProvider.name} is not active`,
+      );
+    }
+
+    // Validate model exists
+    const modelExists = aiProvider.models?.some((m) => m.id === body.model);
+    if (!modelExists) {
+      throw new BadRequestException(
+        `Model ${body.model} not found in provider ${aiProvider.name}`,
+      );
+    }
+
+    // Create LLM client and call chat completion
+    const llmClient = this.llmClientFactory.createClient(aiProvider);
+    const response = await llmClient.chatCompletion(
+      body.messages,
+      body.model,
+      body.jsonSchema,
+      body.temperature || 0.7,
+    );
+
+    return {
+      success: true,
+      data: response.data,
+      status: response.status,
+    };
   }
 }

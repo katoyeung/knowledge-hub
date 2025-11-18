@@ -59,13 +59,6 @@ import { QueueManagerService } from '../../services/queue-manager.service';
   exports: [WorkflowJob],
 })
 export class WorkflowJobsModule {
-  constructor(
-    private readonly jobRegistry: JobRegistryService,
-    private readonly workflowJob: WorkflowJob,
-  ) {}
-
-  onModuleInit() {
-    // Register workflow job
-    this.jobRegistry.register(this.workflowJob);
-  }
+  // Jobs are now auto-registered via JobAutoLoaderService in JobsModule
+  // No need to manually register jobs here
 }

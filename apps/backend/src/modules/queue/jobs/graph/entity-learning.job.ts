@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BaseJob } from '../base/base.job';
+import { RegisterJob } from '../../decorators/register-job.decorator';
 import { Dataset } from '../../../dataset/entities/dataset.entity';
 import { EventBusService } from '../../../event/services/event-bus.service';
 import { NotificationService } from '../../../notification/notification.service';
@@ -25,10 +26,10 @@ export interface EntityLearningJobData {
   };
 }
 
+@RegisterJob('entity-learning')
 @Injectable()
 export class EntityLearningJob extends BaseJob<EntityLearningJobData> {
   protected readonly logger = new Logger(EntityLearningJob.name);
-  protected static readonly jobType = 'ENTITY_LEARNING';
 
   constructor(
     @InjectRepository(Dataset)
@@ -75,13 +76,12 @@ export class EntityLearningJob extends BaseJob<EntityLearningJobData> {
       // Execute learning based on type
       switch (learningType) {
         case 'suggestions':
-          result =
-            await this.entityLearningService.suggestNewEntities(datasetId);
+          result = await this.entityLearningService.suggestNewEntities();
           this.logger.log(`✅ Generated ${result.length} entity suggestions`);
           break;
 
         case 'aliases':
-          await this.entityLearningService.discoverEntityAliases(datasetId);
+          await this.entityLearningService.discoverEntityAliases();
           result = { message: 'Alias discovery completed' };
           this.logger.log(`✅ Alias discovery completed`);
           break;
@@ -95,8 +95,8 @@ export class EntityLearningJob extends BaseJob<EntityLearningJobData> {
         case 'full_analysis':
           // Run all learning tasks
           const suggestions =
-            await this.entityLearningService.suggestNewEntities(datasetId);
-          await this.entityLearningService.discoverEntityAliases(datasetId);
+            await this.entityLearningService.suggestNewEntities();
+          await this.entityLearningService.discoverEntityAliases();
           result = {
             suggestions: suggestions.length,
             aliases: 'discovered',

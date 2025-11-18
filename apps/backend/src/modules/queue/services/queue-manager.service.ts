@@ -34,14 +34,24 @@ export class QueueManagerService {
 
   async addJob(job: QueueJob): Promise<string> {
     this.logger.log(`[QUEUE_MANAGER] Adding job to queue: ${job.type}`);
+    this.logger.log(`[QUEUE_MANAGER] Job data: ${JSON.stringify(job.data)}`);
+    this.logger.log(
+      `[QUEUE_MANAGER] Job options: ${JSON.stringify(job.options || {})}`,
+    );
     try {
       const result = await this.queue.add(job.type, job.data, job.options);
       this.logger.log(
         `[QUEUE_MANAGER] Successfully added job to queue: ${job.type}, job ID: ${result.id}`,
       );
+      this.logger.log(
+        `[QUEUE_MANAGER] Job ${result.id} is now in queue and will be processed by QueueProcessorService`,
+      );
       return result.id.toString();
     } catch (error) {
-      this.logger.error('Failed to add job to queue:', error);
+      this.logger.error(
+        `[QUEUE_MANAGER] Failed to add job to queue: ${job.type}`,
+        error,
+      );
       throw error;
     }
   }

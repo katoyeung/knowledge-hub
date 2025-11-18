@@ -15,10 +15,12 @@ import { Dataset } from '../../../dataset/entities/dataset.entity';
 import { Embedding } from '../../../dataset/entities/embedding.entity';
 import { ChatConversation } from '../../../chat/entities/chat-conversation.entity';
 import { ChatMessage } from '../../../chat/entities/chat-message.entity';
-import { PredefinedEntity } from '../../../graph/entities/predefined-entity.entity';
+import { GraphEntity } from '../../../graph/entities/graph-entity.entity';
 import { EntityAlias } from '../../../graph/entities/entity-alias.entity';
 import { EntityNormalizationLog } from '../../../graph/entities/entity-normalization-log.entity';
 import { GraphExtractionJob } from './graph-extraction.job';
+import { EntityLearningJob } from './entity-learning.job';
+import { EntityNormalizationJob } from './entity-normalization.job';
 import { GraphExtractionService } from '../../../graph/services/graph-extraction.service';
 import { GraphPromptSelectorService } from '../../../graph/services/graph-prompt-selector.service';
 import { HybridExtractionService } from '../../../graph/services/hybrid-extraction.service';
@@ -31,8 +33,8 @@ import { LLMClientFactory } from '../../../ai-provider/services/llm-client-facto
 import { NotificationService } from '../../../notification/notification.service';
 import { EventBusService } from '../../../event/services/event-bus.service';
 import { JobDispatcherService } from '../../services/job-dispatcher.service';
-import { JobRegistryService } from '../../services/job-registry.service';
 import { QueueManagerService } from '../../services/queue-manager.service';
+import { LLMExtractionService } from '@common/services/llm-extraction.service';
 
 @Module({
   imports: [
@@ -48,7 +50,7 @@ import { QueueManagerService } from '../../services/queue-manager.service';
       Embedding,
       ChatConversation,
       ChatMessage,
-      PredefinedEntity,
+      GraphEntity,
       EntityAlias,
       EntityNormalizationLog,
     ]),
@@ -61,6 +63,8 @@ import { QueueManagerService } from '../../services/queue-manager.service';
   ],
   providers: [
     GraphExtractionJob,
+    EntityLearningJob,
+    EntityNormalizationJob,
     GraphExtractionService,
     GraphPromptSelectorService,
     HybridExtractionService,
@@ -70,19 +74,15 @@ import { QueueManagerService } from '../../services/queue-manager.service';
     AiProviderService,
     PromptService,
     LLMClientFactory,
+    LLMExtractionService,
     NotificationService,
     EventBusService,
     JobDispatcherService,
     QueueManagerService,
   ],
-  exports: [GraphExtractionJob],
+  exports: [GraphExtractionJob, EntityLearningJob, EntityNormalizationJob],
 })
 export class GraphJobsModule {
-  constructor(
-    private readonly jobRegistry: JobRegistryService,
-    private readonly graphExtractionJob: GraphExtractionJob,
-  ) {
-    // Register the job with the registry
-    this.jobRegistry.register(this.graphExtractionJob);
-  }
+  // Jobs are now auto-registered via JobAutoLoaderService in JobsModule
+  // No need to manually register jobs here
 }

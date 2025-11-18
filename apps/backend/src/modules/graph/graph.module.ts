@@ -5,7 +5,7 @@ import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { GraphNode } from './entities/graph-node.entity';
 import { GraphEdge } from './entities/graph-edge.entity';
-import { PredefinedEntity } from './entities/predefined-entity.entity';
+import { GraphEntity } from './entities/graph-entity.entity';
 import { EntityAlias } from './entities/entity-alias.entity';
 import { EntityNormalizationLog } from './entities/entity-normalization-log.entity';
 import { Dataset } from '../dataset/entities/dataset.entity';
@@ -42,6 +42,7 @@ import { CsvConnectorModule } from '../csv-connector/csv-connector.module';
 import { QueueModule } from '../queue/queue.module';
 import { EventModule } from '../event/event.module';
 import { DetectorService } from '../../common/services/detector.service';
+import { LLMExtractionService } from '../../common/services/llm-extraction.service';
 import { BullModule } from '@nestjs/bull';
 import { DocumentParserModule } from '../document-parser/document-parser.module';
 import { NotificationModule } from '../notification/notification.module';
@@ -51,7 +52,7 @@ import { NotificationModule } from '../notification/notification.module';
     TypeOrmModule.forFeature([
       GraphNode,
       GraphEdge,
-      PredefinedEntity,
+      GraphEntity,
       EntityAlias,
       EntityNormalizationLog,
       Dataset,
@@ -95,6 +96,7 @@ import { NotificationModule } from '../notification/notification.module';
     NotificationService,
     EventBusService,
     DetectorService,
+    LLMExtractionService,
   ],
   controllers: [
     GraphController,

@@ -358,7 +358,7 @@ export class HybridSearchService {
       }
 
       // Step 3: Combine and deduplicate results
-      let combinedResults = this.combineResults(
+      const combinedResults = this.combineResults(
         keywordResults,
         semanticResults,
       );
@@ -372,7 +372,7 @@ export class HybridSearchService {
       this.logger.log(
         `📊 Before reranking: combinedResults.length=${combinedResults.length}`,
       );
-      let rerankedResults = await this.applyReranking(
+      const rerankedResults = await this.applyReranking(
         combinedResults,
         query,
         semanticWeight,

@@ -11,7 +11,6 @@ import { Embedding } from '../../../dataset/entities/embedding.entity';
 import { ChunkingJob } from './chunking.job';
 import { EmbeddingJob } from './embedding.job';
 import { WorkerPoolService } from './worker-pool.service';
-import { JobRegistryService } from '../../services/job-registry.service';
 import { EmbeddingV2Service } from '../../../dataset/services/embedding-v2.service';
 import { ModelMappingService } from '../../../../common/services/model-mapping.service';
 import { EmbeddingClientFactory } from '../../../../common/services/embedding-client-factory.service';
@@ -129,10 +128,6 @@ import { PostsModule } from '../../../posts/posts.module';
 })
 export class DocumentJobsModule {
   constructor(
-    private readonly jobRegistry: JobRegistryService,
-    private readonly chunkingJob: ChunkingJob,
-    private readonly embeddingJob: EmbeddingJob,
-    private readonly workflowJob: WorkflowJob,
     private readonly dataSourceStep: DataSourceStep,
     private readonly stepRegistry: PipelineStepRegistry,
     private readonly duplicateSegmentStep: DuplicateSegmentStep,
@@ -141,10 +136,8 @@ export class DocumentJobsModule {
     private readonly embeddingGenerationStep: EmbeddingGenerationStep,
     private readonly graphExtractionStep: GraphExtractionStep,
   ) {
-    // Register jobs with the registry
-    this.jobRegistry.register(this.chunkingJob);
-    this.jobRegistry.register(this.embeddingJob);
-    this.jobRegistry.register(this.workflowJob);
+    // Jobs are now auto-registered via JobAutoLoaderService in JobsModule
+    // No need to manually register jobs here
 
     // Register pipeline steps
     this.stepRegistry.registerStep(this.duplicateSegmentStep);

@@ -44,6 +44,7 @@ export interface GraphExtractionNotification {
     | "error";
   segmentIndex?: number;
   totalSegments?: number;
+  segmentIds?: string[];
   nodesCreated?: number;
   edgesCreated?: number;
   message?: string;

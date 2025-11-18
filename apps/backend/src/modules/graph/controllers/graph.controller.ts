@@ -25,6 +25,8 @@ import { GraphQueryService } from '../services/graph-query.service';
 import { GraphExtractionService } from '../services/graph-extraction.service';
 import { GraphQueryDto } from '../dto/graph-query.dto';
 import { CreateGraphExtractionConfigDto } from '../dto/create-graph-extraction-config.dto';
+import { CreateGraphNodeDto } from '../dto/create-graph-node.dto';
+import { CreateGraphEdgeDto } from '../dto/create-graph-edge.dto';
 import { GraphExtractionJob } from '../../queue/jobs/graph/graph-extraction.job';
 import { Document } from '../../dataset/entities/document.entity';
 import { DocumentSegment } from '../../dataset/entities/document-segment.entity';
@@ -700,6 +702,23 @@ export class GraphController {
     };
   }
 
+  @Delete('segments/:segmentId')
+  @ApiOperation({ summary: 'Delete graph data for a specific segment' })
+  @ApiResponse({ status: 200, description: 'Graph data deleted successfully' })
+  @HttpCode(HttpStatus.OK)
+  async deleteSegmentGraphData(
+    @Param('segmentId') segmentId: string,
+    @Request() req: any,
+  ) {
+    const result = await this.graphService.deleteGraphBySegment(segmentId);
+    return {
+      success: true,
+      message: `Graph data deleted: ${result.nodesDeleted} nodes, ${result.edgesDeleted} edges removed`,
+      nodesDeleted: result.nodesDeleted,
+      edgesDeleted: result.edgesDeleted,
+    };
+  }
+
   @Post('documents/:documentId/segments/extract')
   @ApiOperation({
     summary: 'Trigger graph extraction for specific segments',
@@ -721,7 +740,7 @@ export class GraphController {
         throw new BadRequestException('User not authenticated');
       }
 
-      const { segmentIds, ...config } = body;
+      const { segmentIds, syncMode, ...config } = body;
 
       if (!segmentIds || segmentIds.length === 0) {
         throw new BadRequestException('Segment IDs are required');
@@ -737,7 +756,26 @@ export class GraphController {
         throw new BadRequestException('Document not found');
       }
 
-      // Trigger graph extraction for specific segments
+      // Check if syncMode is false - use async job processing
+      if (syncMode === false) {
+        // Dispatch async job for background processing
+        await GraphExtractionJob.dispatch({
+          documentId,
+          datasetId: document.datasetId,
+          segmentIds,
+          extractionConfig: config,
+          userId,
+        }).dispatch();
+
+        return {
+          success: true,
+          message: `Graph extraction job started for ${segmentIds.length} segments`,
+          jobStarted: true,
+          segmentCount: segmentIds.length,
+        };
+      }
+
+      // Synchronous processing (default or syncMode === true)
       const result = await this.graphExtractionService.extractFromSegments(
         segmentIds,
         document.datasetId,
@@ -757,5 +795,103 @@ export class GraphController {
         `Failed to trigger segment extraction: ${error.message}`,
       );
     }
+  }
+
+  @Post('datasets/:datasetId/nodes')
+  @ApiOperation({ summary: 'Create a new graph node' })
+  @ApiResponse({ status: 201, description: 'Node created successfully' })
+  @HttpCode(HttpStatus.CREATED)
+  async createNode(
+    @Param('datasetId') datasetId: string,
+    @Body() createNodeDto: CreateGraphNodeDto,
+    @Request() req: any,
+  ) {
+    const node = await this.graphService.createNode({
+      ...createNodeDto,
+      datasetId,
+      userId: req.user.id,
+    });
+    return {
+      success: true,
+      data: node,
+    };
+  }
+
+  @Post('datasets/:datasetId/nodes/batch')
+  @ApiOperation({ summary: 'Create multiple graph nodes' })
+  @ApiResponse({ status: 201, description: 'Nodes created successfully' })
+  @HttpCode(HttpStatus.CREATED)
+  async createNodes(
+    @Param('datasetId') datasetId: string,
+    @Body() body: { nodes: CreateGraphNodeDto[] },
+    @Request() req: any,
+  ) {
+    if (!body.nodes || !Array.isArray(body.nodes) || body.nodes.length === 0) {
+      throw new BadRequestException(
+        'Nodes array is required and must not be empty',
+      );
+    }
+
+    const nodes = await this.graphService.createNodes(
+      body.nodes.map((node) => ({
+        ...node,
+        datasetId,
+        userId: req.user.id,
+      })),
+    );
+    return {
+      success: true,
+      data: nodes,
+      count: nodes.length,
+    };
+  }
+
+  @Post('datasets/:datasetId/edges')
+  @ApiOperation({ summary: 'Create a new graph edge' })
+  @ApiResponse({ status: 201, description: 'Edge created successfully' })
+  @HttpCode(HttpStatus.CREATED)
+  async createEdge(
+    @Param('datasetId') datasetId: string,
+    @Body() createEdgeDto: CreateGraphEdgeDto,
+    @Request() req: any,
+  ) {
+    const edge = await this.graphService.createEdge({
+      ...createEdgeDto,
+      datasetId,
+      userId: req.user.id,
+    });
+    return {
+      success: true,
+      data: edge,
+    };
+  }
+
+  @Post('datasets/:datasetId/edges/batch')
+  @ApiOperation({ summary: 'Create multiple graph edges' })
+  @ApiResponse({ status: 201, description: 'Edges created successfully' })
+  @HttpCode(HttpStatus.CREATED)
+  async createEdges(
+    @Param('datasetId') datasetId: string,
+    @Body() body: { edges: CreateGraphEdgeDto[] },
+    @Request() req: any,
+  ) {
+    if (!body.edges || !Array.isArray(body.edges) || body.edges.length === 0) {
+      throw new BadRequestException(
+        'Edges array is required and must not be empty',
+      );
+    }
+
+    const edges = await this.graphService.createEdges(
+      body.edges.map((edge) => ({
+        ...edge,
+        datasetId,
+        userId: req.user.id,
+      })),
+    );
+    return {
+      success: true,
+      data: edges,
+      count: edges.length,
+    };
   }
 }

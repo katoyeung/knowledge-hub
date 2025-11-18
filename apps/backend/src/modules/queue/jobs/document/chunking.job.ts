@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BaseJob } from '../base/base.job';
+import { RegisterJob } from '../../decorators/register-job.decorator';
 import { Document } from '../../../dataset/entities/document.entity';
 import { DocumentSegment } from '../../../dataset/entities/document-segment.entity';
 import { Dataset } from '../../../dataset/entities/dataset.entity';
@@ -31,10 +32,10 @@ export interface ChunkingJobData {
   };
 }
 
+@RegisterJob('chunking')
 @Injectable()
 export class ChunkingJob extends BaseJob<ChunkingJobData> {
   protected readonly logger = new Logger(ChunkingJob.name);
-  static readonly jobType = 'chunking';
 
   constructor(
     @InjectRepository(Document)

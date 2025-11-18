@@ -1,21 +1,16 @@
 import { Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Like, ILike } from 'typeorm';
+import { Repository } from 'typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
-import { Cacheable } from '../../../common/decorators/cacheable.decorator';
-import { CacheEvict } from '../../../common/decorators/cache-evict.decorator';
-import {
-  PredefinedEntity,
-  EntitySource,
-} from '../entities/predefined-entity.entity';
+import { GraphEntity, EntitySource } from '../entities/graph-entity.entity';
 import { EntityAlias } from '../entities/entity-alias.entity';
-import { CreatePredefinedEntityDto } from '../dto/create-predefined-entity.dto';
-import { UpdatePredefinedEntityDto } from '../dto/update-predefined-entity.dto';
+import { CreateEntityDto } from '../dto/create-entity.dto';
+import { UpdateEntityDto } from '../dto/update-entity.dto';
 import { BulkImportEntitiesDto } from '../dto/bulk-import-entities.dto';
 
 export interface EntityMatch {
-  entity: PredefinedEntity;
+  entity: GraphEntity;
   alias?: EntityAlias;
   similarity: number;
   matchedText: string;
@@ -26,12 +21,12 @@ export interface EntityStatistics {
   entitiesByType: Record<string, number>;
   entitiesBySource: Record<string, number>;
   topEntities: Array<{
-    entity: PredefinedEntity;
+    entity: GraphEntity;
     usageCount: number;
     lastUsed?: Date;
   }>;
   recentActivity: Array<{
-    entity: PredefinedEntity;
+    entity: GraphEntity;
     action: string;
     timestamp: Date;
   }>;
@@ -43,18 +38,168 @@ export class EntityDictionaryService {
   private readonly CACHE_TTL = 3600; // 1 hour
 
   constructor(
-    @InjectRepository(PredefinedEntity)
-    private readonly entityRepository: Repository<PredefinedEntity>,
+    @InjectRepository(GraphEntity)
+    private readonly entityRepository: Repository<GraphEntity>,
     @InjectRepository(EntityAlias)
     private readonly aliasRepository: Repository<EntityAlias>,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
 
-  async buildInitialDictionary(
-    datasetId: string,
-    userId: string,
-  ): Promise<PredefinedEntity[]> {
-    this.logger.log(`Building initial dictionary for dataset ${datasetId}`);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async discoverEntitiesFromGraph(_userId: string): Promise<
+    Array<{
+      entityType: string;
+      canonicalName: string;
+      metadata?: {
+        usage_count?: number;
+        last_used?: Date;
+        extraction_patterns?: string[];
+      };
+    }>
+  > {
+    this.logger.log(`Discovering entities from existing graph nodes`);
+
+    // Get existing graph nodes to discover entities from
+    const existingNodes = await this.entityRepository.query(
+      `
+      SELECT DISTINCT 
+        gn.node_type as "entityType",
+        gn.label as "canonicalName",
+        COUNT(*) as "usageCount",
+        MAX(gn.created_at) as "lastUsed"
+      FROM graph_nodes gn 
+      GROUP BY gn.node_type, gn.label
+      ORDER BY COUNT(*) DESC
+    `,
+    );
+
+    const discoveredEntities: Array<{
+      entityType: string;
+      canonicalName: string;
+      metadata?: {
+        usage_count?: number;
+        last_used?: Date;
+        extraction_patterns?: string[];
+      };
+    }> = [];
+
+    for (const node of existingNodes) {
+      discoveredEntities.push({
+        entityType: node.entityType,
+        canonicalName: node.canonicalName,
+        metadata: {
+          usage_count: parseInt(node.usageCount),
+          last_used: node.lastUsed,
+          extraction_patterns: [node.canonicalName],
+        },
+      });
+    }
+
+    this.logger.log(
+      `Discovered ${discoveredEntities.length} entities from graph nodes`,
+    );
+
+    return discoveredEntities;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async discoverAliasesFromGraph(_userId: string): Promise<
+    Array<{
+      entityType: string;
+      canonicalName: string;
+      aliases: Array<{
+        name: string;
+        similarity: number;
+      }>;
+    }>
+  > {
+    this.logger.log(`Discovering aliases from existing graph nodes`);
+
+    // Get all existing entities
+    const entities = await this.entityRepository.find({
+      relations: ['aliases'],
+    });
+
+    // Get all graph nodes grouped by type and label
+    const nodes = await this.entityRepository.query(
+      `
+      SELECT DISTINCT 
+        gn.node_type as "nodeType",
+        gn.label as "label"
+      FROM graph_nodes gn 
+      ORDER BY gn.node_type, gn.label
+    `,
+    );
+
+    const discoveredAliases: Array<{
+      entityType: string;
+      canonicalName: string;
+      aliases: Array<{
+        name: string;
+        similarity: number;
+      }>;
+    }> = [];
+
+    // For each entity, find potential aliases from graph nodes
+    for (const entity of entities) {
+      const potentialAliases: Array<{ name: string; similarity: number }> = [];
+      const existingAliasNames = new Set(
+        (entity.aliases || []).map((a) =>
+          typeof a === 'string' ? a : (a as any).alias || (a as any).name,
+        ),
+      );
+
+      // Find nodes of the same type that might be aliases
+      const sameTypeNodes = nodes.filter(
+        (node: { nodeType: string; label: string }) =>
+          node.nodeType === entity.entityType &&
+          node.label !== entity.canonicalName,
+      );
+
+      for (const node of sameTypeNodes) {
+        // Calculate similarity using Levenshtein distance
+        const similarity = this.calculateStringSimilarity(
+          entity.canonicalName.toLowerCase(),
+          node.label.toLowerCase(),
+        );
+
+        // If similarity is high enough and not already an alias
+        if (similarity >= 0.8 && !existingAliasNames.has(node.label)) {
+          potentialAliases.push({
+            name: node.label,
+            similarity,
+          });
+        }
+      }
+
+      if (potentialAliases.length > 0) {
+        discoveredAliases.push({
+          entityType: entity.entityType,
+          canonicalName: entity.canonicalName,
+          aliases: potentialAliases,
+        });
+      }
+    }
+
+    this.logger.log(
+      `Discovered aliases for ${discoveredAliases.length} entities`,
+    );
+
+    return discoveredAliases;
+  }
+
+  private calculateStringSimilarity(str1: string, str2: string): number {
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length > str2.length ? str2 : str1;
+
+    if (longer.length === 0) return 1.0;
+
+    const distance = this.levenshteinDistance(longer, shorter);
+    return (longer.length - distance) / longer.length;
+  }
+
+  async buildInitialDictionary(userId: string): Promise<GraphEntity[]> {
+    this.logger.log(`Building initial dictionary from existing graph nodes`);
 
     // Get existing graph nodes to build dictionary from
     const existingNodes = await this.entityRepository.query(
@@ -65,16 +210,13 @@ export class EntityDictionaryService {
         COUNT(*) as "usageCount",
         MAX(gn.created_at) as "lastUsed"
       FROM graph_nodes gn 
-      WHERE gn.dataset_id = $1 
       GROUP BY gn.node_type, gn.label
       ORDER BY COUNT(*) DESC
     `,
-      [datasetId],
     );
 
     // Get existing entities to avoid duplicates
     const existingEntities = await this.entityRepository.find({
-      where: { datasetId },
       select: ['canonicalName', 'entityType'],
     });
 
@@ -83,7 +225,7 @@ export class EntityDictionaryService {
       existingEntities.map((e) => `${e.canonicalName}|${e.entityType}`),
     );
 
-    const entities: PredefinedEntity[] = [];
+    const entities: GraphEntity[] = [];
     let skippedCount = 0;
 
     for (const node of existingNodes) {
@@ -99,7 +241,6 @@ export class EntityDictionaryService {
       }
 
       const entity = this.entityRepository.create({
-        datasetId,
         entityType: node.entityType,
         canonicalName: node.canonicalName,
         confidenceScore: 0.8,
@@ -109,7 +250,7 @@ export class EntityDictionaryService {
           last_used: node.lastUsed,
           extraction_patterns: [node.canonicalName],
         },
-        userId: userId, // Use the authenticated user ID
+        userId: userId,
       });
 
       entities.push(entity);
@@ -117,7 +258,7 @@ export class EntityDictionaryService {
 
     if (entities.length > 0) {
       const savedEntities = await this.entityRepository.save(entities);
-      await this.refreshCache(datasetId);
+      await this.refreshCache();
       this.logger.log(
         `Created ${savedEntities.length} new entities from existing graph data (skipped ${skippedCount} existing entities)`,
       );
@@ -130,30 +271,37 @@ export class EntityDictionaryService {
     return entities;
   }
 
-  async addPredefinedEntity(
-    datasetId: string,
-    userId: string,
-    data: CreatePredefinedEntityDto,
-  ): Promise<PredefinedEntity> {
-    this.logger.log(`Adding predefined entity: ${data.canonicalName}`);
+  async addEntity(userId: string, data: CreateEntityDto): Promise<GraphEntity> {
+    this.logger.log(`Adding entity: ${data.canonicalName}`);
 
-    // Check for duplicates
+    // Check for duplicates by entityId if provided
+    if (data.entityId) {
+      const existingById = await this.entityRepository.findOne({
+        where: { entityId: data.entityId },
+      });
+      if (existingById) {
+        throw new Error(
+          `Entity with entityId "${data.entityId}" already exists`,
+        );
+      }
+    }
+
+    // Check for duplicates by canonicalName + entityType
     const existing = await this.entityRepository.findOne({
       where: {
-        datasetId,
         canonicalName: data.canonicalName,
+        entityType: data.entityType,
       },
     });
 
     if (existing) {
       throw new Error(
-        `Entity with canonical name "${data.canonicalName}" already exists`,
+        `Entity with canonical name "${data.canonicalName}" and type "${data.entityType}" already exists`,
       );
     }
 
     const { aliases, ...entityData } = data;
     const entity = this.entityRepository.create({
-      datasetId,
       userId,
       ...entityData,
       source: data.source || EntitySource.MANUAL,
@@ -162,19 +310,19 @@ export class EntityDictionaryService {
     const savedEntity = await this.entityRepository.save(entity);
 
     // Add aliases if provided
-    if (data.aliases && data.aliases.length > 0) {
-      await this.addAliases(savedEntity.id, data.aliases);
+    if (aliases && aliases.length > 0) {
+      await this.addAliases(savedEntity.id, aliases);
     }
 
-    await this.refreshCache(datasetId);
+    await this.refreshCache();
     return savedEntity;
   }
 
-  async updatePredefinedEntity(
+  async updateEntity(
     entityId: string,
-    data: UpdatePredefinedEntityDto,
-  ): Promise<PredefinedEntity> {
-    this.logger.log(`Updating predefined entity: ${entityId}`);
+    data: UpdateEntityDto,
+  ): Promise<GraphEntity> {
+    this.logger.log(`Updating entity: ${entityId}`);
 
     const entity = await this.entityRepository.findOne({
       where: { id: entityId },
@@ -185,26 +333,40 @@ export class EntityDictionaryService {
       throw new NotFoundException(`Entity with ID ${entityId} not found`);
     }
 
-    // Update entity
-    Object.assign(entity, data);
-    const savedEntity = await this.entityRepository.save(entity);
-
-    // Update aliases if provided
-    if (data.aliases) {
-      // Remove existing aliases
-      await this.aliasRepository.delete({ predefinedEntityId: entityId });
-      // Add new aliases
-      if (data.aliases.length > 0) {
-        await this.addAliases(entityId, data.aliases);
+    // Check for entityId conflicts if updating entityId
+    if (data.entityId && data.entityId !== entity.entityId) {
+      const existingById = await this.entityRepository.findOne({
+        where: { entityId: data.entityId },
+      });
+      if (existingById) {
+        throw new Error(
+          `Entity with entityId "${data.entityId}" already exists`,
+        );
       }
     }
 
-    await this.refreshCache(entity.datasetId);
+    const { aliases, ...entityData } = data;
+
+    // Update entity
+    Object.assign(entity, entityData);
+    const savedEntity = await this.entityRepository.save(entity);
+
+    // Update aliases if provided
+    if (aliases !== undefined) {
+      // Remove existing aliases
+      await this.aliasRepository.delete({ entityId: entityId });
+      // Add new aliases
+      if (aliases.length > 0) {
+        await this.addAliases(entityId, aliases);
+      }
+    }
+
+    await this.refreshCache();
     return savedEntity;
   }
 
-  async deletePredefinedEntity(entityId: string): Promise<void> {
-    this.logger.log(`Deleting predefined entity: ${entityId}`);
+  async deleteEntity(entityId: string): Promise<void> {
+    this.logger.log(`Deleting entity: ${entityId}`);
 
     const entity = await this.entityRepository.findOne({
       where: { id: entityId },
@@ -215,12 +377,48 @@ export class EntityDictionaryService {
     }
 
     await this.entityRepository.delete(entityId);
-    await this.refreshCache(entity.datasetId);
+    await this.refreshCache();
+  }
+
+  async bulkDeleteEntities(
+    entityIds: string[],
+  ): Promise<{ deleted: number; failed: number }> {
+    this.logger.log(`Bulk deleting ${entityIds.length} entities`);
+
+    let deleted = 0;
+    let failed = 0;
+
+    for (const entityId of entityIds) {
+      try {
+        await this.entityRepository.delete(entityId);
+        deleted++;
+      } catch (error) {
+        this.logger.error(`Failed to delete entity ${entityId}:`, error);
+        failed++;
+      }
+    }
+
+    await this.refreshCache();
+    return { deleted, failed };
+  }
+
+  async deleteAllEntities(): Promise<{ deleted: number }> {
+    this.logger.log('Deleting all entities');
+
+    // Use query builder to delete all entities
+    const result = await this.entityRepository
+      .createQueryBuilder()
+      .delete()
+      .execute();
+
+    const deleted = result.affected || 0;
+
+    await this.refreshCache();
+    return { deleted };
   }
 
   async findMatchingEntities(
     text: string,
-    datasetId: string,
     threshold: number = 0.7,
   ): Promise<EntityMatch[]> {
     this.logger.debug(
@@ -228,7 +426,7 @@ export class EntityDictionaryService {
     );
 
     // Try cache first
-    const cacheKey = `entity:matches:${datasetId}:${Buffer.from(text).toString('base64').substring(0, 50)}`;
+    const cacheKey = `entity:matches:${Buffer.from(text).toString('base64').substring(0, 50)}`;
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) {
       return JSON.parse(cached as string);
@@ -237,8 +435,8 @@ export class EntityDictionaryService {
     const matches: EntityMatch[] = [];
     const words = this.tokenizeText(text);
 
-    // Get all entities for this dataset
-    const entities = await this.getCachedEntities(datasetId);
+    // Get all entities
+    const entities = await this.getCachedEntities();
 
     for (const entity of entities) {
       // Check canonical name
@@ -308,7 +506,7 @@ export class EntityDictionaryService {
     // Update alias match count if applicable
     if (nodeData.matchedAlias) {
       await this.aliasRepository.update(
-        { predefinedEntityId: entityId, alias: nodeData.matchedAlias },
+        { entityId: entityId, alias: nodeData.matchedAlias },
         {
           matchCount: () => 'match_count + 1',
           lastMatchedAt: new Date(),
@@ -316,14 +514,13 @@ export class EntityDictionaryService {
       );
     }
 
-    await this.refreshCache(entity.datasetId);
+    await this.refreshCache();
   }
 
-  async getEntityStatistics(datasetId: string): Promise<EntityStatistics> {
-    this.logger.log(`Getting entity statistics for dataset ${datasetId}`);
+  async getEntityStatistics(): Promise<EntityStatistics> {
+    this.logger.log(`Getting entity statistics`);
 
     const entities = await this.entityRepository.find({
-      where: { datasetId },
       relations: ['aliases'],
       order: { createdAt: 'DESC' },
     });
@@ -369,29 +566,42 @@ export class EntityDictionaryService {
   }
 
   async bulkImportEntities(
-    datasetId: string,
     userId: string,
     data: BulkImportEntitiesDto,
   ): Promise<{ created: number; skipped: number; errors: string[] }> {
-    this.logger.log(
-      `Bulk importing ${data.entities.length} entities for dataset ${datasetId}`,
-    );
+    this.logger.log(`Bulk importing ${data.entities.length} entities`);
 
     const results = { created: 0, skipped: 0, errors: [] as string[] };
 
     for (const entityData of data.entities) {
       try {
-        // Check for duplicates
+        // Check for duplicates by entityId if provided
+        if (entityData.entityId) {
+          const existingById = await this.entityRepository.findOne({
+            where: { entityId: entityData.entityId },
+          });
+          if (existingById) {
+            if (data.options?.updateExisting) {
+              await this.updateEntity(existingById.id, entityData);
+              results.created++;
+            } else {
+              results.skipped++;
+            }
+            continue;
+          }
+        }
+
+        // Check for duplicates by canonicalName + entityType
         const existing = await this.entityRepository.findOne({
           where: {
-            datasetId,
             canonicalName: entityData.canonicalName,
+            entityType: entityData.entityType,
           },
         });
 
         if (existing) {
           if (data.options?.updateExisting) {
-            await this.updatePredefinedEntity(existing.id, entityData);
+            await this.updateEntity(existing.id, entityData);
             results.created++;
           } else {
             results.skipped++;
@@ -400,8 +610,8 @@ export class EntityDictionaryService {
         }
 
         const entity = this.entityRepository.create({
-          datasetId,
           userId,
+          entityId: entityData.entityId,
           entityType: entityData.entityType,
           canonicalName: entityData.canonicalName,
           confidenceScore: data.options?.defaultConfidence || 0.8,
@@ -412,11 +622,13 @@ export class EntityDictionaryService {
             tags: entityData.tags,
             ...entityData.metadata,
           },
+          equivalentEntities: entityData.equivalentEntities,
+          provenance: entityData.provenance,
         });
 
         const savedEntity = await this.entityRepository.save(entity);
 
-        // Add aliases
+        // Add aliases if provided
         if (entityData.aliases && entityData.aliases.length > 0) {
           await this.addAliases(savedEntity.id, entityData.aliases);
         }
@@ -429,17 +641,52 @@ export class EntityDictionaryService {
       }
     }
 
-    await this.refreshCache(datasetId);
+    await this.refreshCache();
     return results;
   }
 
-  async exportEntities(datasetId: string): Promise<any[]> {
-    this.logger.log(`Exporting entities for dataset ${datasetId}`);
+  async exportEntities(
+    filters: {
+      entityType?: string;
+      searchTerm?: string;
+      source?: string;
+      minConfidence?: number;
+    } = {},
+  ): Promise<any[]> {
+    this.logger.log(
+      `Exporting entities with filters: ${JSON.stringify(filters)}`,
+    );
 
-    const entities = await this.entityRepository.find({
-      where: { datasetId },
-      relations: ['aliases'],
-    });
+    const queryBuilder = this.entityRepository
+      .createQueryBuilder('entity')
+      .leftJoinAndSelect('entity.aliases', 'aliases');
+
+    if (filters.entityType) {
+      queryBuilder.andWhere('entity.entityType = :entityType', {
+        entityType: filters.entityType,
+      });
+    }
+
+    if (filters.searchTerm) {
+      queryBuilder.andWhere(
+        '(entity.canonicalName ILIKE :searchTerm OR entity.metadata::text ILIKE :searchTerm)',
+        { searchTerm: `%${filters.searchTerm}%` },
+      );
+    }
+
+    if (filters.source) {
+      queryBuilder.andWhere('entity.source = :source', {
+        source: filters.source,
+      });
+    }
+
+    if (filters.minConfidence !== undefined) {
+      queryBuilder.andWhere('entity.confidenceScore >= :minConfidence', {
+        minConfidence: filters.minConfidence,
+      });
+    }
+
+    const entities = await queryBuilder.getMany();
 
     return entities.map((entity) => ({
       entityType: entity.entityType,
@@ -455,7 +702,6 @@ export class EntityDictionaryService {
   }
 
   async findEntities(
-    datasetId: string,
     filters: {
       entityType?: string;
       searchTerm?: string;
@@ -463,11 +709,10 @@ export class EntityDictionaryService {
       limit?: number;
       offset?: number;
     } = {},
-  ): Promise<{ entities: PredefinedEntity[]; total: number }> {
+  ): Promise<{ entities: GraphEntity[]; total: number }> {
     const queryBuilder = this.entityRepository
       .createQueryBuilder('entity')
-      .leftJoinAndSelect('entity.aliases', 'aliases')
-      .where('entity.datasetId = :datasetId', { datasetId });
+      .leftJoinAndSelect('entity.aliases', 'aliases');
 
     if (filters.entityType) {
       queryBuilder.andWhere('entity.entityType = :entityType', {
@@ -504,11 +749,22 @@ export class EntityDictionaryService {
     return { entities, total };
   }
 
-  private async addAliases(entityId: string, aliases: string[]): Promise<void> {
-    const aliasEntities = aliases.map((alias) =>
+  private async addAliases(
+    entityId: string,
+    aliases: Array<{
+      name: string;
+      language?: string;
+      script?: string;
+      type?: any;
+    }>,
+  ): Promise<void> {
+    const aliasEntities = aliases.map((aliasDto) =>
       this.aliasRepository.create({
-        predefinedEntityId: entityId,
-        alias,
+        entityId: entityId,
+        alias: aliasDto.name,
+        language: aliasDto.language,
+        script: aliasDto.script,
+        type: aliasDto.type,
         similarityScore: 1.0,
       }),
     );
@@ -516,10 +772,8 @@ export class EntityDictionaryService {
     await this.aliasRepository.save(aliasEntities);
   }
 
-  private async getCachedEntities(
-    datasetId: string,
-  ): Promise<PredefinedEntity[]> {
-    const cacheKey = `entity:dict:${datasetId}`;
+  private async getCachedEntities(): Promise<GraphEntity[]> {
+    const cacheKey = `entity:dict:global`;
     const cached = await this.cacheManager.get(cacheKey);
 
     if (cached) {
@@ -527,7 +781,6 @@ export class EntityDictionaryService {
     }
 
     const entities = await this.entityRepository.find({
-      where: { datasetId },
       relations: ['aliases'],
     });
 
@@ -535,8 +788,8 @@ export class EntityDictionaryService {
     return entities;
   }
 
-  private async refreshCache(datasetId: string): Promise<void> {
-    const cacheKey = `entity:dict:${datasetId}`;
+  private async refreshCache(): Promise<void> {
+    const cacheKey = `entity:dict:global`;
     await this.cacheManager.del(cacheKey);
   }
 

@@ -210,27 +210,75 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
         `✅ Deleted ${deletedChatConversations.affected || 0} chat conversations`,
       );
 
-      // Step 8: Delete predefined entities
+      // Step 8: Delete predefined entities (if table exists)
       this.logger.log(`🗑️ Deleting predefined entities for dataset ${id}...`);
-      const deletedPredefinedEntities = await queryRunner.query(
-        `DELETE FROM predefined_entities WHERE dataset_id = $1`,
-        [id],
-      );
-      this.logger.log(
-        `✅ Deleted ${deletedPredefinedEntities.length || 0} predefined entities`,
-      );
+      try {
+        const tableExists = await queryRunner.query(
+          `SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name = 'predefined_entities'
+          )`,
+        );
+        if (tableExists[0]?.exists) {
+          const deletedPredefinedEntities = await queryRunner.query(
+            `DELETE FROM predefined_entities WHERE dataset_id = $1`,
+            [id],
+          );
+          this.logger.log(
+            `✅ Deleted ${deletedPredefinedEntities.length || 0} predefined entities`,
+          );
+        } else {
+          this.logger.log(
+            `⚠️ predefined_entities table does not exist, skipping deletion`,
+          );
+        }
+      } catch (error) {
+        // If table doesn't exist, log and continue
+        if (error.code === '42P01') {
+          this.logger.warn(
+            `⚠️ predefined_entities table does not exist, skipping deletion: ${error.message}`,
+          );
+        } else {
+          throw error;
+        }
+      }
 
-      // Step 9: Delete entity normalization logs
+      // Step 9: Delete entity normalization logs (if table exists)
       this.logger.log(
         `🗑️ Deleting entity normalization logs for dataset ${id}...`,
       );
-      const deletedNormalizationLogs = await queryRunner.query(
-        `DELETE FROM entity_normalization_logs WHERE dataset_id = $1`,
-        [id],
-      );
-      this.logger.log(
-        `✅ Deleted ${deletedNormalizationLogs.length || 0} normalization logs`,
-      );
+      try {
+        const tableExists = await queryRunner.query(
+          `SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name = 'entity_normalization_logs'
+          )`,
+        );
+        if (tableExists[0]?.exists) {
+          const deletedNormalizationLogs = await queryRunner.query(
+            `DELETE FROM entity_normalization_logs WHERE dataset_id = $1`,
+            [id],
+          );
+          this.logger.log(
+            `✅ Deleted ${deletedNormalizationLogs.length || 0} normalization logs`,
+          );
+        } else {
+          this.logger.log(
+            `⚠️ entity_normalization_logs table does not exist, skipping deletion`,
+          );
+        }
+      } catch (error) {
+        // If table doesn't exist, log and continue
+        if (error.code === '42P01') {
+          this.logger.warn(
+            `⚠️ entity_normalization_logs table does not exist, skipping deletion: ${error.message}`,
+          );
+        } else {
+          throw error;
+        }
+      }
 
       // Step 10: Delete dataset keyword table
       this.logger.log(`🗑️ Deleting keyword table for dataset ${id}...`);
@@ -606,7 +654,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
       take: 1,
     });
 
-    let nextPosition =
+    const nextPosition =
       existingDocs.length > 0 ? existingDocs[0].position + 1 : 1;
 
     // Store post filters in document metadata (similar to CSV config)
@@ -624,6 +672,7 @@ export class DatasetService extends TypeOrmCrudService<Dataset> {
         postedAtEnd: syncDto.postedAtEnd,
         startDate: syncDto.startDate,
         endDate: syncDto.endDate,
+        status: syncDto.status,
       },
       syncedAt: new Date(),
     };

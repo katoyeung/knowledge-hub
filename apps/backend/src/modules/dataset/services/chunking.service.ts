@@ -285,6 +285,7 @@ export class ChunkingService {
         metaKey: postConfig.filters.metaKey,
         metaValue: postConfig.filters.metaValue,
         userId: postConfig.filters.userId,
+        status: postConfig.filters.status,
         postedAtStart: postConfig.filters.postedAtStart
           ? new Date(postConfig.filters.postedAtStart)
           : undefined,

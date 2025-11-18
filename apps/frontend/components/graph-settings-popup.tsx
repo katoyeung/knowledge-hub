@@ -13,7 +13,8 @@ import {
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog'
-import { promptApi, aiProviderApi, type Prompt, type AiProvider, type Model } from '@/lib/api'
+import { PromptSelector } from './prompt-selector'
+import { aiProviderApi, type AiProvider, type Model } from '@/lib/api'
 import { useToast } from '@/components/ui/simple-toast'
 
 interface GraphSettings {
@@ -46,17 +47,14 @@ export function GraphSettingsPopup({
         temperature: 0.7,
         ...currentSettings
     })
-    const [prompts, setPrompts] = useState<Prompt[]>([])
     const [aiProviders, setAiProviders] = useState<AiProvider[]>([])
     const [models, setModels] = useState<Model[]>([])
-    const [loadingPrompts, setLoadingPrompts] = useState(false)
     const [loadingProviders, setLoadingProviders] = useState(false)
     const [loadingModels, setLoadingModels] = useState(false)
 
-    // Load prompts and AI providers on mount
+    // Load AI providers on mount
     useEffect(() => {
         if (open) {
-            loadPrompts()
             loadAiProviders()
         }
     }, [open])
@@ -83,18 +81,6 @@ export function GraphSettingsPopup({
         }
     }, [currentSettings])
 
-    const loadPrompts = async () => {
-        setLoadingPrompts(true)
-        try {
-            const response = await promptApi.getAll()
-            setPrompts(response.data || [])
-        } catch (err) {
-            console.error('Failed to load prompts:', err)
-            error('Failed to load prompts')
-        } finally {
-            setLoadingPrompts(false)
-        }
-    }
 
     const loadAiProviders = async () => {
         setLoadingProviders(true)
@@ -166,7 +152,6 @@ export function GraphSettingsPopup({
         onSettingsChange(newSettings)
     }
 
-    const selectedPrompt = prompts.find(p => p.id === settings.promptId)
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -234,31 +219,13 @@ export function GraphSettingsPopup({
                     </div>
 
                     {/* Prompt Selection */}
-                    <div className="space-y-2">
-                        <Label htmlFor="prompt">Graph Extraction Prompt</Label>
-                        <select
-                            id="prompt"
-                            value={settings.promptId || ''}
-                            onChange={(e) => handleInputChange('promptId', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            disabled={loadingPrompts}
-                        >
-                            <option value="">Select Prompt</option>
-                            {prompts.map((prompt) => (
-                                <option key={prompt.id} value={prompt.id}>
-                                    {prompt.name}
-                                </option>
-                            ))}
-                        </select>
-                        {loadingPrompts && (
-                            <p className="text-sm text-gray-500">Loading prompts...</p>
-                        )}
-                        {selectedPrompt && (
-                            <p className="text-sm text-gray-600">
-                                {selectedPrompt.description}
-                            </p>
-                        )}
-                    </div>
+                    <PromptSelector
+                        value={settings.promptId}
+                        onChange={(promptId) => handleInputChange('promptId', promptId)}
+                        label="Graph Extraction Prompt"
+                        placeholder="Select Prompt"
+                        promptType="custom"
+                    />
 
                     {/* Temperature */}
                     <div className="space-y-2">

@@ -34,7 +34,6 @@ export class HybridExtractionService {
     const matchedEntities =
       await this.entityDictionaryService.findMatchingEntities(
         content,
-        datasetId,
         threshold,
       );
 

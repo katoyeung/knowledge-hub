@@ -8,7 +8,7 @@ import { CPUThrottlingService } from '../../../common/services/cpu-throttling.se
 @Injectable()
 export class QueueProcessorService {
   private readonly logger = new Logger(QueueProcessorService.name);
-  private readonly concurrency = parseInt(process.env.QUEUE_CONCURRENCY || '3');
+  private readonly concurrency = parseInt(process.env.QUEUE_CONCURRENCY || '2');
 
   constructor(
     private readonly jobRegistry: JobRegistryService,
@@ -19,7 +19,10 @@ export class QueueProcessorService {
     );
   }
 
-  @Process({ name: '*', concurrency: 3 })
+  @Process({
+    name: '*',
+    concurrency: parseInt(process.env.QUEUE_CONCURRENCY || '2'),
+  })
   async handleJob(job: Job<any>): Promise<void> {
     const startTime = Date.now();
 
@@ -36,25 +39,28 @@ export class QueueProcessorService {
     this.logger.log(
       `[QUEUE] Processing job ${job.id} of type: ${job.name} (attempt ${job.attemptsMade + 1})`,
     );
+    this.logger.log(`[QUEUE] Job data: ${JSON.stringify(job.data)}`);
 
     try {
       // Debug: Log all registered jobs
       const allJobs = this.jobRegistry.getAllJobs();
-      this.logger.debug(
-        `[QUEUE] Available jobs: ${allJobs.map((j) => j.jobType || j.name).join(', ')}`,
+      this.logger.log(
+        `[QUEUE] Available registered jobs: ${allJobs.map((j) => j.jobType || j.name).join(', ')}`,
       );
 
       const handler = this.jobRegistry.getJob(job.name);
       if (!handler) {
-        this.logger.error(`No handler registered for job type: ${job.name}`);
         this.logger.error(
-          `Available job types: ${allJobs.map((j) => j.jobType || j.name).join(', ')}`,
+          `[QUEUE] ❌ No handler registered for job type: ${job.name}`,
+        );
+        this.logger.error(
+          `[QUEUE] Available job types: ${allJobs.map((j) => j.jobType || j.name).join(', ')}`,
         );
         throw new Error(`No handler registered for job type: ${job.name}`);
       }
 
       this.logger.log(
-        `[QUEUE] Found handler for job ${job.name}, processing...`,
+        `[QUEUE] ✅ Found handler for job ${job.name}, calling handler.handle()...`,
       );
 
       // Process the job

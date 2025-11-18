@@ -141,6 +141,10 @@ export class SyncPostsDto {
   postedAtEnd?: string;
 
   @IsOptional()
+  @IsEnum(['pending', 'approved', 'rejected', 'review'])
+  status?: 'pending' | 'approved' | 'rejected' | 'review';
+
+  @IsOptional()
   page?: number;
 
   @IsOptional()

@@ -155,6 +155,20 @@ export class DocumentSegmentController
     return await this.service.findByDatasetId(datasetId);
   }
 
+  @Get('dataset/:datasetId/filtered')
+  async findByDatasetWithFilters(
+    @Param('datasetId') datasetId: string,
+    @Query() filterQuery: SegmentFilterQueryDto,
+  ) {
+    return await this.service.findByDatasetIdWithFilters(
+      datasetId,
+      filterQuery.page || 1,
+      filterQuery.limit || 20,
+      filterQuery.search,
+      filterQuery.hasGraphData,
+    );
+  }
+
   @Patch(':id/toggle-status')
   async toggleStatus(@Param('id') id: string) {
     return await this.service.toggleStatus(id);

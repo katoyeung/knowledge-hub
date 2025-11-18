@@ -1,21 +1,70 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Edit, Trash2, ChevronLeft, ChevronRight, Filter, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Plus, Edit, Trash2, ChevronLeft, ChevronRight, Filter, X, ChevronDown, ChevronUp, CheckCircle2, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { postsApi, Post, CreatePostDto } from '@/lib/api';
+import { postsApi, Post, CreatePostDto, userApi } from '@/lib/api';
 import { useToast } from '@/components/ui/simple-toast';
 import { Navbar } from '@/components/navbar';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { PostSettingsPopup } from '@/components/post-settings-popup';
+import { authUtil } from '@/lib/auth';
+import type { AuthUser } from '@knowledge-hub/shared-types';
+import { usePostApprovalNotifications } from '@/lib/hooks/use-notifications';
+
+// Memoized status badge component to prevent unnecessary re-renders
+const PostStatusBadge = memo(({ status }: { status?: string }) => {
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <div className="flex items-center gap-2 cursor-help">
+                    {status ? (
+                        <Badge
+                            variant={
+                                status === 'approved'
+                                    ? 'default'
+                                    : status === 'rejected'
+                                        ? 'secondary'
+                                        : 'secondary'
+                            }
+                            className={
+                                status === 'rejected'
+                                    ? 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800'
+                                    : undefined
+                            }
+                        >
+                            {status}
+                        </Badge>
+                    ) : (
+                        <Badge variant="outline">pending</Badge>
+                    )}
+                </div>
+            </TooltipTrigger>
+            <TooltipContent>
+                <p>Post status: {status || 'pending'}</p>
+            </TooltipContent>
+        </Tooltip>
+    );
+});
+PostStatusBadge.displayName = 'PostStatusBadge';
 
 export default function PostsPage() {
     const { success, error: showError } = useToast();
+    const [user, setUser] = useState<AuthUser | null>(null);
+    const [postSettings, setPostSettings] = useState<{
+        aiProviderId?: string;
+        model?: string;
+        promptId?: string;
+        temperature?: number;
+    }>({});
 
     const handleLogout = () => {
         // The navbar handles the actual logout logic
@@ -34,6 +83,7 @@ export default function PostsPage() {
         provider: '',
         source: '',
         title: '',
+        status: '',
         metaKey: '',
         metaValue: '',
         postedAtStart: '',
@@ -46,6 +96,7 @@ export default function PostsPage() {
         provider: '',
         source: '',
         title: '',
+        status: '',
         metaKey: '',
         metaValue: '',
         postedAtStart: '',
@@ -64,6 +115,15 @@ export default function PostsPage() {
     const [selectedPost, setSelectedPost] = useState<Post | null>(null);
     const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
     const [batchDeleteLoading, setBatchDeleteLoading] = useState(false);
+    const [approvingPosts, setApprovingPosts] = useState<Set<string>>(new Set());
+    const [batchApproving, setBatchApproving] = useState(false);
+    const [approveAllLoading, setApproveAllLoading] = useState(false);
+
+    // Track posts that are being approved (to reload when they complete)
+    const [pendingApprovalPosts, setPendingApprovalPosts] = useState<Set<string>>(new Set());
+
+    // Listen for post approval notifications
+    const { getPostApprovalNotifications } = usePostApprovalNotifications();
 
     // Form state
     const [formData, setFormData] = useState<CreatePostDto>({
@@ -113,21 +173,8 @@ export default function PostsPage() {
         };
     }, [inputValues, metaValueError]);
 
-    // Load posts when filters or page changes
-    useEffect(() => {
-        loadPosts();
-        // Clear selection when page or filters change
-        setSelectedPostIds(new Set());
-        // Sync page input with current page
-        setPageInput(String(page));
-    }, [page, filters]);
-
-    // Sync page input when page changes externally
-    useEffect(() => {
-        setPageInput(String(page));
-    }, [page]);
-
-    const loadPosts = async () => {
+    // Define loadPosts function (must be before useEffect that uses it)
+    const loadPosts = useCallback(async () => {
         try {
             setLoading(true);
             const params: Record<string, string | number> = {
@@ -140,6 +187,7 @@ export default function PostsPage() {
             if (filters.provider) params.provider = filters.provider;
             if (filters.source) params.source = filters.source;
             if (filters.title) params.title = filters.title;
+            if (filters.status) params.status = filters.status as 'pending' | 'approved' | 'rejected' | 'review';
             if (filters.metaKey) params.metaKey = filters.metaKey;
             if (filters.metaValue) params.metaValue = filters.metaValue;
             if (filters.postedAtStart) params.postedAtStart = filters.postedAtStart;
@@ -154,8 +202,190 @@ export default function PostsPage() {
             setPosts([]);
             setTotal(0);
         } finally {
+            // Always reset loading state, even on error
             setLoading(false);
         }
+    }, [page, pageSize, filters, showError]);
+
+    // Load posts when filters or page changes
+    useEffect(() => {
+        let isMounted = true;
+        const load = async () => {
+            try {
+                await loadPosts();
+                if (isMounted) {
+                    // Clear selection when page or filters change
+                    setSelectedPostIds(new Set());
+                    // Sync page input with current page
+                    setPageInput(String(page));
+                }
+            } catch (err) {
+                console.error('Error loading posts:', err);
+                if (isMounted) {
+                    setLoading(false);
+                }
+            }
+        };
+        load();
+        return () => {
+            isMounted = false;
+        };
+    }, [page, filters, loadPosts]);
+
+    // Sync page input when page changes externally
+    useEffect(() => {
+        setPageInput(String(page));
+    }, [page]);
+
+    // Listen for post approval completion notifications and update posts in state
+    useEffect(() => {
+        if (pendingApprovalPosts.size === 0) return;
+
+        const interval = setInterval(() => {
+            const notifications = getPostApprovalNotifications();
+
+            // Check if any pending posts have completed
+            const completedPosts = new Set<string>();
+            notifications.forEach((notification) => {
+                const postId = notification.data?.postId;
+                if (postId && pendingApprovalPosts.has(postId)) {
+                    if (
+                        notification.type === 'POST_APPROVAL_COMPLETED' ||
+                        notification.type === 'POST_APPROVAL_FAILED'
+                    ) {
+                        completedPosts.add(postId);
+                    }
+                }
+            });
+
+            // If any posts completed, update them in state and remove from pending
+            if (completedPosts.size > 0) {
+                console.log('📨 Post approval completed for posts:', Array.from(completedPosts));
+
+                // Update each completed post in the local state
+                setPosts((prevPosts) => {
+                    const updatedPosts = prevPosts.map((post) => {
+                        if (completedPosts.has(post.id)) {
+                            // Find the notification for this post
+                            const notification = notifications.find(
+                                (n) => n.data?.postId === post.id
+                            );
+
+                            if (notification) {
+                                // Update post with data from notification
+                                const updatedPost = { ...post };
+
+                                if (notification.type === 'POST_APPROVAL_COMPLETED') {
+                                    // Update fields from notification data
+                                    if (notification.data.status !== undefined) {
+                                        updatedPost.status = notification.data.status;
+                                    }
+                                    if (notification.data.approvalReason !== undefined) {
+                                        updatedPost.approvalReason = notification.data.approvalReason;
+                                    }
+                                    if (notification.data.confidenceScore !== undefined) {
+                                        updatedPost.confidenceScore = notification.data.confidenceScore;
+                                    }
+                                    if (notification.data.updatedAt !== undefined) {
+                                        updatedPost.updatedAt = notification.data.updatedAt;
+                                    }
+                                } else if (notification.type === 'POST_APPROVAL_FAILED') {
+                                    // For failed approvals, we might want to show an error indicator
+                                    // but keep the post status as is (or set to a specific error status)
+                                    console.warn(`Post ${post.id} approval failed:`, notification.data.error);
+                                }
+
+                                return updatedPost;
+                            }
+                        }
+                        return post;
+                    });
+
+                    return updatedPosts;
+                });
+
+                // Remove completed posts from pending set
+                setPendingApprovalPosts((prev) => {
+                    const next = new Set(prev);
+                    completedPosts.forEach((id) => next.delete(id));
+                    return next;
+                });
+
+                // Remove from approving set
+                setApprovingPosts((prev) => {
+                    const next = new Set(prev);
+                    completedPosts.forEach((id) => next.delete(id));
+                    return next;
+                });
+
+                // Show success message
+                const successCount = notifications.filter(
+                    (n) => n.type === 'POST_APPROVAL_COMPLETED' && completedPosts.has(n.data?.postId)
+                ).length;
+                if (successCount > 0) {
+                    success(`Post approval completed for ${successCount} post(s)`);
+                }
+            }
+        }, 1000); // Check every second
+
+        return () => clearInterval(interval);
+    }, [pendingApprovalPosts, getPostApprovalNotifications, success]);
+
+    // Load user and post settings (only once on mount)
+    useEffect(() => {
+        const loadUserAndSettings = async () => {
+            try {
+                const currentUser = authUtil.getUser();
+                if (currentUser) {
+                    setUser(currentUser);
+                    // Load user's post settings
+                    try {
+                        const settings = await userApi.getUserPostSettings(currentUser.id);
+                        if (settings && Object.keys(settings).length > 0) {
+                            setPostSettings(settings);
+                        }
+                    } catch (err) {
+                        console.error('Failed to load post settings:', err);
+                        // Don't show error for initial load - use defaults
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to load user:', err);
+            }
+        };
+        loadUserAndSettings();
+    }, []);
+
+    const handlePostSettingsChange = (settings: {
+        aiProviderId?: string;
+        model?: string;
+        promptId?: string;
+        temperature?: number;
+    }) => {
+        setPostSettings(settings);
+    };
+
+    const handleSavePostSettings = async (settings: {
+        aiProviderId?: string;
+        model?: string;
+        promptId?: string;
+        temperature?: number;
+    }) => {
+        if (!user?.id) {
+            showError('User not found');
+            return;
+        }
+        console.log('PostsPage: Saving post settings:', settings);
+        // Ensure all fields are included
+        const settingsToSave = {
+            aiProviderId: settings.aiProviderId,
+            model: settings.model,
+            promptId: settings.promptId,
+            temperature: settings.temperature ?? 0.7,
+        };
+        console.log('PostsPage: Settings to save (cleaned):', settingsToSave);
+        await userApi.updateUserPostSettings(user.id, settingsToSave);
+        setPostSettings(settingsToSave);
     };
 
     const handleCreate = async (): Promise<void> => {
@@ -282,6 +512,118 @@ export default function PostsPage() {
             showError(errorMessage);
         } finally {
             setBatchDeleteLoading(false);
+        }
+    };
+
+    const handleApprovePost = async (postId: string): Promise<void> => {
+        try {
+            setApprovingPosts(prev => new Set(prev).add(postId));
+            // Track this post as pending approval
+            setPendingApprovalPosts(prev => {
+                const next = new Set(prev);
+                next.add(postId);
+                return next;
+            });
+
+            // Only send settings if they have all required fields, otherwise let backend use user settings
+            const settingsToSend =
+                postSettings.aiProviderId && postSettings.promptId && postSettings.model
+                    ? postSettings
+                    : undefined;
+            await postsApi.triggerApproval(postId, settingsToSend);
+            success('Post approval job queued successfully');
+            // Note: Posts will be reloaded automatically when notification is received
+        } catch (error: unknown) {
+            console.error('Failed to trigger post approval:', error);
+            const errorMessage =
+                (error as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message ||
+                (error as { message?: string })?.message ||
+                'Failed to trigger post approval';
+            showError(errorMessage);
+
+            // Remove from pending if error
+            setPendingApprovalPosts(prev => {
+                const next = new Set(prev);
+                next.delete(postId);
+                return next;
+            });
+            setApprovingPosts(prev => {
+                const next = new Set(prev);
+                next.delete(postId);
+                return next;
+            });
+        }
+    };
+
+    const handleBatchApprove = async (): Promise<void> => {
+        if (selectedPostIds.size === 0) return;
+
+        try {
+            setBatchApproving(true);
+            const postIds = Array.from(selectedPostIds);
+            // Only send settings if they have all required fields, otherwise let backend use user settings
+            const settingsToSend =
+                postSettings.aiProviderId && postSettings.promptId && postSettings.model
+                    ? postSettings
+                    : undefined;
+            const result = await postsApi.batchTriggerApproval(postIds, settingsToSend);
+            success(`${result.jobCount} post approval job(s) queued successfully`);
+            setSelectedPostIds(new Set());
+
+            // Track all selected posts as pending approval
+            setPendingApprovalPosts(prev => {
+                const next = new Set(prev);
+                postIds.forEach(id => next.add(id));
+                return next;
+            });
+
+            // Note: Posts will be reloaded automatically when notifications are received
+        } catch (error: unknown) {
+            console.error('Failed to batch approve posts:', error);
+            const errorMessage =
+                (error as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message ||
+                (error as { message?: string })?.message ||
+                'Failed to trigger batch approval';
+            showError(errorMessage);
+        } finally {
+            setBatchApproving(false);
+        }
+    };
+
+    const handleApproveAll = async (): Promise<void> => {
+        try {
+            setApproveAllLoading(true);
+            // Use current filters
+            const params: Record<string, string | number> = {};
+            if (filters.hash) params['filter[hash]'] = filters.hash;
+            if (filters.provider) params['filter[provider]'] = filters.provider;
+            if (filters.source) params['filter[source]'] = filters.source;
+            if (filters.title) params['filter[title]'] = filters.title;
+            if (filters.metaKey) params['filter[metaKey]'] = filters.metaKey;
+            if (filters.metaValue) params['filter[metaValue]'] = filters.metaValue;
+            if (filters.postedAtStart) params['filter[postedAtStart]'] = filters.postedAtStart;
+            if (filters.postedAtEnd) params['filter[postedAtEnd]'] = filters.postedAtEnd;
+
+            // Only send settings if they have all required fields, otherwise let backend use user settings
+            const settingsToSend =
+                postSettings.aiProviderId && postSettings.promptId && postSettings.model
+                    ? postSettings
+                    : undefined;
+            const result = await postsApi.approveAll(settingsToSend, params);
+            success(`${result.jobCount} post approval job(s) queued successfully`);
+            // Refresh posts after a short delay
+            setTimeout(() => {
+                loadPosts();
+            }, 2000);
+        } catch (error: unknown) {
+            console.error('Failed to approve all posts:', error);
+            const errorMessage =
+                (error as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message ||
+                (error as { message?: string })?.message ||
+                'Failed to trigger approve all';
+            showError(errorMessage);
+        } finally {
+            setApproveAllLoading(false);
         }
     };
 
@@ -425,6 +767,7 @@ export default function PostsPage() {
             provider: '',
             source: '',
             title: '',
+            status: '',
             metaKey: '',
             metaValue: '',
             postedAtStart: '',
@@ -514,6 +857,24 @@ export default function PostsPage() {
                                     />
                                 </div>
                                 <div>
+                                    <Label htmlFor="filter-status">Status</Label>
+                                    <Select
+                                        value={inputValues.status || 'all'}
+                                        onValueChange={(value) => handleFilterChange('status', value === 'all' ? '' : value)}
+                                    >
+                                        <SelectTrigger id="filter-status">
+                                            <SelectValue placeholder="All Statuses" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All Statuses</SelectItem>
+                                            <SelectItem value="pending">Pending</SelectItem>
+                                            <SelectItem value="approved">Approved</SelectItem>
+                                            <SelectItem value="rejected">Rejected</SelectItem>
+                                            <SelectItem value="review">Review</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div>
                                     <Label htmlFor="filter-posted-at-start">Posted At Start</Label>
                                     <Input
                                         id="filter-posted-at-start"
@@ -587,10 +948,23 @@ export default function PostsPage() {
                                 {selectedPostIds.size > 0 && (
                                     <>
                                         <Button
+                                            variant="default"
+                                            size="sm"
+                                            onClick={handleBatchApprove}
+                                            disabled={batchApproving || batchDeleteLoading}
+                                        >
+                                            {batchApproving ? (
+                                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                            ) : (
+                                                <CheckCircle2 className="h-4 w-4 mr-2" />
+                                            )}
+                                            Approve Selected ({selectedPostIds.size})
+                                        </Button>
+                                        <Button
                                             variant="destructive"
                                             size="sm"
                                             onClick={() => setBatchDeleteDialogOpen(true)}
-                                            disabled={batchDeleteLoading}
+                                            disabled={batchDeleteLoading || batchApproving}
                                         >
                                             <Trash2 className="h-4 w-4 mr-2" />
                                             Delete Selected ({selectedPostIds.size})
@@ -600,7 +974,7 @@ export default function PostsPage() {
                                                 variant="destructive"
                                                 size="sm"
                                                 onClick={() => setDeleteAllDialogOpen(true)}
-                                                disabled={batchDeleteLoading}
+                                                disabled={batchDeleteLoading || batchApproving}
                                             >
                                                 <Trash2 className="h-4 w-4 mr-2" />
                                                 Delete All ({total})
@@ -608,6 +982,26 @@ export default function PostsPage() {
                                         )}
                                     </>
                                 )}
+                                {selectedPostIds.size === posts.length && posts.length > 0 && (
+                                    <Button
+                                        variant="default"
+                                        size="sm"
+                                        onClick={handleApproveAll}
+                                        disabled={approveAllLoading || batchDeleteLoading}
+                                    >
+                                        {approveAllLoading ? (
+                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        ) : (
+                                            <CheckCircle2 className="h-4 w-4 mr-2" />
+                                        )}
+                                        Approve All ({total})
+                                    </Button>
+                                )}
+                                <PostSettingsPopup
+                                    currentSettings={postSettings}
+                                    onSettingsChange={handlePostSettingsChange}
+                                    onSaveSettings={handleSavePostSettings}
+                                />
                                 <Button onClick={() => setCreateDialogOpen(true)}>
                                     <Plus className="h-4 w-4 mr-2" />
                                     Create Post
@@ -623,65 +1017,84 @@ export default function PostsPage() {
                                 No posts found
                             </div>
                         ) : (
-                            <>
-                                <div className="rounded-md border">
-                                    <table className="w-full">
+                            <TooltipProvider>
+                                <div className="rounded-md border overflow-x-auto">
+                                    <table className="w-full min-w-[800px]">
                                         <thead>
                                             <tr className="border-b">
-                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-12">
+                                                <th className="h-12 px-2 md:px-4 text-left align-middle font-medium text-muted-foreground w-12">
                                                     <Checkbox
                                                         checked={posts.length > 0 && selectedPostIds.size === posts.length}
                                                         onCheckedChange={handleSelectAll}
                                                     />
                                                 </th>
-                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Hash</th>
-                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Title</th>
-                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Provider</th>
-                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Source</th>
-                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Meta</th>
-                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Dates</th>
-                                                <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">Actions</th>
+                                                <th className="h-12 px-2 md:px-4 text-left align-middle font-medium text-muted-foreground hidden sm:table-cell">Hash</th>
+                                                <th className="h-12 px-2 md:px-4 text-left align-middle font-medium text-muted-foreground">Title</th>
+                                                <th className="h-12 px-2 md:px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
+                                                <th className="h-12 px-2 md:px-4 text-left align-middle font-medium text-muted-foreground hidden md:table-cell">Provider</th>
+                                                <th className="h-12 px-2 md:px-4 text-left align-middle font-medium text-muted-foreground hidden lg:table-cell">Source</th>
+                                                <th className="h-12 px-2 md:px-4 text-left align-middle font-medium text-muted-foreground hidden md:table-cell">Dates</th>
+                                                <th className="h-12 px-2 md:px-4 text-right align-middle font-medium text-muted-foreground">Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {posts.map((post) => (
                                                 <tr key={post.id} className="border-b transition-colors hover:bg-muted/50">
-                                                    <td className="p-4 align-middle">
+                                                    <td className="p-2 md:p-4 align-middle">
                                                         <Checkbox
                                                             checked={selectedPostIds.has(post.id)}
                                                             onCheckedChange={(checked) => handleSelectPost(post.id, checked as boolean)}
                                                         />
                                                     </td>
-                                                    <td className="p-4 align-middle font-mono text-xs">
+                                                    <td className="p-2 md:p-4 align-middle font-mono text-xs hidden sm:table-cell">
                                                         {post.hash.substring(0, 12)}...
                                                     </td>
-                                                    <td className="p-4 align-middle max-w-xs truncate">
-                                                        {post.title || '-'}
+                                                    <td className="p-2 md:p-4 align-middle max-w-[200px] md:max-w-xs truncate">
+                                                        <div className="flex flex-col gap-1">
+                                                            <span className="truncate">{post.title || '-'}</span>
+                                                            <div className="flex items-center gap-2 md:hidden text-xs text-muted-foreground">
+                                                                {post.provider && <Badge variant="outline" className="text-xs">{post.provider}</Badge>}
+                                                                {post.source && <Badge variant="secondary" className="text-xs">{post.source}</Badge>}
+                                                            </div>
+                                                        </div>
                                                     </td>
-                                                    <td className="p-4 align-middle">
+                                                    <td className="p-2 md:p-4 align-middle">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <PostStatusBadge status={post.status} />
+                                                            {post.confidenceScore !== null && post.confidenceScore !== undefined && (
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    {typeof post.confidenceScore === 'string'
+                                                                        ? parseFloat(post.confidenceScore).toFixed(2)
+                                                                        : post.confidenceScore.toFixed(2)}
+                                                                </span>
+                                                            )}
+                                                            {post.approvalReason && (
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <span className="text-xs text-muted-foreground cursor-help">ℹ️</span>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent className="max-w-md">
+                                                                        <p className="text-sm">{post.approvalReason}</p>
+                                                                    </TooltipContent>
+                                                                </Tooltip>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-2 md:p-4 align-middle hidden md:table-cell">
                                                         {post.provider ? (
                                                             <Badge variant="outline">{post.provider}</Badge>
                                                         ) : (
                                                             '-'
                                                         )}
                                                     </td>
-                                                    <td className="p-4 align-middle">
+                                                    <td className="p-2 md:p-4 align-middle hidden lg:table-cell">
                                                         {post.source ? (
                                                             <Badge variant="secondary">{post.source}</Badge>
                                                         ) : (
                                                             '-'
                                                         )}
                                                     </td>
-                                                    <td className="p-4 align-middle">
-                                                        {post.meta && Object.keys(post.meta).length > 0 ? (
-                                                            <span className="text-xs text-muted-foreground">
-                                                                {Object.keys(post.meta).length} fields
-                                                            </span>
-                                                        ) : (
-                                                            '-'
-                                                        )}
-                                                    </td>
-                                                    <td className="p-4 align-middle text-sm text-muted-foreground">
+                                                    <td className="p-2 md:p-4 align-middle text-sm text-muted-foreground hidden md:table-cell">
                                                         <div className="space-y-1">
                                                             {post.postedAt && (
                                                                 <div>
@@ -695,8 +1108,29 @@ export default function PostsPage() {
                                                             </div>
                                                         </div>
                                                     </td>
-                                                    <td className="p-4 align-middle text-right">
+                                                    <td className="p-2 md:p-4 align-middle text-right">
                                                         <div className="flex items-center justify-end gap-2">
+                                                            {post.status === 'pending' && (
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="sm"
+                                                                            onClick={() => handleApprovePost(post.id)}
+                                                                            disabled={approvingPosts.has(post.id)}
+                                                                        >
+                                                                            {approvingPosts.has(post.id) ? (
+                                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                                            ) : (
+                                                                                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                                                            )}
+                                                                        </Button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent>
+                                                                        <p>Trigger approval job</p>
+                                                                    </TooltipContent>
+                                                                </Tooltip>
+                                                            )}
                                                             <Button
                                                                 variant="ghost"
                                                                 size="sm"
@@ -718,7 +1152,6 @@ export default function PostsPage() {
                                         </tbody>
                                     </table>
                                 </div>
-
                                 {/* Pagination */}
                                 {totalPages > 1 && (
                                     <div className="flex items-center justify-between mt-4">
@@ -778,7 +1211,7 @@ export default function PostsPage() {
                                         </div>
                                     </div>
                                 )}
-                            </>
+                            </TooltipProvider>
                         )}
                     </CardContent>
                 </Card>
@@ -943,6 +1376,27 @@ export default function PostsPage() {
 
                                 {/* Content */}
                                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                                    {/* Thread Title and Post Message Display */}
+                                    {selectedPost && (
+                                        <div className="space-y-4 p-4 bg-gray-50 rounded-lg border">
+                                            {selectedPost.meta?.thread_title && (
+                                                <div className="grid gap-2">
+                                                    <Label className="text-sm font-semibold text-gray-700">Thread Title</Label>
+                                                    <div className="p-3 bg-white rounded border text-sm text-gray-900">
+                                                        {selectedPost.meta.thread_title}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {selectedPost.meta?.post_message && (
+                                                <div className="grid gap-2">
+                                                    <Label className="text-sm font-semibold text-gray-700">Post Message</Label>
+                                                    <div className="p-3 bg-white rounded border text-sm text-gray-900 whitespace-pre-wrap">
+                                                        {selectedPost.meta.post_message}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                     <div className="grid gap-2">
                                         <Label htmlFor="edit-hash">Hash</Label>
                                         <Input

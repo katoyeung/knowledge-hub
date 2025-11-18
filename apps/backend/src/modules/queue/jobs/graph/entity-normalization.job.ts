@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BaseJob } from '../base/base.job';
+import { RegisterJob } from '../../decorators/register-job.decorator';
 import { Dataset } from '../../../dataset/entities/dataset.entity';
 import { EventBusService } from '../../../event/services/event-bus.service';
 import { NotificationService } from '../../../notification/notification.service';
@@ -19,10 +20,10 @@ export interface EntityNormalizationJobData {
   userId: string;
 }
 
+@RegisterJob('entity-normalization')
 @Injectable()
 export class EntityNormalizationJob extends BaseJob<EntityNormalizationJobData> {
   protected readonly logger = new Logger(EntityNormalizationJob.name);
-  protected static readonly jobType = 'ENTITY_NORMALIZATION';
 
   constructor(
     @InjectRepository(Dataset)

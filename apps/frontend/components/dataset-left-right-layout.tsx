@@ -155,10 +155,10 @@ export function DatasetLeftRightLayout({
 
     // Desktop layout - Left/Right
     return (
-        <div className="h-full flex gap-2 p-4">
-            {/* Left Panel - Sources */}
-            <div className="w-[300px] bg-white border border-gray-200 rounded-lg flex flex-col flex-shrink-0">
-                <div className="flex-1 min-h-0">
+        <div className="h-full flex relative">
+            {/* Left Panel - Sources - Fixed */}
+            <div className="fixed left-0 top-[95px] h-[calc(100vh-95px)] w-[300px] bg-white border-gray-200 flex flex-col z-10">
+                <div className="flex-1 min-h-0 overflow-hidden">
                     <DatasetDocumentsPanel
                         datasetId={datasetId}
                         documents={documents}
@@ -171,10 +171,10 @@ export function DatasetLeftRightLayout({
                 </div>
             </div>
 
-            {/* Right Panel - Chat/Graph/Notes */}
-            <div className="flex-1 flex flex-col gap-2">
+            {/* Right Panel - Chat/Graph/Notes - Scrollable */}
+            <div className="flex-1 flex flex-col gap-2 ml-[300px] p-4">
                 {/* Right Panel Header with Tabs */}
-                <div className="p-4 border border-gray-200 rounded-lg bg-white">
+                <div className="p-4 border border-gray-200 rounded-lg bg-white flex-shrink-0">
                     <div className="flex space-x-1">
                         <button
                             onClick={() => setActiveRightTab('chat')}
@@ -210,7 +210,7 @@ export function DatasetLeftRightLayout({
                 </div>
 
                 {/* Right Panel Content */}
-                <div className="flex-1 min-h-0">
+                <div className="flex-1 min-h-0 overflow-y-auto">
                     {activeRightTab === 'chat' && (
                         <DatasetChatPanel
                             key={`chat-${datasetId}`}

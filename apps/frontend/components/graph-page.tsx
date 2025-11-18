@@ -10,7 +10,8 @@ import {
     Play,
     AlertCircle,
     Loader2,
-    Settings
+    Settings,
+    Save
 } from 'lucide-react'
 import { GraphVisualization } from './graph-visualization'
 import { GraphStats } from './graph-stats'
@@ -19,11 +20,11 @@ import { EntityDictionaryManager } from './entity-dictionary-manager'
 import { EntitySuggestionsPanel } from './entity-suggestions-panel'
 import { EntityAutoDiscovery } from './entity-auto-discovery'
 import { EntityNormalizationPanel } from './entity-normalization-panel'
-import { EntityDictionaryImportModal } from './entity-dictionary-import-modal'
-import { DuplicateEntitiesModal } from './duplicate-entities-modal'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
-import { graphApi, datasetApi, type GraphData, type GraphExtractionConfig } from '@/lib/api'
+import { PromptSelector } from './prompt-selector'
+import { graphApi, datasetApi, aiProviderApi, type GraphData, type GraphExtractionConfig, type AiProvider, type Model } from '@/lib/api'
 import { useToast } from '@/components/ui/simple-toast'
+import { Label } from '@/components/ui/label'
 
 interface GraphPageProps {
     datasetId: string
@@ -51,9 +52,14 @@ export function GraphPage({ datasetId }: GraphPageProps) {
     const [isClearing, setIsClearing] = useState(false)
     const [selectedNode, setSelectedNode] = useState<any>(null)
     const [selectedEdge, setSelectedEdge] = useState<any>(null)
-    const [showImportModal, setShowImportModal] = useState(false)
-    const [showDuplicatesModal, setShowDuplicatesModal] = useState(false)
     const { success, error: showError, warning } = useToast()
+
+    // Graph settings form state
+    const [savingSettings, setSavingSettings] = useState(false)
+    const [aiProviders, setAiProviders] = useState<AiProvider[]>([])
+    const [models, setModels] = useState<Model[]>([])
+    const [loadingProviders, setLoadingProviders] = useState(false)
+    const [loadingModels, setLoadingModels] = useState(false)
 
 
     // Load graph data
@@ -79,6 +85,41 @@ export function GraphPage({ datasetId }: GraphPageProps) {
         } catch (err) {
             console.error('Failed to load graph settings:', err)
             // Don't show error for settings load failure
+        }
+    }
+
+    // Load AI providers for settings form
+    const loadSettingsData = async () => {
+        try {
+            setLoadingProviders(true)
+            const providersResponse = await aiProviderApi.getAll()
+            setAiProviders(providersResponse.data || [])
+        } catch (err) {
+            console.error('Failed to load settings data:', err)
+            showError('Failed to load settings data', 'Could not load AI providers')
+        } finally {
+            setLoadingProviders(false)
+        }
+    }
+
+    // Load models when provider changes
+    const loadModelsForProvider = async (providerId: string) => {
+        if (!providerId) {
+            setModels([])
+            return
+        }
+        try {
+            setLoadingModels(true)
+            const provider = aiProviders.find(p => p.id === providerId)
+            if (provider && provider.models) {
+                setModels(provider.models || [])
+            } else {
+                setModels([])
+            }
+        } catch (err) {
+            console.error('Failed to load models:', err)
+        } finally {
+            setLoadingModels(false)
         }
     }
 
@@ -201,20 +242,48 @@ export function GraphPage({ datasetId }: GraphPageProps) {
     // Handle settings save
     const handleSaveSettings = async (newSettings: GraphSettings) => {
         try {
+            setSavingSettings(true)
             await datasetApi.updateGraphSettings(datasetId, newSettings)
             setGraphSettings(newSettings)
-            success('Graph settings saved successfully')
+            success('Graph Settings Saved', 'Graph settings have been saved successfully')
         } catch (err) {
             console.error('Failed to save graph settings:', err)
-            showError('Failed to save graph settings')
+            showError('Failed to Save Settings', err instanceof Error ? err.message : 'Failed to save graph settings')
+        } finally {
+            setSavingSettings(false)
         }
+    }
+
+    // Handle settings input change
+    const handleSettingsInputChange = (field: keyof GraphSettings, value: string | number) => {
+        const newSettings = {
+            ...graphSettings,
+            [field]: value
+        }
+
+        // Clear model when provider changes
+        if (field === 'aiProviderId') {
+            newSettings.model = ''
+        }
+
+        setGraphSettings(newSettings)
     }
 
     // Load data on mount
     useEffect(() => {
         loadGraphData()
         loadGraphSettings()
+        loadSettingsData()
     }, [datasetId])
+
+    // Load models when provider changes in settings
+    useEffect(() => {
+        if (graphSettings.aiProviderId && aiProviders.length > 0) {
+            loadModelsForProvider(graphSettings.aiProviderId)
+        } else {
+            setModels([])
+        }
+    }, [graphSettings.aiProviderId, aiProviders])
 
     // Handle node click
     const handleNodeClick = (node: unknown) => {
@@ -320,6 +389,7 @@ export function GraphPage({ datasetId }: GraphPageProps) {
                     <TabsTrigger value="suggestions">Suggestions</TabsTrigger>
                     <TabsTrigger value="discovery">Auto-Discovery</TabsTrigger>
                     <TabsTrigger value="normalization">Normalization</TabsTrigger>
+                    <TabsTrigger value="settings">Settings</TabsTrigger>
                     <TabsTrigger value="raw-data">Raw Data</TabsTrigger>
                 </TabsList>
 
@@ -565,28 +635,7 @@ export function GraphPage({ datasetId }: GraphPageProps) {
                 </TabsContent>
 
                 <TabsContent value="entities">
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <h2 className="text-xl font-semibold">Entity Dictionary</h2>
-                            <div className="flex items-center gap-2">
-                                <Button
-                                    onClick={() => setShowImportModal(true)}
-                                    variant="outline"
-                                    size="sm"
-                                >
-                                    Import/Export
-                                </Button>
-                                <Button
-                                    onClick={() => setShowDuplicatesModal(true)}
-                                    variant="outline"
-                                    size="sm"
-                                >
-                                    Find Duplicates
-                                </Button>
-                            </div>
-                        </div>
-                        <EntityDictionaryManager datasetId={datasetId} />
-                    </div>
+                    <EntityDictionaryManager datasetId={datasetId} />
                 </TabsContent>
 
                 <TabsContent value="suggestions">
@@ -621,6 +670,121 @@ export function GraphPage({ datasetId }: GraphPageProps) {
                     />
                 </TabsContent>
 
+                <TabsContent value="settings">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Dataset Graph Settings</CardTitle>
+                            <p className="text-sm text-gray-600 mt-2">
+                                Configure default settings for graph extraction. These settings will be used when extracting graphs from documents.
+                            </p>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-6">
+                                {/* AI Provider Selection */}
+                                <div className="space-y-2">
+                                    <Label htmlFor="aiProvider">AI Provider</Label>
+                                    <select
+                                        id="aiProvider"
+                                        value={graphSettings.aiProviderId || ''}
+                                        onChange={(e) => {
+                                            handleSettingsInputChange('aiProviderId', e.target.value)
+                                        }}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        disabled={loadingProviders}
+                                    >
+                                        <option value="">Select AI Provider</option>
+                                        {aiProviders.map((provider) => (
+                                            <option key={provider.id} value={provider.id}>
+                                                {provider.name} ({provider.type})
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {loadingProviders && (
+                                        <p className="text-sm text-gray-500">Loading AI providers...</p>
+                                    )}
+                                </div>
+
+                                {/* Model Selection */}
+                                <div className="space-y-2">
+                                    <Label htmlFor="model">Model</Label>
+                                    <select
+                                        id="model"
+                                        value={graphSettings.model || ''}
+                                        onChange={(e) => handleSettingsInputChange('model', e.target.value)}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        disabled={loadingModels || !graphSettings.aiProviderId}
+                                    >
+                                        <option value="">Select Model</option>
+                                        {models.map((model) => (
+                                            <option key={model.id} value={model.id}>
+                                                {model.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {loadingModels && (
+                                        <p className="text-sm text-gray-500">Loading models...</p>
+                                    )}
+                                    {!graphSettings.aiProviderId && (
+                                        <p className="text-sm text-gray-500">Please select an AI provider first</p>
+                                    )}
+                                </div>
+
+                                {/* Prompt Selection */}
+                                <PromptSelector
+                                    value={graphSettings.promptId}
+                                    onChange={(promptId) => handleSettingsInputChange('promptId', promptId)}
+                                    label="Graph Extraction Prompt"
+                                    placeholder="Select Prompt"
+                                />
+
+                                {/* Temperature */}
+                                <div className="space-y-2">
+                                    <Label htmlFor="temperature">Temperature</Label>
+                                    <div className="flex items-center space-x-4">
+                                        <input
+                                            type="range"
+                                            id="temperature"
+                                            min="0"
+                                            max="2"
+                                            step="0.1"
+                                            value={graphSettings.temperature || 0.7}
+                                            onChange={(e) => handleSettingsInputChange('temperature', parseFloat(e.target.value))}
+                                            className="flex-1"
+                                        />
+                                        <span className="text-sm text-gray-600 min-w-[3rem]">
+                                            {graphSettings.temperature || 0.7}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-gray-500">
+                                        Controls randomness in AI responses. Lower values make responses more focused and deterministic.
+                                    </p>
+                                </div>
+
+                                {/* Save Button */}
+                                <div className="pt-4 border-t border-gray-200">
+                                    <Button
+                                        onClick={() => handleSaveSettings(graphSettings)}
+                                        disabled={savingSettings}
+                                        className="w-full sm:w-auto"
+                                    >
+                                        {savingSettings ? (
+                                            <>
+                                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                                Saving...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Save className="h-4 w-4 mr-2" />
+                                                Save Settings
+                                            </>
+                                        )}
+                                    </Button>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
                 <TabsContent value="raw-data">
                     {graphData ? (
                         <Card>
@@ -644,25 +808,6 @@ export function GraphPage({ datasetId }: GraphPageProps) {
             </Tabs>
 
             {/* Modals */}
-            <EntityDictionaryImportModal
-                datasetId={datasetId}
-                isOpen={showImportModal}
-                onClose={() => setShowImportModal(false)}
-                onImportComplete={(result) => {
-                    success('Import Complete', `Imported ${result.created} entities, skipped ${result.skipped}`);
-                    loadGraphData(); // Refresh graph data
-                }}
-            />
-
-            <DuplicateEntitiesModal
-                datasetId={datasetId}
-                isOpen={showDuplicatesModal}
-                onClose={() => setShowDuplicatesModal(false)}
-                onMergeComplete={(result) => {
-                    success('Merge Complete', `Merged ${result.merged} entities`);
-                    loadGraphData(); // Refresh graph data
-                }}
-            />
 
             {/* Clear Graph Data Confirmation Dialog */}
             <ConfirmationDialog

@@ -31,18 +31,22 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
     Search,
     Plus,
     Edit,
     Trash2,
     Download,
-    Lightbulb,
-    RefreshCw,
-    X
+    X,
+    Sparkles,
+    RefreshCw
 } from "lucide-react";
 import { graphApi } from "@/lib/api";
 import { useToast } from "@/components/ui/simple-toast";
+import { EntityGenerator } from "./entity-generator";
+import { EntityDiscovery } from "./entity-discovery";
+import { DuplicateEntitiesModal } from "./duplicate-entities-modal";
 
 interface Entity {
     id: string;
@@ -99,10 +103,24 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
     const [totalPages, setTotalPages] = useState(1);
     const [pageSize] = useState(20);
 
+    // Selection states
+    const [selectedEntities, setSelectedEntities] = useState<Set<string>>(new Set());
+    const [isAllSelected, setIsAllSelected] = useState(false);
+    const [totalEntities, setTotalEntities] = useState(0);
+
+    // Delete dialog states
+    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+    const [deleteType, setDeleteType] = useState<'page' | 'all'>('page');
+    const [deleteConfirmText, setDeleteConfirmText] = useState('');
+    const [isDeleting, setIsDeleting] = useState(false);
+
     // Dialog states
     const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
     const [editingEntity, setEditingEntity] = useState<Entity | null>(null);
+    const [showGenerateEntityModal, setShowGenerateEntityModal] = useState(false);
+    const [showDiscoveryModal, setShowDiscoveryModal] = useState(false);
+    const [showDuplicatesModal, setShowDuplicatesModal] = useState(false);
 
     // Form states
     const [formData, setFormData] = useState({
@@ -132,6 +150,7 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
             });
 
             setEntities(response.entities || []);
+            setTotalEntities(response.total || 0);
             setTotalPages(Math.ceil((response.total || 0) / pageSize));
         } catch (error) {
             console.error("Failed to load entities:", error);
@@ -228,17 +247,111 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
         }
     };
 
-    // Export entities
+    // Toggle entity selection
+    const toggleEntitySelection = (entityId: string) => {
+        setSelectedEntities(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(entityId)) {
+                newSet.delete(entityId);
+            } else {
+                newSet.add(entityId);
+            }
+            return newSet;
+        });
+    };
+
+    // Toggle select all
+    const toggleSelectAll = () => {
+        if (isAllSelected) {
+            setSelectedEntities(new Set());
+            setIsAllSelected(false);
+        } else {
+            const allIds = new Set(entities.map(e => e.id));
+            setSelectedEntities(allIds);
+            setIsAllSelected(true);
+        }
+    };
+
+    // Update select all state when selection changes
+    useEffect(() => {
+        if (entities.length > 0) {
+            const allSelected = entities.every(e => selectedEntities.has(e.id));
+            setIsAllSelected(allSelected);
+        } else {
+            setIsAllSelected(false);
+        }
+    }, [selectedEntities, entities]);
+
+    // Handle bulk delete
+    const handleBulkDelete = () => {
+        if (selectedEntities.size === 0) return;
+        setDeleteType('page');
+        setDeleteConfirmText('');
+        setIsDeleteDialogOpen(true);
+    };
+
+    // Handle delete all
+    const handleDeleteAll = () => {
+        setDeleteType('all');
+        setDeleteConfirmText('');
+        setIsDeleteDialogOpen(true);
+    };
+
+    // Confirm and execute delete
+    const confirmDelete = async () => {
+        if (deleteType === 'all' && deleteConfirmText !== 'delete') {
+            showError('Please type "delete" to confirm');
+            return;
+        }
+
+        setIsDeleting(true);
+        try {
+            if (deleteType === 'all') {
+                const result = await graphApi.entityDictionary.deleteAll(datasetId);
+                success(`Deleted all ${result.deleted || 0} entities`);
+            } else {
+                const entityIds = Array.from(selectedEntities);
+                const result = await graphApi.entityDictionary.bulkDelete(datasetId, entityIds);
+                success(`Deleted ${result.deleted || entityIds.length} entities${result.failed ? ` (${result.failed} failed)` : ''}`);
+            }
+            setSelectedEntities(new Set());
+            setIsAllSelected(false);
+            setIsDeleteDialogOpen(false);
+            setDeleteConfirmText('');
+            loadEntities();
+            loadStatistics();
+        } catch (error) {
+            console.error("Failed to delete entities:", error);
+            showError("Failed to delete entities");
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
+    // Export entities with current filters
     const handleExportEntities = async () => {
         try {
-            const response = await graphApi.entityDictionary.exportEntities(datasetId);
+            const filters = {
+                entityType: entityTypeFilter !== 'ALL' ? entityTypeFilter : undefined,
+                searchTerm: searchTerm || undefined,
+                source: sourceFilter !== 'ALL' ? sourceFilter : undefined,
+            };
+
+            const response = await graphApi.entityDictionary.exportEntities(datasetId, filters);
             const blob = new Blob([JSON.stringify(response, null, 2)], {
                 type: "application/json",
             });
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = `entities-${datasetId}.json`;
+
+            // Generate filename with filter info
+            const filterParts: string[] = [];
+            if (filters.entityType) filterParts.push(filters.entityType);
+            if (filters.source) filterParts.push(filters.source);
+            const filterSuffix = filterParts.length > 0 ? `-${filterParts.join('-')}` : '';
+            a.download = `entities${filterSuffix}-${new Date().toISOString().split('T')[0]}.json`;
+
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -250,49 +363,6 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
         }
     };
 
-    // Auto-discover entities
-    const handleAutoDiscover = async () => {
-        try {
-            setLoading(true);
-            console.log("Starting auto-discovery for dataset:", datasetId);
-            const result = await graphApi.entityDictionary.autoDiscover(datasetId);
-            console.log("Auto-discovery result:", result);
-
-            success("Auto-discovery completed");
-
-            loadEntities();
-            loadStatistics();
-        } catch (error: unknown) {
-            console.error("Failed to auto-discover entities:", error);
-
-            // Check if it's a 404 error (endpoint not found)
-            if (error && typeof error === 'object' && 'response' in error &&
-                error.response && typeof error.response === 'object' && 'status' in error.response &&
-                error.response.status === 404) {
-                showError("Auto-discovery feature is not available yet. Please try again later.");
-            } else {
-                showError("Failed to auto-discover entities");
-            }
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // Discover aliases
-    const handleDiscoverAliases = async () => {
-        try {
-            setLoading(true);
-            await graphApi.entityDictionary.discoverAliases(datasetId);
-            success("Alias discovery completed");
-            loadEntities();
-            loadStatistics();
-        } catch (error) {
-            console.error("Failed to discover aliases:", error);
-            showError("Failed to discover aliases");
-        } finally {
-            setLoading(false);
-        }
-    };
 
     // Reset form
     const resetForm = () => {
@@ -378,25 +448,29 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
                 <div>
                     <h2 className="text-2xl font-bold">Entity Dictionary</h2>
                     <p className="text-muted-foreground">
-                        Manage predefined entities for improved graph extraction quality
+                        Manage entities for improved graph extraction quality
                     </p>
                 </div>
                 <div className="flex items-center gap-2">
                     <Button
                         variant="outline"
-                        onClick={handleAutoDiscover}
-                        disabled={loading}
+                        onClick={() => setShowGenerateEntityModal(true)}
                     >
-                        <RefreshCw className="h-4 w-4 mr-2" />
-                        Auto-Discover
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Generate Entity
                     </Button>
                     <Button
                         variant="outline"
-                        onClick={handleDiscoverAliases}
-                        disabled={loading}
+                        onClick={() => setShowDiscoveryModal(true)}
                     >
-                        <Lightbulb className="h-4 w-4 mr-2" />
-                        Discover Aliases
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Discover
+                    </Button>
+                    <Button
+                        variant="outline"
+                        onClick={() => setShowDuplicatesModal(true)}
+                    >
+                        Find Duplicates
                     </Button>
                     <Button onClick={() => setIsCreateDialogOpen(true)}>
                         <Plus className="h-4 w-4 mr-2" />
@@ -497,6 +571,48 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
                 </Button>
             </div>
 
+            {/* Bulk Actions Bar */}
+            {selectedEntities.size > 0 && (
+                <Card className="bg-blue-50 border-blue-200">
+                    <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                                <span className="text-sm font-medium">
+                                    {selectedEntities.size} selected
+                                </span>
+                                <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={handleBulkDelete}
+                                >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    Delete this page ({selectedEntities.size})
+                                </Button>
+                                <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={handleDeleteAll}
+                                >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    Delete all ({totalEntities})
+                                </Button>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                    setSelectedEntities(new Set());
+                                    setIsAllSelected(false);
+                                }}
+                            >
+                                <X className="h-4 w-4 mr-2" />
+                                Clear selection
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
             {/* Entities Table */}
             <Card>
                 <CardContent className="p-0">
@@ -504,6 +620,12 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className="w-[50px]">
+                                        <Checkbox
+                                            checked={isAllSelected}
+                                            onCheckedChange={toggleSelectAll}
+                                        />
+                                    </TableHead>
                                     <TableHead className="min-w-[200px]">Name</TableHead>
                                     <TableHead className="w-[100px]">Type</TableHead>
                                     <TableHead className="w-[120px]">Source</TableHead>
@@ -516,7 +638,7 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
                             <TableBody>
                                 {loading ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="text-center py-8">
+                                        <TableCell colSpan={8} className="text-center py-8">
                                             <div className="flex items-center justify-center">
                                                 <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
                                                 Loading...
@@ -525,7 +647,7 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
                                     </TableRow>
                                 ) : entities.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                                             No entities found
                                         </TableCell>
                                     </TableRow>
@@ -533,15 +655,14 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
                                     entities.map((entity) => (
                                         <TableRow key={entity.id}>
                                             <TableCell>
-                                                <div className="min-w-0">
-                                                    <div className="font-medium truncate" title={entity.canonicalName}>
-                                                        {entity.canonicalName}
-                                                    </div>
-                                                    {entity.metadata?.description && (
-                                                        <div className="text-sm text-muted-foreground truncate" title={entity.metadata.description}>
-                                                            {entity.metadata.description}
-                                                        </div>
-                                                    )}
+                                                <Checkbox
+                                                    checked={selectedEntities.has(entity.id)}
+                                                    onCheckedChange={() => toggleEntitySelection(entity.id)}
+                                                />
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="font-medium truncate" title={entity.canonicalName}>
+                                                    {entity.canonicalName}
                                                 </div>
                                             </TableCell>
                                             <TableCell>
@@ -660,13 +781,72 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
                 </div>
             )}
 
+            {/* Delete Confirmation Dialog */}
+            <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>
+                            {deleteType === 'all' ? 'Delete All Entities' : 'Delete Selected Entities'}
+                        </DialogTitle>
+                        <DialogDescription>
+                            {deleteType === 'all'
+                                ? `This will permanently delete all ${totalEntities} entities. This action cannot be undone.`
+                                : `This will permanently delete ${selectedEntities.size} selected entities. This action cannot be undone.`}
+                        </DialogDescription>
+                    </DialogHeader>
+                    {deleteType === 'all' && (
+                        <div className="space-y-2">
+                            <Label htmlFor="deleteConfirm">
+                                Type "delete" to confirm:
+                            </Label>
+                            <Input
+                                id="deleteConfirm"
+                                value={deleteConfirmText}
+                                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                                placeholder="Type 'delete' to confirm"
+                                className="font-mono"
+                            />
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                setIsDeleteDialogOpen(false);
+                                setDeleteConfirmText('');
+                            }}
+                            disabled={isDeleting}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            onClick={confirmDelete}
+                            disabled={isDeleting || (deleteType === 'all' && deleteConfirmText !== 'delete')}
+                        >
+                            {isDeleting ? (
+                                <>
+                                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                                    Deleting...
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    {deleteType === 'all' ? 'Delete All' : 'Delete Selected'}
+                                </>
+                            )}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {/* Create Entity Dialog */}
             <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
                 <DialogContent className="max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Create Entity</DialogTitle>
                         <DialogDescription>
-                            Add a new predefined entity to the dictionary
+                            Add a new entity to the dictionary
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
@@ -966,6 +1146,67 @@ export function EntityDictionaryManager({ datasetId }: EntityDictionaryManagerPr
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* Generate Entity Modal */}
+            {showGenerateEntityModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between p-6 border-b">
+                            <h2 className="text-xl font-semibold">Generate Entity</h2>
+                            <Button variant="ghost" size="sm" onClick={() => setShowGenerateEntityModal(false)}>
+                                <X className="h-4 w-4" />
+                            </Button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-6">
+                            <EntityGenerator
+                                datasetId={datasetId}
+                                onEntitiesCreated={() => {
+                                    loadEntities();
+                                    loadStatistics();
+                                    setShowGenerateEntityModal(false);
+                                }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Discovery Modal */}
+            {showDiscoveryModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between p-6 border-b">
+                            <h2 className="text-xl font-semibold">Discover Entities</h2>
+                            <Button variant="ghost" size="sm" onClick={() => setShowDiscoveryModal(false)}>
+                                <X className="h-4 w-4" />
+                            </Button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-6">
+                            <EntityDiscovery
+                                datasetId={datasetId}
+                                onEntitiesCreated={() => {
+                                    loadEntities();
+                                    loadStatistics();
+                                    setShowDiscoveryModal(false);
+                                }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Duplicate Entities Modal */}
+            <DuplicateEntitiesModal
+                datasetId={datasetId}
+                isOpen={showDuplicatesModal}
+                onClose={() => setShowDuplicatesModal(false)}
+                onMergeComplete={(result) => {
+                    success('Merge Complete', `Merged ${result.merged} entities`);
+                    loadEntities();
+                    loadStatistics();
+                    setShowDuplicatesModal(false);
+                }}
+            />
         </div>
     );
 }

@@ -105,7 +105,7 @@ export class StepAutoLoaderService {
           continue;
         }
 
-        this.stepRegistry.registerStep(stepInstance as BaseStep);
+        this.stepRegistry.registerStep(stepInstance);
         registeredCount++;
         this.logger.log(`✓ Registered step: ${StepClass.name}`);
       } catch (error) {

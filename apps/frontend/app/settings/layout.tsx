@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { Bot, FileText, Settings, Menu, X, Network, Key } from 'lucide-react'
+import { Bot, FileText, Settings, Menu, X, Network, Key, CheckCircle2 } from 'lucide-react'
 import { Navbar } from '@/components/navbar'
 import { AuthGuard } from '@/components/auth-guard'
 
@@ -31,6 +31,11 @@ const menuItems = [
         href: '/settings/graph-settings',
         label: 'Graph Settings',
         icon: Network,
+    },
+    {
+        href: '/settings/post-settings',
+        label: 'Post Settings',
+        icon: CheckCircle2,
     },
     {
         href: '/settings/api-keys',

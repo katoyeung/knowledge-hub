@@ -203,3 +203,43 @@ export function useGraphExtractionNotifications() {
     getLatestGraphExtractionStatus,
   };
 }
+
+// Hook for post approval notifications
+export function usePostApprovalNotifications() {
+  const { notifications } = useNotifications();
+
+  const getPostApprovalNotifications = useCallback(
+    (postId?: string) => {
+      return notifications.filter((notification) => {
+        if (
+          notification.type === "POST_APPROVAL_COMPLETED" ||
+          notification.type === "POST_APPROVAL_FAILED"
+        ) {
+          if (postId) {
+            return notification.data.postId === postId;
+          }
+          return true;
+        }
+        return false;
+      });
+    },
+    [notifications]
+  );
+
+  const getLatestPostApprovalStatus = useCallback(
+    (postId: string) => {
+      const postNotifications = getPostApprovalNotifications(postId);
+      if (postNotifications.length === 0) return null;
+
+      const latest = postNotifications[postNotifications.length - 1];
+      return latest.data;
+    },
+    [getPostApprovalNotifications]
+  );
+
+  return {
+    postApprovalNotifications: getPostApprovalNotifications(),
+    getPostApprovalNotifications,
+    getLatestPostApprovalStatus,
+  };
+}

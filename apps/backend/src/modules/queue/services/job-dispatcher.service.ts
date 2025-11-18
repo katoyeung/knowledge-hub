@@ -14,14 +14,18 @@ export class JobDispatcherService {
     options?: JobOptions,
   ): Promise<void> {
     this.logger.log(`[JOB_DISPATCHER] Dispatching job of type: ${type}`);
+    this.logger.log(`[JOB_DISPATCHER] Job data: ${JSON.stringify(data)}`);
+    this.logger.log(
+      `[JOB_DISPATCHER] Job options: ${JSON.stringify(options || {})}`,
+    );
     try {
-      await this.queueManager.addJob({
+      const jobId = await this.queueManager.addJob({
         type,
         data,
         options,
       });
       this.logger.log(
-        `[JOB_DISPATCHER] Successfully dispatched job of type: ${type}`,
+        `[JOB_DISPATCHER] Successfully dispatched job of type: ${type}, job ID: ${jobId}`,
       );
     } catch (error) {
       this.logger.error(

@@ -15,8 +15,8 @@ describe('Dataset Posts Source E2E Tests', () => {
   let jwtToken: string;
   let userId: string;
   let datasetId: string;
-  let createdPostIds: string[] = [];
-  let createdDocumentIds: string[] = [];
+  const createdPostIds: string[] = [];
+  const createdDocumentIds: string[] = [];
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({

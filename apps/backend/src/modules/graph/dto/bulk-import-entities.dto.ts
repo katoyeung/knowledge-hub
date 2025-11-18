@@ -6,8 +6,14 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { CreateAliasDto } from './create-entity.dto';
 
 export class BulkImportEntityDto {
+  @IsOptional()
+  @IsString()
+  // Note: Using IsString instead of IsUrl to support URI references like "wikidata:Q123"
+  entityId?: string;
+
   @IsString()
   entityType: string;
 
@@ -29,12 +35,24 @@ export class BulkImportEntityDto {
 
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  aliases?: string[];
+  @ValidateNested({ each: true })
+  @Type(() => CreateAliasDto)
+  aliases?: CreateAliasDto[];
 
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
+
+  @IsOptional()
+  @IsObject()
+  equivalentEntities?: Record<string, string>;
+
+  @IsOptional()
+  @IsObject()
+  provenance?: {
+    sources?: string[];
+    dataProvider?: string;
+  };
 }
 
 export class BulkImportEntitiesDto {

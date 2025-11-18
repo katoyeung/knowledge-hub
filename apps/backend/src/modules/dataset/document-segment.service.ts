@@ -166,6 +166,66 @@ export class DocumentSegmentService extends TypeOrmCrudService<DocumentSegment> 
     });
   }
 
+  async findByDatasetIdWithFilters(
+    datasetId: string,
+    page: number = 1,
+    limit: number = 20,
+    search?: string,
+    hasGraphData?: 'true' | 'false' | 'all',
+  ): Promise<{
+    data: DocumentSegment[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> {
+    // Build base query with search filter
+    let query = this.segmentRepository
+      .createQueryBuilder('segment')
+      .where('segment.dataset_id = :datasetId', { datasetId });
+
+    if (search && search.trim()) {
+      query = query.andWhere('segment.content LIKE :search', {
+        search: `%${search.trim()}%`,
+      });
+    }
+
+    // If filtering by graph data, use subquery to check for graph nodes
+    if (hasGraphData && hasGraphData !== 'all') {
+      if (hasGraphData === 'true') {
+        // Segments WITH graph data (has at least one node)
+        query = query.andWhere(
+          `EXISTS (SELECT 1 FROM graph_nodes WHERE graph_nodes.segment_id = segment.id)`,
+        );
+      } else {
+        // Segments WITHOUT graph data (no nodes)
+        query = query.andWhere(
+          `NOT EXISTS (SELECT 1 FROM graph_nodes WHERE graph_nodes.segment_id = segment.id)`,
+        );
+      }
+    }
+
+    // Get total count (before pagination)
+    const total = await query.getCount();
+
+    // Apply pagination
+    const skip = (page - 1) * limit;
+    query = query.orderBy('segment.position', 'ASC').skip(skip).take(limit);
+
+    // Execute query and get results
+    const segments = await query.getMany();
+
+    const pageCount = Math.ceil(total / limit);
+
+    return {
+      data: segments,
+      count: segments.length,
+      total,
+      page,
+      pageCount,
+    };
+  }
+
   async toggleStatus(id: string): Promise<DocumentSegment> {
     const segment = await this.segmentRepository.findOne({
       where: { id },

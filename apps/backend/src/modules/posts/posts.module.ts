@@ -6,6 +6,8 @@ import { CacheModule } from '@nestjs/cache-manager';
 import { Post } from './entities/post.entity';
 import { PostsService } from './posts.service';
 import { PostsController } from './posts.controller';
+import { PostsJobsModule } from '@modules/queue/jobs/posts/posts-jobs.module';
+import { UserModule } from '@modules/user/user.module';
 
 @Module({
   imports: [
@@ -13,6 +15,8 @@ import { PostsController } from './posts.controller';
     HttpModule,
     ConfigModule,
     CacheModule.register(),
+    PostsJobsModule,
+    UserModule,
   ],
   providers: [PostsService],
   exports: [PostsService, TypeOrmModule],

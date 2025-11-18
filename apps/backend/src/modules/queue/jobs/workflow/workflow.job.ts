@@ -11,6 +11,7 @@ import { EventBusService } from '../../../event/services/event-bus.service';
 import { EventTypes } from '../../../event/constants/event-types';
 import { NotificationService } from '../../../notification/notification.service';
 import { BaseJob } from '../base/base.job';
+import { RegisterJob } from '../../decorators/register-job.decorator';
 import { JobDispatcherService } from '../../services/job-dispatcher.service';
 
 export interface WorkflowJobData {
@@ -30,10 +31,9 @@ export interface WorkflowJobData {
   triggerData?: Record<string, any>;
 }
 
+@RegisterJob('workflow')
 @Injectable()
 export class WorkflowJob extends BaseJob<WorkflowJobData> {
-  protected static readonly jobType = 'workflow';
-
   constructor(
     @InjectRepository(WorkflowExecution)
     private readonly executionRepository: Repository<WorkflowExecution>,

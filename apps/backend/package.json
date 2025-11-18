@@ -37,7 +37,12 @@
     "test:embedding:coverage": "jest --testPathPattern=embedding-test --coverage",
     "test:comprehensive": "jest --config ./test/jest-e2e-comprehensive.json",
     "test:comprehensive:watch": "jest --config ./test/jest-e2e-comprehensive.json --watch",
-    "test:comprehensive:debug": "jest --config ./test/jest-e2e-comprehensive.json --runInBand --detectOpenHandles"
+    "test:comprehensive:debug": "jest --config ./test/jest-e2e-comprehensive.json --runInBand --detectOpenHandles",
+    "test:llm-processing": "jest --testPathPattern=llm-processing",
+    "test:llm-processing:unit": "jest --testPathPattern=llm-processing.*\\.spec\\.ts --testPathIgnorePatterns=e2e-spec",
+    "test:llm-processing:e2e": "jest --config ./test/jest-e2e.json --testPathPattern=generic-llm-processing-job.e2e-spec",
+    "test:llm-processing:watch": "jest --testPathPattern=llm-processing --watch",
+    "test:llm-processing:coverage": "jest --testPathPattern=llm-processing --coverage"
   },
   "dependencies": {
     "@casl/ability": "^6.7.3",

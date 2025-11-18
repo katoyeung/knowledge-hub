@@ -47,8 +47,8 @@ export class User extends BaseEntity {
   @OneToMany('GraphEdge', 'user')
   graphEdges: any[];
 
-  @OneToMany('PredefinedEntity', 'user')
-  predefinedEntities: any[];
+  @OneToMany('GraphEntity', 'user')
+  entities: any[];
 
   // User settings
   @Column('jsonb', { nullable: true, default: {} })

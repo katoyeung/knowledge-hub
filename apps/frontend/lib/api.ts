@@ -875,6 +875,25 @@ export const documentSegmentApi = {
       .get(`/document-segments/dataset/${datasetId}`)
       .then((res) => res.data),
 
+  getByDatasetWithFilters: (
+    datasetId: string,
+    params?: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      hasGraphData?: "true" | "false" | "all";
+    }
+  ): Promise<{
+    data: DocumentSegment[];
+    count: number;
+    total: number;
+    page: number;
+    pageCount: number;
+  }> =>
+    apiClient
+      .get(`/document-segments/dataset/${datasetId}/filtered`, { params })
+      .then((res) => res.data),
+
   create: (data: Partial<DocumentSegment>): Promise<DocumentSegment> =>
     apiClient.post("/document-segments", data).then((res) => res.data),
 
@@ -1135,11 +1154,46 @@ export const aiProviderApi = {
     const response = await apiClient.post(`/documents/${documentId}/resume`);
     return response.data;
   },
+
+  // Chat completion
+  chatCompletion: async (
+    providerId: string,
+    data: {
+      messages: Array<{
+        role: "system" | "user" | "assistant";
+        content: string;
+      }>;
+      model: string;
+      jsonSchema?: object;
+      temperature?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    data: {
+      choices: Array<{
+        message: {
+          content: string;
+        };
+      }>;
+      usage?: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+      };
+    };
+    status: number;
+  }> => {
+    const response = await apiClient.post(
+      `/ai-providers/${providerId}/chat-completion`,
+      data
+    );
+    return response.data;
+  },
 };
 
 // Prompt API functions
 export const promptApi = {
-  // Get all prompts
+  // Get all prompts from backend prompt module
   getAll: async (params?: {
     page?: number;
     limit?: number;
@@ -1155,17 +1209,46 @@ export const promptApi = {
     const response = await apiClient.get("/prompts", { params });
 
     // Handle both direct array response and paginated response
+    // The backend CRUD framework may return either:
+    // 1. Direct array: [prompt1, prompt2, ...]
+    // 2. Paginated object: { data: [...], count: X, total: Y, page: Z, pageCount: W }
     if (Array.isArray(response.data)) {
-      return {
+      // Direct array response
+      const result = {
         data: response.data,
         count: response.data.length,
         total: response.data.length,
         page: 1,
         pageCount: 1,
       };
+      return result;
     }
 
-    return response.data;
+    // Paginated response - check if it has a data property
+    if (
+      response.data &&
+      typeof response.data === "object" &&
+      "data" in response.data
+    ) {
+      // Already in paginated format
+      const result = response.data;
+      return result;
+    }
+
+    // Fallback: wrap any other response format
+    console.warn(
+      "[promptApi.getAll] Unexpected response format, wrapping as array"
+    );
+    const data = Array.isArray(response.data)
+      ? response.data
+      : response.data?.data || [];
+    return {
+      data: data,
+      count: data.length,
+      total: data.length,
+      page: 1,
+      pageCount: 1,
+    };
   },
 
   // Search prompts with pagination
@@ -1527,6 +1610,28 @@ export const userApi = {
 
   getUserGraphSettings: async (userId: string): Promise<any> => {
     const response = await apiClient.get(`/users/${userId}/graph-settings`);
+    return response.data;
+  },
+
+  // User post settings methods
+  updateUserPostSettings: async (
+    userId: string,
+    postSettings: {
+      aiProviderId?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
+    }
+  ): Promise<any> => {
+    const response = await apiClient.put(
+      `/users/${userId}/post-settings`,
+      postSettings
+    );
+    return response.data;
+  },
+
+  getUserPostSettings: async (userId: string): Promise<any> => {
+    const response = await apiClient.get(`/users/${userId}/post-settings`);
     return response.data;
   },
 };
@@ -1936,6 +2041,88 @@ export const graphApi = {
     return response.data.data;
   },
 
+  // Create a single node
+  createNode: async (
+    datasetId: string,
+    nodeData: {
+      nodeType: string;
+      label: string;
+      documentId?: string;
+      segmentId?: string;
+      properties?: Record<string, any>;
+    }
+  ): Promise<GraphNode> => {
+    const response = await apiClient.post(
+      `/graph/datasets/${datasetId}/nodes`,
+      {
+        ...nodeData,
+        datasetId,
+      }
+    );
+    return response.data.data;
+  },
+
+  // Create multiple nodes
+  createNodes: async (
+    datasetId: string,
+    nodesData: Array<{
+      nodeType: string;
+      label: string;
+      documentId?: string;
+      segmentId?: string;
+      properties?: Record<string, any>;
+    }>
+  ): Promise<{ data: GraphNode[]; count: number }> => {
+    const response = await apiClient.post(
+      `/graph/datasets/${datasetId}/nodes/batch`,
+      {
+        nodes: nodesData.map((node) => ({ ...node, datasetId })),
+      }
+    );
+    return response.data;
+  },
+
+  // Create a single edge
+  createEdge: async (
+    datasetId: string,
+    edgeData: {
+      sourceNodeId: string;
+      targetNodeId: string;
+      edgeType: string;
+      weight?: number;
+      properties?: Record<string, any>;
+    }
+  ): Promise<GraphEdge> => {
+    const response = await apiClient.post(
+      `/graph/datasets/${datasetId}/edges`,
+      {
+        ...edgeData,
+        datasetId,
+      }
+    );
+    return response.data.data;
+  },
+
+  // Create multiple edges
+  createEdges: async (
+    datasetId: string,
+    edgesData: Array<{
+      sourceNodeId: string;
+      targetNodeId: string;
+      edgeType: string;
+      weight?: number;
+      properties?: Record<string, any>;
+    }>
+  ): Promise<{ data: GraphEdge[]; count: number }> => {
+    const response = await apiClient.post(
+      `/graph/datasets/${datasetId}/edges/batch`,
+      {
+        edges: edgesData.map((edge) => ({ ...edge, datasetId })),
+      }
+    );
+    return response.data;
+  },
+
   // Find shortest path between nodes
   getShortestPath: async (
     datasetId: string,
@@ -2062,26 +2249,23 @@ export const graphApi = {
         offset?: number;
       }
     ) => {
-      const response = await apiClient.get(
-        `/graph/datasets/${datasetId}/entities`,
-        { params }
-      );
+      // Note: Entities are global (user-scoped), not dataset-specific
+      // datasetId parameter is kept for API consistency but not used in the endpoint
+      const response = await apiClient.get(`/graph/entities`, { params });
       return response.data;
     },
 
     // Get entity statistics
-    getStatistics: async (datasetId: string) => {
-      const response = await apiClient.get(
-        `/graph/datasets/${datasetId}/entities/statistics`
-      );
+    getStatistics: async (_datasetId: string) => {
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const response = await apiClient.get(`/graph/entities/statistics`);
       return response.data;
     },
 
     // Get entity suggestions
-    getSuggestions: async (datasetId: string) => {
-      const response = await apiClient.get(
-        `/graph/datasets/${datasetId}/entities/suggestions`
-      );
+    getSuggestions: async (_datasetId: string) => {
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const response = await apiClient.get(`/graph/entities/suggestions`);
       return response.data;
     },
 
@@ -2097,10 +2281,8 @@ export const graphApi = {
         aliases?: string[];
       }
     ) => {
-      const response = await apiClient.post(
-        `/graph/datasets/${datasetId}/entities`,
-        data
-      );
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const response = await apiClient.post(`/graph/entities`, data);
       return response.data;
     },
 
@@ -2117,18 +2299,31 @@ export const graphApi = {
         aliases?: string[];
       }
     ) => {
-      const response = await apiClient.put(
-        `/graph/datasets/${datasetId}/entities/${entityId}`,
-        data
-      );
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const response = await apiClient.put(`/graph/entities/${entityId}`, data);
       return response.data;
     },
 
     // Delete entity
-    deleteEntity: async (datasetId: string, entityId: string) => {
-      const response = await apiClient.delete(
-        `/graph/datasets/${datasetId}/entities/${entityId}`
-      );
+    deleteEntity: async (_datasetId: string, entityId: string) => {
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const response = await apiClient.delete(`/graph/entities/${entityId}`);
+      return response.data;
+    },
+
+    // Bulk delete entities
+    bulkDelete: async (_datasetId: string, entityIds: string[]) => {
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const response = await apiClient.delete(`/graph/entities/bulk`, {
+        data: { ids: entityIds },
+      });
+      return response.data;
+    },
+
+    // Delete all entities
+    deleteAll: async (_datasetId: string) => {
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const response = await apiClient.delete(`/graph/entities/all`);
       return response.data;
     },
 
@@ -2142,7 +2337,14 @@ export const graphApi = {
           description?: string;
           category?: string;
           tags?: string[];
-          aliases?: string[];
+          aliases?:
+            | Array<{
+                name: string;
+                language?: string;
+                script?: string;
+                type?: string;
+              }>
+            | string[];
           metadata?: any;
         }>;
         source?: string;
@@ -2153,34 +2355,59 @@ export const graphApi = {
         };
       }
     ) => {
+      // Convert string aliases to object format if needed
+      const processedData = {
+        ...data,
+        entities: data.entities.map((entity) => ({
+          ...entity,
+          aliases: entity.aliases?.map((alias) =>
+            typeof alias === "string" ? { name: alias } : alias
+          ),
+        })),
+      };
+      // Note: Entities are global (user-scoped), not dataset-specific
       const response = await apiClient.post(
-        `/graph/datasets/${datasetId}/entities/bulk-import`,
-        data
+        `/graph/entities/bulk-import`,
+        processedData
       );
       return response.data;
     },
 
     // Export entities
-    exportEntities: async (datasetId: string) => {
-      const response = await apiClient.get(
-        `/graph/datasets/${datasetId}/entities/export`
-      );
+    exportEntities: async (
+      _datasetId: string,
+      filters?: {
+        entityType?: string;
+        searchTerm?: string;
+        source?: string;
+        minConfidence?: number;
+      }
+    ) => {
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const params = new URLSearchParams();
+      if (filters?.entityType) params.append("entityType", filters.entityType);
+      if (filters?.searchTerm) params.append("searchTerm", filters.searchTerm);
+      if (filters?.source) params.append("source", filters.source);
+      if (filters?.minConfidence !== undefined)
+        params.append("minConfidence", filters.minConfidence.toString());
+
+      const queryString = params.toString();
+      const url = `/graph/entities/export${queryString ? `?${queryString}` : ""}`;
+      const response = await apiClient.get(url);
       return response.data;
     },
 
     // Auto-discover entities from existing graph
-    autoDiscover: async (datasetId: string) => {
-      const response = await apiClient.post(
-        `/graph/datasets/${datasetId}/entities/auto-discover`
-      );
+    autoDiscover: async (_datasetId: string) => {
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const response = await apiClient.post(`/graph/entities/auto-discover`);
       return response.data;
     },
 
     // Discover aliases
-    discoverAliases: async (datasetId: string) => {
-      const response = await apiClient.post(
-        `/graph/datasets/${datasetId}/entities/discover-aliases`
-      );
+    discoverAliases: async (_datasetId: string) => {
+      // Note: Entities are global (user-scoped), not dataset-specific
+      const response = await apiClient.post(`/graph/entities/discover-aliases`);
       return response.data;
     },
   },
@@ -2541,6 +2768,9 @@ export interface Post {
   postedAt?: string;
   createdAt: string;
   updatedAt: string;
+  status?: "pending" | "approved" | "rejected" | "review";
+  approvalReason?: string;
+  confidenceScore?: number | string;
   user?: {
     id: string;
     email: string;
@@ -2565,6 +2795,7 @@ export interface PostSearchParams {
   title?: string;
   metaKey?: string;
   metaValue?: string;
+  status?: "pending" | "approved" | "rejected" | "review";
   userId?: string;
   startDate?: string;
   endDate?: string;
@@ -2669,6 +2900,67 @@ export const postsApi = {
       {},
       {
         params,
+      }
+    );
+    return response.data;
+  },
+
+  // Post approval job functions
+  triggerApproval: async (
+    postId: string,
+    settings?: {
+      aiProviderId?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
+    }
+  ): Promise<{ success: boolean; message: string; postId: string }> => {
+    const response = await apiClient.post(
+      `/posts/${postId}/approve`,
+      settings || {}
+    );
+    return response.data;
+  },
+
+  batchTriggerApproval: async (
+    postIds: string[],
+    settings?: {
+      aiProviderId?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    message: string;
+    postIds: string[];
+    jobCount: number;
+  }> => {
+    const response = await apiClient.post("/posts/batch-approve", {
+      postIds,
+      ...settings,
+    });
+    return response.data;
+  },
+
+  approveAll: async (
+    settings?: {
+      aiProviderId?: string;
+      model?: string;
+      promptId?: string;
+      temperature?: number;
+    },
+    filters?: PostSearchParams
+  ): Promise<{
+    success: boolean;
+    message: string;
+    jobCount: number;
+  }> => {
+    const response = await apiClient.post(
+      "/posts/approve-all",
+      settings || {},
+      {
+        params: filters,
       }
     );
     return response.data;

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronDown, LogOut, Settings, Bot, FileText, Workflow, Key, Newspaper } from 'lucide-react'
+import { ChevronDown, LogOut, Settings, Bot, FileText, Workflow, Key, Newspaper, Sparkles, Network, CheckCircle2 } from 'lucide-react'
 import { authUtil } from '@/lib/auth'
 import type { AuthUser } from '@knowledge-hub/shared-types'
 
@@ -63,6 +63,13 @@ export function Navbar({ onLogout }: NavbarProps) {
                 {/* Center - Main navigation */}
                 <div className="flex items-center space-x-6">
                     <Link
+                        href="/playground"
+                        className="flex items-center space-x-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+                    >
+                        <Sparkles className="w-5 h-5 text-gray-600" />
+                        <span className="text-sm font-medium text-gray-700">Playground</span>
+                    </Link>
+                    <Link
                         href="/workflows"
                         className="flex items-center space-x-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
                     >
@@ -115,6 +122,20 @@ export function Navbar({ onLogout }: NavbarProps) {
                                     >
                                         <Settings className="w-4 h-4 mr-3" />
                                         Chat Settings
+                                    </button>
+                                    <button
+                                        onClick={() => handleSettingsClick('/settings/graph-settings')}
+                                        className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    >
+                                        <Network className="w-4 h-4 mr-3" />
+                                        Graph Settings
+                                    </button>
+                                    <button
+                                        onClick={() => handleSettingsClick('/settings/post-settings')}
+                                        className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    >
+                                        <CheckCircle2 className="w-4 h-4 mr-3" />
+                                        Post Settings
                                     </button>
                                     <button
                                         onClick={() => handleSettingsClick('/settings/api-keys')}

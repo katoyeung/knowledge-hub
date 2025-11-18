@@ -2,14 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BaseJob } from '../base/base.job';
+import { RegisterJob } from '../../decorators/register-job.decorator';
 import { Document } from '../../../dataset/entities/document.entity';
 import { DocumentSegment } from '../../../dataset/entities/document-segment.entity';
 import { EventBusService } from '../../../event/services/event-bus.service';
-import { EventTypes } from '../../../event/constants/event-types';
 import { NotificationService } from '../../../notification/notification.service';
 import { GraphExtractionService } from '../../../graph/services/graph-extraction.service';
 import { CreateGraphExtractionConfigDto } from '../../../graph/dto/create-graph-extraction-config.dto';
-import { JobRegistryService } from '../../services/job-registry.service';
 import { JobDispatcherService } from '../../services/job-dispatcher.service';
 
 export interface GraphExtractionJobData {
@@ -20,10 +19,10 @@ export interface GraphExtractionJobData {
   userId: string;
 }
 
+@RegisterJob('graph-extraction')
 @Injectable()
 export class GraphExtractionJob extends BaseJob<GraphExtractionJobData> {
   protected readonly logger = new Logger(GraphExtractionJob.name);
-  static readonly jobType = 'graph-extraction';
 
   constructor(
     @InjectRepository(Document)
@@ -49,7 +48,6 @@ export class GraphExtractionJob extends BaseJob<GraphExtractionJobData> {
     this.logger.log(
       `🚀 [GRAPH_EXTRACTION] Starting graph extraction for document ${documentId}`,
     );
-    this.logger.debug(`Job data: ${JSON.stringify(data, null, 2)}`);
 
     try {
       // Update document status to graph_extraction_processing
@@ -154,6 +152,7 @@ export class GraphExtractionJob extends BaseJob<GraphExtractionJobData> {
           nodesCreated: result.nodesCreated,
           edgesCreated: result.edgesCreated,
           segmentsProcessed: segmentsToProcess.length,
+          segmentIds: segmentsToProcess, // Include segment IDs so frontend knows which segments to update
         },
       );
 

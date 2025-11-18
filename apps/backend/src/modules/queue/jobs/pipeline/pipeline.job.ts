@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { BaseJob } from '../base/base.job';
+import { RegisterJob } from '../../decorators/register-job.decorator';
 import { PipelineConfig } from '../../../pipeline/entities/pipeline-config.entity';
 import { PipelineExecution } from '../../../pipeline/entities/pipeline-execution.entity';
 import { DocumentSegment } from '../../../dataset/entities/document-segment.entity';
@@ -27,10 +29,10 @@ export interface PipelineJobData {
   triggerData?: Record<string, any>;
 }
 
+@RegisterJob('pipeline')
 @Injectable()
-export class PipelineJob {
+export class PipelineJob extends BaseJob<PipelineJobData> {
   protected readonly logger = new Logger(PipelineJob.name);
-  static readonly jobType = 'pipeline';
 
   constructor(
     @InjectRepository(PipelineConfig)
@@ -43,7 +45,9 @@ export class PipelineJob {
     private readonly notificationService: NotificationService,
     protected readonly jobDispatcher: JobDispatcherService,
     protected readonly eventBus: EventBusService,
-  ) {}
+  ) {
+    super(eventBus, jobDispatcher);
+  }
 
   async process(data: PipelineJobData): Promise<void> {
     const {

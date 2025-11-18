@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { BaseJob } from '../base/base.job';
+import { RegisterJob } from '../../decorators/register-job.decorator';
 import { Document } from '../../../dataset/entities/document.entity';
 import { DocumentSegment } from '../../../dataset/entities/document-segment.entity';
 import { Embedding } from '../../../dataset/entities/embedding.entity';
@@ -32,10 +33,10 @@ export interface EmbeddingJobData {
   segmentIds?: string[];
 }
 
+@RegisterJob('embedding')
 @Injectable()
 export class EmbeddingJob extends BaseJob<EmbeddingJobData> {
   protected readonly logger = new Logger(EmbeddingJob.name);
-  static readonly jobType = 'embedding';
 
   constructor(
     @InjectRepository(Document)

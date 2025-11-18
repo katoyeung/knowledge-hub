@@ -15,6 +15,9 @@ import { GraphPromptSelectorService } from './graph-prompt-selector.service';
 import { HybridExtractionService } from './hybrid-extraction.service';
 import { EntityNormalizationService } from './entity-normalization.service';
 import { EntityLearningService } from './entity-learning.service';
+import { EntityDictionaryService } from './entity-dictionary.service';
+import { EntitySource } from '../entities/graph-entity.entity';
+import { LLMExtractionService } from '@common/services/llm-extraction.service';
 
 interface ExtractedNode {
   type: NodeType;
@@ -76,6 +79,8 @@ export class GraphExtractionService {
     private readonly hybridExtractionService: HybridExtractionService,
     private readonly entityNormalizationService: EntityNormalizationService,
     private readonly entityLearningService: EntityLearningService,
+    private readonly entityDictionaryService: EntityDictionaryService,
+    private readonly llmExtractionService: LLMExtractionService,
   ) {}
 
   async extractFromSegments(
@@ -89,57 +94,68 @@ export class GraphExtractionService {
       `🚀 Starting graph extraction for ${segmentIds.length} segments`,
     );
 
-    // Resolve settings - always load dataset settings and merge with provided config
+    // Resolve settings - prioritize provided config, then fall back to dataset settings
     let resolvedConfig: CreateGraphExtractionConfigDto;
 
-    // Always try to load dataset graph settings first
-    const dataset = await this.datasetRepository.findOne({
-      where: { id: datasetId },
-      select: ['settings'],
-    });
+    // Check if provided config has required fields
+    const hasRequiredConfig = config?.aiProviderId && config?.model;
 
-    this.logger.debug(
-      `Dataset settings: ${JSON.stringify(dataset?.settings, null, 2)}`,
-    );
-
-    if (dataset?.settings?.graph_settings) {
-      // Validate required fields
-      if (!dataset.settings.graph_settings.aiProviderId) {
-        throw new Error('AI Provider ID is required in dataset graph settings');
-      }
-      if (!dataset.settings.graph_settings.model) {
-        throw new Error('Model is required in dataset graph settings');
-      }
-
+    if (hasRequiredConfig) {
+      // Use provided config as base
       resolvedConfig = {
-        aiProviderId: dataset.settings.graph_settings.aiProviderId,
-        model: dataset.settings.graph_settings.model,
-        promptId: dataset.settings.graph_settings.promptId,
-        temperature: dataset.settings.graph_settings.temperature || 0.7,
-        enableDeduplication: true,
-        batchSize: 1,
-        confidenceThreshold: 0.5,
+        aiProviderId: config.aiProviderId,
+        model: config.model,
+        promptId: config.promptId,
+        temperature: config.temperature || 0.7,
+        enableDeduplication: config.enableDeduplication ?? true,
+        batchSize: config.batchSize || 1,
+        confidenceThreshold: config.confidenceThreshold || 0.5,
+        ...config,
       };
       this.logger.log(
-        `🔍 Using dataset graph settings: ${JSON.stringify(resolvedConfig, null, 2)}`,
+        `🔍 Using provided config: ${JSON.stringify(resolvedConfig, null, 2)}`,
       );
     } else {
-      throw new Error(
-        'Dataset graph settings not found. Please configure AI provider and model in dataset settings.',
-      );
-    }
+      // Fall back to dataset graph settings
+      const dataset = await this.datasetRepository.findOne({
+        where: { id: datasetId },
+        select: ['settings'],
+      });
 
-    // Merge with provided config if any
-    if (config) {
-      resolvedConfig = { ...resolvedConfig, ...config };
-      this.logger.debug(
-        `Merged with provided config: ${JSON.stringify(resolvedConfig, null, 2)}`,
-      );
-    }
+      if (dataset?.settings?.graph_settings) {
+        // Validate required fields
+        if (!dataset.settings.graph_settings.aiProviderId) {
+          throw new Error(
+            'AI Provider ID is required in dataset graph settings',
+          );
+        }
+        if (!dataset.settings.graph_settings.model) {
+          throw new Error('Model is required in dataset graph settings');
+        }
 
-    this.logger.debug(
-      `DatasetId: ${datasetId}, DocumentId: ${documentId}, UserId: ${userId}`,
-    );
+        resolvedConfig = {
+          aiProviderId: dataset.settings.graph_settings.aiProviderId,
+          model: dataset.settings.graph_settings.model,
+          promptId: dataset.settings.graph_settings.promptId,
+          temperature: dataset.settings.graph_settings.temperature || 0.7,
+          enableDeduplication: true,
+          batchSize: 1,
+          confidenceThreshold: 0.5,
+        };
+        this.logger.log(
+          `🔍 Using dataset graph settings: ${JSON.stringify(resolvedConfig, null, 2)}`,
+        );
+      } else {
+        throw new Error(
+          'Dataset graph settings not found. Please configure AI provider and model in dataset settings or provide them in the request.',
+        );
+      }
+
+      // Merge with provided config if any (to override defaults)
+      if (config) {
+        resolvedConfig = { ...resolvedConfig, ...config };
+      }
+    }
 
     // Send start notification
     this.notificationService.sendGraphExtractionUpdate(datasetId, documentId, {
@@ -189,29 +205,11 @@ export class GraphExtractionService {
     }
 
     // Get extraction prompt
-    this.logger.log(
-      `🔍 Looking for prompt with ID: ${resolvedConfig.promptId} - DEBUG V2`,
-    );
     const prompt = await this.getExtractionPrompt(
       resolvedConfig.promptId,
       datasetId,
       documentId,
     );
-    this.logger.log(`📝 Prompt found: ${prompt ? prompt.name : 'null'}`);
-
-    if (prompt) {
-      this.logger.debug(`Prompt details:`);
-      this.logger.debug(`- ID: ${prompt.id}`);
-      this.logger.debug(`- Name: ${prompt.name}`);
-      this.logger.debug(`- Type: ${prompt.type}`);
-      this.logger.debug(
-        `- System prompt length: ${prompt.systemPrompt?.length || 0}`,
-      );
-      this.logger.debug(
-        `- User prompt template length: ${prompt.userPromptTemplate?.length || 0}`,
-      );
-      this.logger.debug(`- User prompt template: ${prompt.userPromptTemplate}`);
-    }
 
     if (!prompt) {
       this.notificationService.sendGraphExtractionUpdate(
@@ -227,40 +225,9 @@ export class GraphExtractionService {
     }
 
     // Get AI provider
-    this.logger.log(
-      `🔍 Getting AI provider with ID: ${resolvedConfig.aiProviderId}`,
-    );
-    this.logger.log(`🔍 Dataset ID: ${datasetId}`);
     const aiProvider = await this.getAiProvider(
       resolvedConfig.aiProviderId,
       datasetId,
-    );
-    this.logger.log(
-      `🔍 Retrieved AI Provider: ${JSON.stringify(
-        {
-          id: aiProvider?.id,
-          name: aiProvider?.name,
-          type: aiProvider?.type,
-          baseUrl: aiProvider?.baseUrl,
-          hasApiKey: !!aiProvider?.apiKey,
-        },
-        null,
-        2,
-      )}`,
-    );
-
-    this.logger.debug(
-      `🔍 Retrieved AI Provider: ${JSON.stringify(
-        {
-          id: aiProvider?.id,
-          name: aiProvider?.name,
-          type: aiProvider?.type,
-          baseUrl: aiProvider?.baseUrl,
-          hasApiKey: !!aiProvider?.apiKey,
-        },
-        null,
-        2,
-      )}`,
     );
 
     // Create LLM client
@@ -331,6 +298,9 @@ export class GraphExtractionService {
     );
 
     // Send completion notification
+    this.logger.log(
+      `📢 Sending completion notification for ${segmentIds.length} segments: ${segmentIds.join(', ')}`,
+    );
     this.notificationService.sendGraphExtractionUpdate(datasetId, documentId, {
       stage: 'completed',
       segmentIds: segmentIds,
@@ -338,112 +308,9 @@ export class GraphExtractionService {
       edgesCreated: totalEdgesCreated,
       message: `Graph extraction completed: ${totalNodesCreated} nodes, ${totalEdgesCreated} edges created`,
     });
+    this.logger.log(`✅ Completion notification sent for dataset ${datasetId}`);
 
     return { nodesCreated: totalNodesCreated, edgesCreated: totalEdgesCreated };
-  }
-
-  private async processBatch(
-    segments: DocumentSegment[],
-    datasetId: string,
-    documentId: string,
-    userId: string,
-    prompt: Prompt,
-    llmClient: any,
-    config: CreateGraphExtractionConfigDto,
-  ): Promise<{ nodesCreated: number; edgesCreated: number }> {
-    this.logger.log(`🔄 Processing batch of ${segments.length} segments`);
-
-    // Send processing notification
-    this.notificationService.sendGraphExtractionUpdate(datasetId, documentId, {
-      stage: 'processing_segment',
-      segmentIndex: 0,
-      totalSegments: segments.length,
-      message: `Processing ${segments.length} segments`,
-    });
-
-    // Prepare content for LLM
-    const content = segments
-      .map((segment, index) => {
-        const metadata = {
-          platform: segment.document?.dataSourceType || 'unknown',
-          author: segment.document?.name || 'unknown',
-          date: segment.createdAt?.toISOString() || new Date().toISOString(),
-          engagement: 'unknown', // This would come from CSV data
-        };
-
-        return `**Post ${index + 1}:**\n${segment.content}\n**Metadata:** ${JSON.stringify(metadata)}\n`;
-      })
-      .join('\n---\n');
-
-    this.logger.debug(`Content length: ${content.length} characters`);
-    this.logger.debug(`First 200 chars: ${content.substring(0, 200)}...`);
-    this.logger.debug(`Full content: ${content}`);
-
-    // Send LLM call notification
-    this.notificationService.sendGraphExtractionUpdate(datasetId, documentId, {
-      stage: 'llm_call',
-      message: `Calling LLM for graph extraction`,
-    });
-
-    // Call LLM for extraction
-    const extractionResult = await this.callLLMForExtraction(
-      content,
-      prompt,
-      llmClient,
-      config,
-    );
-
-    if (!extractionResult) {
-      this.logger.warn('❌ No extraction result from LLM');
-      this.notificationService.sendGraphExtractionUpdate(
-        datasetId,
-        documentId,
-        {
-          stage: 'error',
-          message: 'No extraction result from LLM',
-          error: 'No extraction result from LLM',
-        },
-      );
-      return { nodesCreated: 0, edgesCreated: 0 };
-    }
-
-    this.logger.log(
-      `✅ Got extraction result: ${extractionResult.nodes.length} nodes, ${extractionResult.edges.length} edges`,
-    );
-
-    // Process and save nodes
-    this.logger.log(`🔄 Processing ${extractionResult.nodes.length} nodes...`);
-    this.notificationService.sendGraphExtractionUpdate(datasetId, documentId, {
-      stage: 'creating_nodes',
-      message: `Creating ${extractionResult.nodes.length} nodes`,
-    });
-
-    const nodes = await this.processAndSaveNodes(
-      extractionResult.nodes,
-      segments,
-      datasetId,
-      documentId,
-      userId,
-      config,
-    );
-    this.logger.log(`✅ Created ${nodes.length} nodes`);
-
-    // Process and save edges
-    this.logger.log(`🔄 Processing ${extractionResult.edges.length} edges...`);
-    this.notificationService.sendGraphExtractionUpdate(datasetId, documentId, {
-      stage: 'creating_edges',
-      message: `Creating ${extractionResult.edges.length} edges`,
-    });
-
-    const edges = await this.processAndSaveEdges(
-      extractionResult.edges,
-      nodes,
-      datasetId,
-      userId,
-    );
-    this.logger.log(`✅ Created ${edges.length} edges`);
-
-    return { nodesCreated: nodes.length, edgesCreated: edges.length };
   }
 
   private async processSingleSegment(
@@ -531,9 +398,6 @@ export class GraphExtractionService {
         };
 
         const content = `**Post:**\n${segment.content}\n**Metadata:** ${JSON.stringify(metadata)}\n`;
-
-        this.logger.debug(`Content length: ${content.length} characters`);
-        this.logger.debug(`First 200 chars: ${content.substring(0, 200)}...`);
 
         // Send LLM call notification
         this.notificationService.sendGraphExtractionUpdate(
@@ -756,13 +620,48 @@ export class GraphExtractionService {
         if (existingNodes.length > 0) {
           // Merge with existing node
           const existingNode = existingNodes[0];
+
+          // Also try to normalize the existing node if not already normalized
+          let normalizedEntityId = existingNode.properties?.graphEntityId;
+          let normalizedCanonicalName =
+            existingNode.properties?.normalizedCanonicalName;
+
+          if (!normalizedEntityId) {
+            try {
+              const entityMatches =
+                await this.entityDictionaryService.findMatchingEntities(
+                  existingNode.label,
+                  0.85,
+                );
+              const filteredMatches = existingNode.nodeType
+                ? entityMatches.filter(
+                    (match: any) =>
+                      match.entity.entityType.toLowerCase() ===
+                      existingNode.nodeType.toLowerCase(),
+                  )
+                : entityMatches;
+
+              if (filteredMatches.length > 0) {
+                normalizedEntityId = filteredMatches[0].entity.id;
+                normalizedCanonicalName =
+                  filteredMatches[0].entity.canonicalName;
+              }
+            } catch {
+              // Ignore normalization errors for existing nodes
+            }
+          }
+
           const mergedProperties = {
             ...existingNode.properties,
             ...extractedNode.properties,
             // Ensure we keep the best normalized name
             normalized_name:
               normalizedName || existingNode.properties?.normalized_name,
-          } as any;
+            ...(normalizedEntityId && {
+              graphEntityId: normalizedEntityId,
+              normalizedCanonicalName: normalizedCanonicalName,
+            }),
+          };
 
           await this.nodeRepository.update(existingNode.id, {
             properties: mergedProperties,
@@ -777,14 +676,130 @@ export class GraphExtractionService {
         }
       }
 
+      // Normalize node with graph entity if available
+      let normalizedEntityId: string | undefined;
+      let normalizedCanonicalName: string | undefined;
+
+      try {
+        // Try to find matching graph entity by canonical name or aliases
+        const entityMatches =
+          await this.entityDictionaryService.findMatchingEntities(
+            extractedNode.label,
+            0.85, // High threshold for matching
+          );
+
+        // Filter matches by entity type if specified
+        const filteredMatches = extractedNode.type
+          ? entityMatches.filter(
+              (match: any) =>
+                match.entity.entityType.toLowerCase() ===
+                extractedNode.type.toLowerCase(),
+            )
+          : entityMatches;
+
+        if (filteredMatches.length > 0) {
+          const bestMatch = filteredMatches[0];
+          normalizedEntityId = bestMatch.entity.id;
+          normalizedCanonicalName = bestMatch.entity.canonicalName;
+
+          // If similarity > 90% and node label differs from canonical name, add/update alias
+          if (
+            bestMatch.similarity > 0.9 &&
+            extractedNode.label.toLowerCase() !==
+              bestMatch.entity.canonicalName.toLowerCase()
+          ) {
+            try {
+              await this.entityLearningService.addAliasIfNotExists(
+                bestMatch.entity.id,
+                extractedNode.label,
+              );
+              this.logger.log(
+                `📝 Added/updated alias "${extractedNode.label}" for entity "${bestMatch.entity.canonicalName}" (similarity: ${bestMatch.similarity.toFixed(2)})`,
+              );
+            } catch (aliasError) {
+              this.logger.warn(
+                `Failed to add alias "${extractedNode.label}" for entity "${bestMatch.entity.canonicalName}": ${aliasError.message}`,
+              );
+            }
+          }
+
+          this.logger.log(
+            `🔗 Normalized node "${extractedNode.label}" to graph entity "${bestMatch.entity.canonicalName}" (similarity: ${bestMatch.similarity.toFixed(2)})`,
+          );
+        } else {
+          // No match found - auto-create entity if confidence is high enough
+          const nodeConfidence = extractedNode.properties?.confidence || 0.8;
+          if (nodeConfidence >= 0.7) {
+            try {
+              const newEntity = await this.entityDictionaryService.addEntity(
+                userId,
+                {
+                  entityType: extractedNode.type,
+                  canonicalName: extractedNode.label,
+                  confidenceScore: nodeConfidence,
+                  source: EntitySource.AUTO_DISCOVERED,
+                  metadata: {
+                    learned_from: 'extraction',
+                    confidence: nodeConfidence,
+                    first_seen: new Date(),
+                    extraction_patterns: [extractedNode.label],
+                  },
+                },
+              );
+              normalizedEntityId = newEntity.id;
+              normalizedCanonicalName = newEntity.canonicalName;
+
+              this.logger.log(
+                `✨ Auto-created new graph entity "${extractedNode.label}" (type: ${extractedNode.type}, confidence: ${nodeConfidence.toFixed(2)})`,
+              );
+            } catch (createError) {
+              // Entity might already exist (race condition), try to find it
+              try {
+                const existingEntity =
+                  await this.entityDictionaryService.findEntities({
+                    entityType: extractedNode.type,
+                    searchTerm: extractedNode.label,
+                    limit: 1,
+                  });
+                if (existingEntity.entities.length > 0) {
+                  normalizedEntityId = existingEntity.entities[0].id;
+                  normalizedCanonicalName =
+                    existingEntity.entities[0].canonicalName;
+                  this.logger.log(
+                    `🔗 Found existing entity "${normalizedCanonicalName}" after creation attempt`,
+                  );
+                }
+              } catch {
+                this.logger.warn(
+                  `Failed to auto-create entity "${extractedNode.label}": ${createError.message}`,
+                );
+              }
+            }
+          }
+        }
+      } catch (normalizationError) {
+        // Non-fatal: continue with node creation even if normalization fails
+        this.logger.warn(
+          `Failed to normalize node "${extractedNode.label}" with graph entity: ${normalizationError.message}`,
+        );
+      }
+
       // Create new node - properly linked to this specific segment
+      const nodeProperties = {
+        ...extractedNode.properties,
+        ...(normalizedEntityId && {
+          graphEntityId: normalizedEntityId,
+          normalizedCanonicalName: normalizedCanonicalName,
+        }),
+      };
+
       const node = this.nodeRepository.create({
         datasetId,
         documentId,
         segmentId: segment.id, // Link to the specific segment
         nodeType: extractedNode.type,
         label: extractedNode.label,
-        properties: extractedNode.properties || {},
+        properties: nodeProperties,
         userId,
       });
 
@@ -802,199 +817,162 @@ export class GraphExtractionService {
     config: CreateGraphExtractionConfigDto,
   ): Promise<ExtractionResult | null> {
     try {
-      // Build user prompt
-      this.logger.debug(
-        `Original user prompt template: ${prompt.userPromptTemplate}`,
-      );
-      this.logger.debug(`Segment content length: ${segmentContent.length}`);
-      this.logger.debug(
-        `Segment content preview: ${segmentContent.substring(0, 200)}...`,
-      );
+      // Get AI provider for the extraction config
+      const aiProvider = await this.aiProviderService.findOne({
+        where: { id: config.aiProviderId },
+      });
 
-      const userPrompt =
-        prompt.userPromptTemplate
-          ?.replace('{{content}}', segmentContent)
-          .replace('{{text}}', segmentContent)
-          .replace('{{platform}}', 'Document')
-          .replace('{{author}}', 'Document Author')
-          .replace('{{date}}', new Date().toISOString())
-          .replace('{{engagement}}', 'N/A') || segmentContent;
-
-      this.logger.debug(`Processed user prompt: ${userPrompt}`);
-      this.logger.debug(`User prompt length: ${userPrompt.length}`);
-
-      // Call LLM
-      this.logger.log(`🤖 Calling LLM with model: ${config.model}`);
-      this.logger.log(`🤖 Using AI Provider: ${llmClient.constructor.name}`);
-      this.logger.log(`🤖 Config: ${JSON.stringify(config, null, 2)}`);
-      this.logger.debug(`System prompt: ${prompt.systemPrompt}`);
-      this.logger.debug(`User prompt: ${userPrompt.substring(0, 200)}...`);
-      this.logger.debug(`Prompt ID: ${prompt.id}`);
-      this.logger.debug(`Prompt name: ${prompt.name}`);
-      this.logger.debug(`Prompt type: ${prompt.type}`);
-      this.logger.debug(
-        `System prompt length: ${prompt.systemPrompt?.length || 0}`,
-      );
-      this.logger.debug(
-        `User prompt template length: ${prompt.userPromptTemplate?.length || 0}`,
-      );
-      this.logger.debug(
-        `JSON Schema: ${JSON.stringify(prompt.jsonSchema, null, 2)}`,
-      );
-
-      const messages = [
-        { role: 'system', content: prompt.systemPrompt },
-        { role: 'user', content: userPrompt },
-      ];
-
-      this.logger.debug(
-        `Request messages: ${JSON.stringify(messages, null, 2)}`,
-      );
-
-      this.logger.debug(`Calling LLM with parameters:`);
-      this.logger.debug(`- Model: ${config.model}`);
-      this.logger.debug(`- Temperature: ${config.temperature || 0.7}`);
-      this.logger.debug(`- JSON Schema present: ${!!prompt.jsonSchema}`);
-      this.logger.debug(`- Messages count: ${messages.length}`);
-
-      let response: any;
-      try {
-        response = await llmClient.chatCompletion(
-          messages,
-          config.model,
-          prompt.jsonSchema,
-          config.temperature || 0.7,
-        );
-      } catch (error) {
-        this.logger.error(`❌ LLM call failed: ${error.message}`);
-        this.logger.error(`Error details: ${JSON.stringify(error, null, 2)}`);
-        throw error;
+      if (!aiProvider) {
+        throw new Error(`AI Provider with ID ${config.aiProviderId} not found`);
       }
 
-      this.logger.log(`✅ LLM response status: ${response.status}`);
-      this.logger.debug(
-        `LLM response data: ${JSON.stringify(response.data, null, 2)}`,
-      );
-      this.logger.debug(
-        `LLM response headers: ${JSON.stringify(response.headers, null, 2)}`,
-      );
+      // Build template variables for graph extraction
+      const templateVariables = {
+        platform: 'Document',
+        author: 'Document Author',
+        date: new Date().toISOString(),
+        engagement: 'N/A',
+      };
 
-      // Parse JSON response
-      if (!response.data?.choices?.[0]?.message?.content) {
-        this.logger.warn('No valid response from LLM');
+      // Use shared LLM extraction service
+      const extractionResult =
+        await this.llmExtractionService.extractWithLLM<any>(
+          {
+            prompt,
+            aiProvider,
+            model: config.model || '',
+            temperature: config.temperature,
+            content: segmentContent,
+            templateVariables,
+          },
+          llmClient,
+          {
+            allowTextFallback: true,
+            allowArrays: true,
+            textParser: (content) => this.parseStructuredTextToJson(content),
+          },
+        );
+
+      if (!extractionResult.success || !extractionResult.data) {
+        this.logger.warn(
+          `LLM extraction failed: ${extractionResult.error || 'Unknown error'}`,
+        );
         return null;
       }
 
-      const content = response.data.choices[0].message.content;
-      this.logger.debug(`Raw LLM response content: ${content}`);
-      this.logger.debug(`Response content length: ${content.length}`);
-      this.logger.debug(`Response content type: ${typeof content}`);
+      const parsed = extractionResult.data;
 
-      // Log the full response object for debugging
-      this.logger.debug(
-        `🔍 Full LLM Response: ${JSON.stringify(response.data, null, 2)}`,
-      );
+      // Handle different response formats: entities/relationships vs nodes/edges
+      // Transform entities/relationships format to nodes/edges format if needed
+      // Only transform if nodes/edges don't already exist
+      if (
+        parsed.entities &&
+        Array.isArray(parsed.entities) &&
+        (!parsed.nodes ||
+          !Array.isArray(parsed.nodes) ||
+          parsed.nodes.length === 0)
+      ) {
+        this.logger.log(
+          `🔄 Detected entities format (${parsed.entities.length} entities), transforming to nodes format`,
+        );
+        parsed.nodes = parsed.entities
+          .map((entity: any) => {
+            const nodeType = entity.entityType || entity.type || 'entity';
+            const label = entity.canonicalName || entity.name || entity.label;
+            const id = entity.entityId || entity.id;
 
-      // Try to find JSON in the response
-      let jsonString = '';
-
-      // First, try to find JSON in markdown code blocks
-      const codeBlockMatch = content.match(
-        /```(?:json)?\s*(\{[\s\S]*?\})\s*```/,
-      );
-      if (codeBlockMatch) {
-        jsonString = codeBlockMatch[1];
-      } else {
-        // Try to find JSON object directly
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          jsonString = jsonMatch[0];
-        } else {
-          // If no JSON object found, try to find JSON array
-          const arrayMatch = content.match(/\[[\s\S]*\]/);
-          if (arrayMatch) {
-            jsonString = arrayMatch[0];
-          } else {
-            // Try to extract structured data from text and convert to JSON
-            this.logger.log(
-              'No JSON found, attempting to parse structured text response',
-            );
-            const structuredData = this.parseStructuredTextToJson(content);
-            if (structuredData) {
-              jsonString = JSON.stringify(structuredData);
+            if (!label) {
+              this.logger.warn(
+                `Entity has no valid label, skipping: ${JSON.stringify(entity)}`,
+              );
+              return null;
             }
-          }
-        }
-      }
 
-      if (!jsonString) {
-        this.logger.warn('No JSON found in LLM response');
-        this.logger.debug(`Full response content: ${content}`);
-        return null;
-      }
+            return {
+              type: nodeType,
+              label: label,
+              id: id,
+              properties: {
+                ...entity.properties,
+                aliases: entity.aliases || [],
+                confidence: entity.confidence,
+                original_entityId: entity.entityId,
+                original_entityType: entity.entityType,
+              },
+            };
+          })
+          .filter((node: any) => node !== null);
 
-      this.logger.debug(`Extracted JSON string: ${jsonString}`);
-
-      let parsed;
-      try {
-        parsed = JSON.parse(jsonString);
-        this.logger.debug(
-          `Successfully parsed JSON: ${JSON.stringify(parsed, null, 2)}`,
+        this.logger.log(
+          `✅ Transformed ${parsed.nodes.length} entities to nodes`,
         );
-      } catch (parseError) {
-        this.logger.error(`JSON parsing error: ${parseError.message}`);
-        this.logger.error(`Failed to parse JSON: ${jsonString}`);
-        return null;
       }
 
-      // Validate the parsed JSON structure
-      if (!parsed || typeof parsed !== 'object') {
-        this.logger.error('Parsed JSON is not an object');
-        this.logger.error(`Parsed value: ${JSON.stringify(parsed)}`);
-        return null;
-      }
+      if (
+        parsed.relationships &&
+        Array.isArray(parsed.relationships) &&
+        (!parsed.edges ||
+          !Array.isArray(parsed.edges) ||
+          parsed.edges.length === 0)
+      ) {
+        this.logger.log(
+          `🔄 Detected relationships format (${parsed.relationships.length} relationships), transforming to edges format`,
+        );
 
-      this.logger.debug(`Parsed nodes: ${JSON.stringify(parsed.nodes)}`);
-      this.logger.debug(`Parsed edges: ${JSON.stringify(parsed.edges)}`);
+        // Create a map of entityId to label for quick lookup
+        const entityMap = new Map<string, string>();
+        if (parsed.entities && Array.isArray(parsed.entities)) {
+          parsed.entities.forEach((entity: any) => {
+            const entityId = entity.entityId || entity.id;
+            const label = entity.canonicalName || entity.name || entity.label;
+            if (entityId && label) {
+              entityMap.set(entityId, label);
+            }
+          });
+        }
+
+        parsed.edges = parsed.relationships.map((rel: any) => {
+          // Try to get labels from entity map first, then fall back to direct values
+          const sourceEntityId = rel.sourceEntityId || rel.source;
+          const targetEntityId = rel.targetEntityId || rel.target;
+
+          const sourceLabel =
+            entityMap.get(sourceEntityId) ||
+            rel.sourceNodeLabel ||
+            rel.source ||
+            rel.from ||
+            sourceEntityId;
+
+          const targetLabel =
+            entityMap.get(targetEntityId) ||
+            rel.targetNodeLabel ||
+            rel.target ||
+            rel.to ||
+            targetEntityId;
+
+          return {
+            type:
+              rel.relationshipType || rel.type || rel.edgeType || rel.relation,
+            source: sourceLabel,
+            target: targetLabel,
+            sourceNodeLabel: sourceLabel,
+            targetNodeLabel: targetLabel,
+            properties: {
+              ...rel.properties,
+              confidence: rel.confidence,
+              source: rel.source,
+              original_relationshipType: rel.relationshipType,
+              original_sourceEntityId: sourceEntityId,
+              original_targetEntityId: targetEntityId,
+            },
+          };
+        });
+      }
 
       // Log the successful extraction result
       this.logger.log(
         `✅ Successfully extracted ${parsed.nodes?.length || 0} nodes and ${parsed.edges?.length || 0} edges`,
       );
-      this.logger.debug(
-        `🔍 Extraction Result: ${JSON.stringify(parsed, null, 2)}`,
-      );
-
-      // Log detailed information about each node and edge for debugging
-      if (parsed.nodes && Array.isArray(parsed.nodes)) {
-        this.logger.log(
-          `🔍 Found ${parsed.nodes.length} nodes in LLM response`,
-        );
-        parsed.nodes.forEach((node: any, index: number) => {
-          this.logger.log(
-            `Node ${index + 1}: type="${node.type}", label="${node.label}", id="${node.id}"`,
-          );
-        });
-      } else {
-        this.logger.warn(
-          `❌ No nodes found in LLM response or nodes is not an array: ${JSON.stringify(parsed.nodes)}`,
-        );
-      }
-
-      if (parsed.edges && Array.isArray(parsed.edges)) {
-        this.logger.log(
-          `🔍 Found ${parsed.edges.length} edges in LLM response`,
-        );
-        parsed.edges.forEach((edge: any, index: number) => {
-          this.logger.log(
-            `Edge ${index + 1}: type="${edge.type || edge.edgeType}", source="${edge.source || edge.sourceNodeLabel || edge.from}", target="${edge.target || edge.targetNodeLabel || edge.to}"`,
-          );
-        });
-      } else {
-        this.logger.warn(
-          `❌ No edges found in LLM response or edges is not an array: ${JSON.stringify(parsed.edges)}`,
-        );
-      }
 
       // Transform the LLM response to match our expected format
       const transformedResult: ExtractionResult = {
@@ -1043,7 +1021,9 @@ export class GraphExtractionService {
                   edge.target ||
                   edge.targetNode
                 )?.trim();
-                const edgeType = this.mapEdgeType(edge.type || edge.edgeType);
+                const edgeType = this.mapEdgeType(
+                  edge.type || edge.edgeType || edge.relation,
+                );
 
                 if (!sourceLabel || !targetLabel) {
                   this.logger.warn(
@@ -1053,7 +1033,7 @@ export class GraphExtractionService {
                 }
 
                 this.logger.log(
-                  `🔄 Processing edge: original_type="${edge.type || edge.edgeType}", source="${sourceLabel}", target="${targetLabel}", mapped_type="${edgeType}"`,
+                  `🔄 Processing edge: original_type="${edge.type || edge.edgeType || edge.relation}", source="${sourceLabel}", target="${targetLabel}", mapped_type="${edgeType}"`,
                 );
 
                 return {
@@ -1064,7 +1044,7 @@ export class GraphExtractionService {
                   properties: {
                     ...edge.properties,
                     // Map any additional fields from the LLM response
-                    original_type: edge.type || edge.edgeType,
+                    original_type: edge.type || edge.edgeType || edge.relation,
                   },
                 };
               })
@@ -1076,129 +1056,11 @@ export class GraphExtractionService {
         `🔄 Transformed ${transformedResult.nodes.length} nodes and ${transformedResult.edges.length} edges`,
       );
 
-      // Debug: Log the actual edges being processed
-      if (transformedResult.edges.length > 0) {
-        this.logger.log(
-          `🔍 Found ${transformedResult.edges.length} edges in LLM response`,
-        );
-        this.logger.debug(
-          `Edges to process: ${JSON.stringify(transformedResult.edges, null, 2)}`,
-        );
-      } else {
-        this.logger.warn('⚠️ No edges found in LLM response');
-        // Log the raw LLM response to debug
-        this.logger.debug(
-          `Raw LLM response: ${JSON.stringify(parsed, null, 2)}`,
-        );
-      }
-
       return transformedResult;
     } catch (error) {
       this.logger.error('Error calling LLM for extraction:', error);
       return null;
     }
-  }
-
-  private async processAndSaveNodes(
-    extractedNodes: ExtractedNode[],
-    segments: DocumentSegment[],
-    datasetId: string,
-    documentId: string,
-    userId: string,
-    config: CreateGraphExtractionConfigDto,
-  ): Promise<GraphNode[]> {
-    const nodes: GraphNode[] = [];
-
-    for (const extractedNode of extractedNodes) {
-      // Check for duplicates if deduplication is enabled
-      if (config.enableDeduplication) {
-        const normalizedName = extractedNode.properties?.normalized_name;
-
-        // First try exact label match
-        let existingNodes = await this.nodeRepository.find({
-          where: {
-            datasetId,
-            nodeType: extractedNode.type,
-            label: extractedNode.label,
-          },
-        });
-
-        // If no exact match and we have a normalized name, try normalized name matching
-        if (existingNodes.length === 0 && normalizedName) {
-          existingNodes = await this.nodeRepository
-            .createQueryBuilder('node')
-            .where('node.datasetId = :datasetId', { datasetId })
-            .andWhere('node.nodeType = :nodeType', {
-              nodeType: extractedNode.type,
-            })
-            .andWhere('node.properties->>:normalizedName = :normalizedName', {
-              normalizedName: 'normalized_name',
-              normalizedNameValue: normalizedName,
-            })
-            .getMany();
-        }
-
-        // If still no match, try fuzzy matching on normalized names
-        if (existingNodes.length === 0 && normalizedName) {
-          const allNodesOfType = await this.nodeRepository.find({
-            where: {
-              datasetId,
-              nodeType: extractedNode.type,
-            },
-          });
-
-          // Find nodes with similar normalized names (case-insensitive, trimmed)
-          existingNodes = allNodesOfType.filter((node) => {
-            const nodeNormalizedName = node.properties?.normalized_name;
-            if (!nodeNormalizedName) return false;
-
-            return (
-              nodeNormalizedName.toLowerCase().trim() ===
-              normalizedName.toLowerCase().trim()
-            );
-          });
-        }
-
-        if (existingNodes.length > 0) {
-          // Merge with existing node
-          const existingNode = existingNodes[0];
-          const mergedProperties = {
-            ...existingNode.properties,
-            ...extractedNode.properties,
-            // Ensure we keep the best normalized name
-            normalized_name:
-              normalizedName || existingNode.properties?.normalized_name,
-          } as any;
-
-          await this.nodeRepository.update(existingNode.id, {
-            properties: mergedProperties,
-          });
-
-          this.logger.log(
-            `🔄 Merged duplicate node: "${extractedNode.label}" (normalized: "${normalizedName}") with existing node "${existingNode.label}"`,
-          );
-
-          nodes.push(existingNode);
-          continue;
-        }
-      }
-
-      // Create new node
-      const node = this.nodeRepository.create({
-        datasetId,
-        documentId,
-        segmentId: segments[0].id, // Use first segment as reference
-        nodeType: extractedNode.type,
-        label: extractedNode.label,
-        properties: extractedNode.properties || {},
-        userId,
-      });
-
-      const savedNode = await this.nodeRepository.save(node);
-      nodes.push(savedNode);
-    }
-
-    return nodes;
   }
 
   private async processAndSaveEdges(
@@ -1213,24 +1075,14 @@ export class GraphExtractionService {
     this.logger.log(
       `🔄 Processing ${extractedEdges.length} extracted edges...`,
     );
-    this.logger.debug(
-      `Available node labels: ${Array.from(nodeMap.keys()).join(', ')}`,
-    );
 
     for (const extractedEdge of extractedEdges) {
-      this.logger.debug(
-        `Processing edge: ${extractedEdge.sourceNodeLabel} -> ${extractedEdge.targetNodeLabel} (${extractedEdge.edgeType})`,
-      );
-
       const sourceNode = nodeMap.get(extractedEdge.sourceNodeLabel);
       const targetNode = nodeMap.get(extractedEdge.targetNodeLabel);
 
       if (!sourceNode || !targetNode) {
         this.logger.warn(
           `Source or target node not found for edge: ${extractedEdge.sourceNodeLabel} -> ${extractedEdge.targetNodeLabel}`,
-        );
-        this.logger.debug(
-          `Available nodes: ${Array.from(nodeMap.keys()).join(', ')}`,
         );
         continue;
       }
@@ -1281,62 +1133,35 @@ export class GraphExtractionService {
     datasetId?: string,
     documentId?: string,
   ): Promise<Prompt | null> {
-    this.logger.log(`🔍 getExtractionPrompt called with promptId: ${promptId}`);
-
     if (promptId) {
-      this.logger.log(`🔍 Looking up prompt by ID: ${promptId}`);
       try {
-        const prompt = await this.promptService.findPromptById(promptId);
-        this.logger.log(
-          `📝 Prompt by ID result: ${prompt ? prompt.name : 'null'}`,
-        );
-        if (prompt) {
-          this.logger.log(
-            `📝 Prompt details: ID=${prompt.id}, Name=${prompt.name}, Active=${prompt.isActive}`,
-          );
-        }
-        return prompt;
+        return await this.promptService.findPromptById(promptId);
       } catch (error) {
-        this.logger.error(`❌ Error looking up prompt by ID: ${error.message}`);
+        this.logger.error(`Error looking up prompt by ID: ${error.message}`);
         throw error;
       }
     }
 
     // Use prompt selector to get appropriate prompt based on dataset and document type
     if (datasetId) {
-      this.logger.log(
-        `🔍 Using prompt selector for dataset: ${datasetId}, document: ${documentId}`,
-      );
       try {
-        const selectedPrompt =
-          await this.graphPromptSelectorService.selectPrompt(
-            datasetId,
-            documentId,
-          );
-        this.logger.log(
-          `📝 Selected prompt: ${selectedPrompt ? selectedPrompt.name : 'null'}`,
+        return await this.graphPromptSelectorService.selectPrompt(
+          datasetId,
+          documentId,
         );
-        return selectedPrompt;
       } catch (error) {
-        this.logger.error(`❌ Error selecting prompt: ${error.message}`);
+        this.logger.error(`Error selecting prompt: ${error.message}`);
         // Fall back to default prompt
       }
     }
 
     // Fallback to default graph extraction prompt
-    this.logger.log(
-      `🔍 Looking up default prompt by name: 'Document Graph Extraction'`,
-    );
-    const defaultPrompt = await this.promptRepository.findOne({
+    return await this.promptRepository.findOne({
       where: {
         name: 'Document Graph Extraction',
         isActive: true,
       },
     });
-    this.logger.log(
-      `📝 Default prompt result: ${defaultPrompt ? defaultPrompt.name : 'null'}`,
-    );
-    return defaultPrompt;
   }
 
   private async getAiProvider(
@@ -1344,41 +1169,15 @@ export class GraphExtractionService {
     datasetId?: string,
   ): Promise<any> {
     if (providerId) {
-      this.logger.log(`🔍 Looking up AI provider by ID: ${providerId}`);
       try {
         const provider =
           await this.aiProviderService.findAiProviderById(providerId);
         if (provider) {
-          this.logger.log(
-            `✅ Found AI provider by ID: ${provider.name} (${provider.type})`,
-          );
-          this.logger.log(
-            `🔍 Provider details: ${JSON.stringify(
-              {
-                id: provider.id,
-                name: provider.name,
-                type: provider.type,
-                baseUrl: provider.baseUrl,
-                hasApiKey: !!provider.apiKey,
-                models: provider.models?.map((m) => m.id) || [],
-              },
-              null,
-              2,
-            )}`,
-          );
           return provider;
-        } else {
-          this.logger.warn(`❌ AI provider not found by ID: ${providerId}`);
-          this.logger.warn(
-            `❌ This will cause the system to fail - no fallback allowed!`,
-          );
         }
       } catch (error) {
         this.logger.error(
-          `❌ Error looking up AI provider by ID ${providerId}: ${error.message}`,
-        );
-        this.logger.error(
-          `❌ This will cause the system to fail - no fallback allowed!`,
+          `Error looking up AI provider by ID ${providerId}: ${error.message}`,
         );
       }
     }
@@ -1392,7 +1191,6 @@ export class GraphExtractionService {
 
       if (dataset?.settings?.graph_settings?.aiProviderId) {
         const providerValue = dataset.settings.graph_settings.aiProviderId;
-        this.logger.log(`🔍 Looking for AI provider: ${providerValue}`);
 
         // Check if it's a UUID (provider ID) or a string (provider type/name)
         const isUuid =
@@ -1401,32 +1199,18 @@ export class GraphExtractionService {
           );
 
         if (isUuid) {
-          // It's a provider ID, look it up directly
-          this.logger.log(
-            `🔍 Provider value is UUID, looking up by ID: ${providerValue}`,
-          );
           const provider =
             await this.aiProviderService.findAiProviderById(providerValue);
           if (provider) {
-            this.logger.log(
-              `✅ Found AI provider by ID: ${provider.name} (${provider.type})`,
-            );
             return provider;
           }
         } else {
-          // It's a provider type/name, try to find by type
-          this.logger.log(
-            `🔍 Provider value is type/name, looking up by type: ${providerValue}`,
-          );
           const provider = await this.aiProviderService.findAiProviderByType(
             providerValue,
             '72287e07-967e-4de6-88b0-ff8c16f43991', // Default user ID for now
           );
 
           if (provider) {
-            this.logger.log(
-              `✅ Found AI provider by type: ${provider.name} (${provider.type})`,
-            );
             return provider;
           }
         }

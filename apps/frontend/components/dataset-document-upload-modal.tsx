@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { datasetApi, documentApi, postsApi, type Dataset, type Document, type CsvConnectorTemplate, type CsvUploadConfig, CsvConnectorType, type PostSearchParams, type Post } from '@/lib/api'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
     Dialog,
     DialogContent,
@@ -606,6 +607,24 @@ export function DatasetDocumentUploadModal({
                                                 value={postFilters.title || ''}
                                                 onChange={(e) => handlePostFilterChange('title', e.target.value)}
                                             />
+                                        </div>
+                                        <div>
+                                            <Label htmlFor="filter-status">Status</Label>
+                                            <Select
+                                                value={postFilters.status || 'all'}
+                                                onValueChange={(value) => handlePostFilterChange('status', value === 'all' ? '' : value)}
+                                            >
+                                                <SelectTrigger id="filter-status">
+                                                    <SelectValue placeholder="All Statuses" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="all">All Statuses</SelectItem>
+                                                    <SelectItem value="pending">Pending</SelectItem>
+                                                    <SelectItem value="approved">Approved</SelectItem>
+                                                    <SelectItem value="rejected">Rejected</SelectItem>
+                                                    <SelectItem value="review">Review</SelectItem>
+                                                </SelectContent>
+                                            </Select>
                                         </div>
                                         <div>
                                             <Label htmlFor="filter-posted-at-start">Posted At Start</Label>

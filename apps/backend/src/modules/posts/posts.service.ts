@@ -17,6 +17,7 @@ import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { BulkCreatePostsDto } from './dto/bulk-create-posts.dto';
 import { DeduplicationStrategy } from './enums/deduplication-strategy.enum';
+import { PostStatus } from './enums/post-status.enum';
 import {
   UpsertConfigDto,
   HashConfigDto,
@@ -32,6 +33,7 @@ export interface PostSearchFilters {
   userId?: string;
   metaKey?: string;
   metaValue?: string;
+  status?: PostStatus;
   startDate?: Date;
   endDate?: Date;
   postedAtStart?: Date;
@@ -76,7 +78,11 @@ export class PostsService extends TypeOrmCrudService<Post> {
       );
     }
 
-    const post = this.postRepository.create(postData);
+    // Set status to pending for new posts
+    const post = this.postRepository.create({
+      ...postData,
+      status: PostStatus.PENDING,
+    });
     const savedPost = await this.postRepository.save(post);
 
     // Store in cache after creation
@@ -526,7 +532,10 @@ export class PostsService extends TypeOrmCrudService<Post> {
       return updatedPost;
     } else {
       // Create new post - handle duplicate key errors gracefully
-      const post = this.postRepository.create(postData);
+      const post = this.postRepository.create({
+        ...postData,
+        status: PostStatus.PENDING,
+      });
       try {
         const savedPost = await this.postRepository.save(post);
 
@@ -634,7 +643,10 @@ export class PostsService extends TypeOrmCrudService<Post> {
       return updatedPost;
     } else {
       // Create new post - handle duplicate key errors gracefully
-      const post = this.postRepository.create(postData);
+      const post = this.postRepository.create({
+        ...postData,
+        status: PostStatus.PENDING,
+      });
       try {
         const savedPost = await this.postRepository.save(post);
 
@@ -787,7 +799,10 @@ export class PostsService extends TypeOrmCrudService<Post> {
           updated++;
         } else {
           // Create new post - handle duplicate key errors gracefully
-          const post = this.postRepository.create(postData);
+          const post = this.postRepository.create({
+            ...postData,
+            status: PostStatus.PENDING,
+          });
           try {
             const savedPost = await this.postRepository.save(post);
 
@@ -918,7 +933,10 @@ export class PostsService extends TypeOrmCrudService<Post> {
           items.push(existing.id);
           updated++;
         } else {
-          const post = this.postRepository.create(postData);
+          const post = this.postRepository.create({
+            ...postData,
+            status: PostStatus.PENDING,
+          });
           const savedPost = await this.postRepository.save(post);
           items.push(savedPost.id);
           created++;
@@ -1047,6 +1065,10 @@ export class PostsService extends TypeOrmCrudService<Post> {
       where.userId = filters.userId;
     }
 
+    if (filters.status) {
+      where.status = filters.status;
+    }
+
     // Build query builder for complex queries
     const queryBuilder = this.postRepository.createQueryBuilder('post');
 
@@ -1066,6 +1088,8 @@ export class PostsService extends TypeOrmCrudService<Post> {
     // Content is stored in meta.content - use metaKey filter to search it
     if (where.userId)
       queryBuilder.andWhere('post.user_id = :userId', { userId: where.userId });
+    if (where.status)
+      queryBuilder.andWhere('post.status = :status', { status: where.status });
 
     // Handle date range filtering on meta field
     if (filters.startDate || filters.endDate) {

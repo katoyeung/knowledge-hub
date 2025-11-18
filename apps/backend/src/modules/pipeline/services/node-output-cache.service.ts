@@ -160,7 +160,7 @@ export class NodeOutputCacheService {
           await this.executionRepo.save(execution);
           const itemCount = Array.isArray(outputData)
             ? outputData.length
-            : (outputData as any)?.total || (outputData as any)?.count || 0;
+            : outputData?.total || outputData?.count || 0;
           this.logger.log(
             `Stored ${itemCount} items in database for node ${nodeId}`,
           );
@@ -264,10 +264,10 @@ export class NodeOutputCacheService {
             if (
               keys.length > 0 &&
               keys[0] === '0' &&
-              typeof (snapshot.outputData as any)[keys[0]] === 'object'
+              typeof snapshot.outputData[keys[0]] === 'object'
             ) {
               // Return the unwrapped data
-              return (snapshot.outputData as any)[keys[0]];
+              return snapshot.outputData[keys[0]];
             }
           }
         }

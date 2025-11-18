@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { PromptSelector } from '@/components/prompt-selector'
 import { promptApi, aiProviderApi, userApi, type Prompt, type AiProvider, type ChatSettings } from '@/lib/api'
 import { useToast } from '@/components/ui/simple-toast'
 import { authUtil } from '@/lib/auth'
@@ -220,8 +221,22 @@ export default function ChatSettingsPage() {
         try {
             const prompt = await promptApi.getById(promptId)
             setSelectedPrompt(prompt)
-        } catch {
-            setSelectedPrompt(null)
+        } catch (err: any) {
+            // Check if it's a 404 error (prompt not found)
+            const isNotFound = err?.response?.status === 404 ||
+                err?.status === 404 ||
+                (err instanceof Error && err.message.includes('404')) ||
+                (err?.message?.includes('not found') || err?.message?.includes('Not Found'))
+
+            if (isNotFound) {
+                console.warn(`[ChatSettings] Prompt with ID ${promptId} not found, clearing invalid reference`)
+                // Clear the invalid prompt ID from settings
+                setSettings(prev => ({ ...prev, promptId: undefined }))
+                setSelectedPrompt(null)
+                error('Prompt Not Found', `The selected prompt no longer exists. Please select a new prompt.`)
+            } else {
+                setSelectedPrompt(null)
+            }
         }
     }
 
@@ -326,23 +341,14 @@ export default function ChatSettingsPage() {
                 </div>
 
                 {/* Prompt Selection */}
-                <div className="space-y-2">
-                    <Label htmlFor="prompt">Prompt Template</Label>
-                    <select
-                        id="prompt"
-                        value={settings.promptId || ''}
-                        onChange={(e) => handlePromptChange(e.target.value)}
-                        disabled={loading}
-                        className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                        <option value="">No prompt template</option>
-                        {prompts.map((prompt) => (
-                            <option key={prompt.id} value={prompt.id}>
-                                {prompt.name}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+                <PromptSelector
+                    value={settings.promptId}
+                    onChange={(promptId) => handlePromptChange(promptId)}
+                    label="Prompt Template"
+                    placeholder="No prompt template"
+                    promptType="chat"
+                    disabled={loading}
+                />
 
                 {/* Prompt Preview */}
                 {selectedPrompt && (

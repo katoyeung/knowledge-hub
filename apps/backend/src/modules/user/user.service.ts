@@ -8,6 +8,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Role } from '@modules/access/entities/role.entity';
 import { Cacheable } from '../../common/decorators/cacheable.decorator';
 import { UpdateUserGraphSettingsDto } from './dto/update-user-graph-settings.dto';
+import { UpdateUserPostSettingsDto } from './dto/update-user-post-settings.dto';
 
 @Injectable()
 export class UserService extends TypeOrmCrudService<User> {
@@ -138,6 +139,61 @@ export class UserService extends TypeOrmCrudService<User> {
     await this.invalidateUserCache(userId);
 
     return updatedSettings;
+  }
+
+  async getUserPostSettings(userId: string): Promise<object> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'settings'],
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    const settings = (user.settings as any) || {};
+    return settings.post_settings || {};
+  }
+
+  async updateUserPostSettings(
+    userId: string,
+    postSettings: UpdateUserPostSettingsDto,
+  ): Promise<object> {
+    const existingUser = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'settings'],
+    });
+
+    if (!existingUser) {
+      throw new Error('User not found');
+    }
+
+    // Log what we received
+    console.log('UserService: Received post settings:', postSettings);
+
+    const existingSettings = (existingUser.settings as any) || {};
+    const updatedSettings = {
+      ...existingSettings,
+      post_settings: {
+        ...(existingSettings.post_settings || {}),
+        ...postSettings, // This should include aiProviderId if it was sent
+      },
+    };
+
+    // Log what we're saving
+    console.log(
+      'UserService: Updated settings:',
+      JSON.stringify(updatedSettings, null, 2),
+    );
+    console.log(
+      'UserService: Post settings object:',
+      updatedSettings.post_settings,
+    );
+
+    await this.userRepository.update(userId, { settings: updatedSettings });
+    await this.invalidateUserCache(userId);
+
+    return updatedSettings.post_settings; // Return just the post_settings object
   }
 
   async getUserGraphSettings(userId: string): Promise<object> {

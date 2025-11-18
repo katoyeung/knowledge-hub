@@ -193,13 +193,15 @@ export class DuplicateSegmentStep extends BaseStep {
   }
 
   async execute(
-    inputSegments: any[],
+    inputSegments: any,
     config: DuplicateSegmentConfig,
     _context: StepExecutionContext,
   ): Promise<StepExecutionResult> {
     const startTime = new Date();
+
+    // Ensure inputSegments is handled correctly - it might be an array, object, or anything
     this.logger.log(
-      `Starting duplicate detection for ${inputSegments.length} segments`,
+      `Starting duplicate detection. Input type: ${Array.isArray(inputSegments) ? 'array' : typeof inputSegments}, length: ${Array.isArray(inputSegments) ? inputSegments.length : 'N/A'}`,
     );
 
     // Normalize similarityThreshold to number if it's a string
@@ -240,6 +242,15 @@ export class DuplicateSegmentStep extends BaseStep {
     // Use shared unwrapInput utility from BaseStep
     const unwrapResult = this.unwrapInput(inputSegments, config.contentField);
     let segmentsToProcess = unwrapResult.segments;
+
+    // Defensive check: ensure segmentsToProcess is always an array
+    if (!Array.isArray(segmentsToProcess)) {
+      this.logger.warn(
+        `unwrapInput returned non-array segments. Type: ${typeof segmentsToProcess}, converting to array.`,
+      );
+      segmentsToProcess = segmentsToProcess ? [segmentsToProcess] : [];
+    }
+
     let adjustedContentField =
       unwrapResult.adjustedFieldPath || config.contentField;
     const extractedArrayKey = unwrapResult.extractedKey;
@@ -418,12 +429,16 @@ export class DuplicateSegmentStep extends BaseStep {
         duplicate_count: duplicatesFound,
       };
 
+      // Convert segmentsToProcess to DocumentSegment format for rollback
+      const inputSegmentsForRollback =
+        this.segmentsToDocumentSegments(segmentsToProcess);
+
       return {
         success: true,
         outputSegments: [formattedOutput] as any, // Wrap in array to maintain compatibility
         // duplicates field is already included in formattedOutput, no need to duplicate
         metrics,
-        rollbackData: this.createRollbackData(inputSegments, config),
+        rollbackData: this.createRollbackData(inputSegmentsForRollback, config),
         // Add count information for frontend display
         count: outputSegments.length,
         totalCount: segmentsToProcess.length,
@@ -432,10 +447,21 @@ export class DuplicateSegmentStep extends BaseStep {
     } catch (error) {
       this.logger.error('Duplicate detection failed:', error);
 
+      // Convert inputSegments to array format for error handling
+      // Use unwrapInput to safely extract segments
+      const unwrapResult = this.unwrapInput(inputSegments, config.contentField);
+      let errorSegments = unwrapResult.segments;
+      if (!Array.isArray(errorSegments)) {
+        errorSegments = errorSegments ? [errorSegments] : [];
+      }
+
+      // Convert to DocumentSegment format for rollback and metrics
+      const errorInputSegments = this.segmentsToDocumentSegments(errorSegments);
+
       // Format error output according to user specification
       const errorOutput = {
-        items: inputSegments,
-        total: inputSegments.length,
+        items: errorSegments,
+        total: errorSegments.length,
         duplicates: [],
         duplicate_count: 0,
       };
@@ -444,16 +470,16 @@ export class DuplicateSegmentStep extends BaseStep {
         success: false,
         outputSegments: [errorOutput] as any, // Wrap in array to maintain compatibility
         metrics: this.calculateMetrics(
-          inputSegments,
-          inputSegments,
+          errorInputSegments,
+          errorInputSegments,
           startTime,
           new Date(),
         ),
         error: error.message,
-        rollbackData: this.createRollbackData(inputSegments, config),
+        rollbackData: this.createRollbackData(errorInputSegments, config),
         // Add count information for frontend display (error case)
-        count: inputSegments.length,
-        totalCount: inputSegments.length,
+        count: errorSegments.length,
+        totalCount: errorSegments.length,
         duplicateCount: 0,
       };
     }

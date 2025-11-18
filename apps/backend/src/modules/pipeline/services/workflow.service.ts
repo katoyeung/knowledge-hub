@@ -460,7 +460,7 @@ export class WorkflowService {
         }
 
         // Provide default configuration if empty
-        let config = this.getDefaultConfigForStepType(node.type, node.config);
+        const config = this.getDefaultConfigForStepType(node.type, node.config);
 
         // Validate node configuration
         const validation = await this.stepRegistry.validateStepConfig(
@@ -773,8 +773,42 @@ export class WorkflowService {
         this.logger.debug(
           `Converting previousOutput to inputSegments for ${stepType}`,
         );
-        segmentsToProcess =
-          this.convertPreviousOutputToSegments(previousOutput);
+
+        // Special handling for post_deleter: if field mapping targets a specific array
+        // (e.g., "duplicates.id"), preserve the full object structure instead of extracting items
+        if (stepType === 'post_deleter' && config?.fieldMappings?.id) {
+          const idFieldPath = config.fieldMappings.id;
+          // If field path contains a dot (e.g., "duplicates.id"), it targets a specific array
+          if (idFieldPath.includes('.')) {
+            const arrayName = idFieldPath.split('.')[0];
+            // Check if previousOutput has this array
+            if (
+              previousOutput &&
+              typeof previousOutput === 'object' &&
+              !Array.isArray(previousOutput) &&
+              Array.isArray(previousOutput[arrayName])
+            ) {
+              // Preserve the full object structure for post_deleter
+              this.logger.debug(
+                `[Post Deleter Test] Preserving full object structure with ${arrayName} array for field mapping "${idFieldPath}"`,
+              );
+              segmentsToProcess = [previousOutput];
+            } else {
+              // Fallback to normal conversion
+              segmentsToProcess =
+                this.convertPreviousOutputToSegments(previousOutput);
+            }
+          } else {
+            // Simple field path, use normal conversion
+            segmentsToProcess =
+              this.convertPreviousOutputToSegments(previousOutput);
+          }
+        } else {
+          // Normal conversion for other step types
+          segmentsToProcess =
+            this.convertPreviousOutputToSegments(previousOutput);
+        }
+
         this.logger.debug(
           `Converted ${segmentsToProcess.length} segments from previousOutput`,
         );

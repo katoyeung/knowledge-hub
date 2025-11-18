@@ -3,10 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GraphNode, NodeType } from '../entities/graph-node.entity';
 import { GraphEdge, EdgeType } from '../entities/graph-edge.entity';
-import {
-  PredefinedEntity,
-  EntitySource,
-} from '../entities/predefined-entity.entity';
+import { GraphEntity, EntitySource } from '../entities/graph-entity.entity';
 import { EntityAlias } from '../entities/entity-alias.entity';
 import { EntityDictionaryService } from './entity-dictionary.service';
 
@@ -48,8 +45,8 @@ export class EntityLearningService {
     private readonly nodeRepository: Repository<GraphNode>,
     @InjectRepository(GraphEdge)
     private readonly edgeRepository: Repository<GraphEdge>,
-    @InjectRepository(PredefinedEntity)
-    private readonly entityRepository: Repository<PredefinedEntity>,
+    @InjectRepository(GraphEntity)
+    private readonly entityRepository: Repository<GraphEntity>,
     @InjectRepository(EntityAlias)
     private readonly aliasRepository: Repository<EntityAlias>,
     private readonly entityDictionaryService: EntityDictionaryService,
@@ -80,24 +77,21 @@ export class EntityLearningService {
     }
   }
 
-  async suggestNewEntities(datasetId: string): Promise<LearningSuggestion[]> {
-    this.logger.log(`Generating entity suggestions for dataset ${datasetId}`);
+  async suggestNewEntities(): Promise<LearningSuggestion[]> {
+    this.logger.log(`Generating entity suggestions`);
 
     const suggestions: LearningSuggestion[] = [];
 
     try {
-      // Analyze existing graph data to find patterns
-      const nodePatterns = await this.analyzeNodePatterns(datasetId);
-      const edgePatterns = await this.analyzeEdgePatterns(datasetId);
+      // Analyze existing graph data to find patterns (across all datasets)
+      const nodePatterns = await this.analyzeNodePatterns();
+      const edgePatterns = await this.analyzeEdgePatterns();
 
       // Generate suggestions from patterns
       for (const pattern of nodePatterns) {
         if (pattern.frequency >= 3) {
           // Only suggest entities that appear frequently
-          const suggestion = await this.createSuggestionFromPattern(
-            pattern,
-            datasetId,
-          );
+          const suggestion = await this.createSuggestionFromPattern(pattern);
           if (suggestion) {
             suggestions.push(suggestion);
           }
@@ -107,10 +101,8 @@ export class EntityLearningService {
       // Generate suggestions from edge patterns
       for (const pattern of edgePatterns) {
         if (pattern.frequency >= 2) {
-          const suggestion = await this.createSuggestionFromEdgePattern(
-            pattern,
-            datasetId,
-          );
+          const suggestion =
+            await this.createSuggestionFromEdgePattern(pattern);
           if (suggestion) {
             suggestions.push(suggestion);
           }
@@ -129,7 +121,7 @@ export class EntityLearningService {
   }
 
   calculateEntityConfidence(
-    entity: PredefinedEntity,
+    entity: GraphEntity,
     usageData: {
       occurrenceCount: number;
       lastUsed: Date;
@@ -201,21 +193,20 @@ export class EntityLearningService {
     );
   }
 
-  async discoverEntityAliases(datasetId: string): Promise<void> {
-    this.logger.log(`Discovering entity aliases for dataset ${datasetId}`);
+  async discoverEntityAliases(): Promise<void> {
+    this.logger.log(`Discovering entity aliases`);
 
     try {
-      // Get all entities for this dataset
+      // Get all entities
       const entities = await this.entityRepository.find({
-        where: { datasetId },
         relations: ['aliases'],
       });
 
       for (const entity of entities) {
-        await this.discoverAliasesForEntity(entity, datasetId);
+        await this.discoverAliasesForEntity(entity);
       }
 
-      this.logger.log(`Alias discovery completed for dataset ${datasetId}`);
+      this.logger.log(`Alias discovery completed`);
     } catch (error) {
       this.logger.error(`Error in alias discovery: ${error.message}`);
     }
@@ -228,8 +219,8 @@ export class EntityLearningService {
     // Check if entity already exists
     const existingEntity = await this.entityRepository.findOne({
       where: {
-        datasetId,
         canonicalName: node.label,
+        entityType: node.type,
       },
     });
 
@@ -248,7 +239,6 @@ export class EntityLearningService {
     // Check for similar entities
     const similarEntities = await this.findSimilarEntities(
       node.label,
-      datasetId,
       node.type,
     );
 
@@ -267,7 +257,6 @@ export class EntityLearningService {
       // Create new entity if confidence is high enough
       if ((node.properties?.confidence || 0) >= 0.7) {
         await this.entityRepository.save({
-          datasetId,
           entityType: node.type,
           canonicalName: node.label,
           confidenceScore: node.properties?.confidence || 0.8,
@@ -313,7 +302,7 @@ export class EntityLearningService {
     );
   }
 
-  private async analyzeNodePatterns(datasetId: string): Promise<
+  private async analyzeNodePatterns(): Promise<
     Array<{
       label: string;
       type: NodeType;
@@ -328,10 +317,8 @@ export class EntityLearningService {
       contexts: string[];
     }> = [];
 
-    // Get all nodes for this dataset
-    const nodes = await this.nodeRepository.find({
-      where: { datasetId },
-    });
+    // Get all nodes (across all datasets)
+    const nodes = await this.nodeRepository.find({});
 
     // Group by label and type
     const grouped = nodes.reduce(
@@ -355,7 +342,7 @@ export class EntityLearningService {
     return Object.values(grouped);
   }
 
-  private async analyzeEdgePatterns(datasetId: string): Promise<
+  private async analyzeEdgePatterns(): Promise<
     Array<{
       sourceType: NodeType;
       targetType: NodeType;
@@ -370,9 +357,8 @@ export class EntityLearningService {
       frequency: number;
     }> = [];
 
-    // Get all edges with their nodes
+    // Get all edges with their nodes (across all datasets)
     const edges = await this.edgeRepository.find({
-      where: { datasetId },
       relations: ['sourceNode', 'targetNode'],
     });
 
@@ -399,13 +385,12 @@ export class EntityLearningService {
 
   private async createSuggestionFromPattern(
     pattern: any,
-    datasetId: string,
   ): Promise<LearningSuggestion | null> {
     // Check if entity already exists
     const existing = await this.entityRepository.findOne({
       where: {
-        datasetId,
         canonicalName: pattern.label,
+        entityType: pattern.type,
       },
     });
 
@@ -414,7 +399,7 @@ export class EntityLearningService {
     }
 
     // Generate aliases from similar patterns
-    const aliases = await this.generateAliases(pattern.label, datasetId);
+    const aliases = await this.generateAliases(pattern.label);
 
     return {
       entity: {
@@ -434,7 +419,6 @@ export class EntityLearningService {
 
   private async createSuggestionFromEdgePattern(
     pattern: any,
-    datasetId: string,
   ): Promise<LearningSuggestion | null> {
     // This would analyze edge patterns to suggest new entity types
     // For now, return null as this is more complex
@@ -443,16 +427,15 @@ export class EntityLearningService {
 
   private async findSimilarEntities(
     label: string,
-    datasetId: string,
     type: NodeType,
     threshold: number = 0.8,
-  ): Promise<PredefinedEntity[]> {
+  ): Promise<GraphEntity[]> {
     const entities = await this.entityRepository.find({
-      where: { datasetId, entityType: type },
+      where: { entityType: type },
       relations: ['aliases'],
     });
 
-    const similar: PredefinedEntity[] = [];
+    const similar: GraphEntity[] = [];
 
     for (const entity of entities) {
       const similarity = this.calculateSimilarity(
@@ -489,30 +472,24 @@ export class EntityLearningService {
     });
   }
 
-  private async addAliasIfNotExists(
-    entityId: string,
-    alias: string,
-  ): Promise<void> {
+  async addAliasIfNotExists(entityId: string, alias: string): Promise<void> {
     const existing = await this.aliasRepository.findOne({
-      where: { predefinedEntityId: entityId, alias },
+      where: { entityId: entityId, alias },
     });
 
     if (!existing) {
       await this.aliasRepository.save({
-        predefinedEntityId: entityId,
+        entityId: entityId,
         alias,
         similarityScore: 1.0,
       });
     }
   }
 
-  private async discoverAliasesForEntity(
-    entity: PredefinedEntity,
-    datasetId: string,
-  ): Promise<void> {
-    // Find nodes that might be aliases of this entity
+  private async discoverAliasesForEntity(entity: GraphEntity): Promise<void> {
+    // Find nodes that might be aliases of this entity (across all datasets)
     const nodes = await this.nodeRepository.find({
-      where: { datasetId, nodeType: entity.entityType as NodeType },
+      where: { nodeType: entity.entityType as NodeType },
     });
 
     for (const node of nodes) {
@@ -527,10 +504,7 @@ export class EntityLearningService {
     }
   }
 
-  private async generateAliases(
-    label: string,
-    datasetId: string,
-  ): Promise<string[]> {
+  private async generateAliases(label: string): Promise<string[]> {
     // Simple alias generation - in a real implementation, this would be more sophisticated
     const aliases: string[] = [];
 

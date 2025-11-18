@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { PromptSelector } from '@/components/prompt-selector'
 import { promptApi, aiProviderApi, userApi, type Prompt, type AiProvider, type Model } from '@/lib/api'
 import { useToast } from '@/components/ui/simple-toast'
 import { authUtil } from '@/lib/auth'
@@ -28,9 +29,7 @@ export default function GraphSettingsPage() {
 
     // Data state
     const [providers, setProviders] = useState<AiProvider[]>([])
-    const [prompts, setPrompts] = useState<Prompt[]>([])
     const [models, setModels] = useState<Model[]>([])
-    const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null)
     const [loadingModels, setLoadingModels] = useState(false)
 
     // Refs to prevent duplicate API calls in React StrictMode
@@ -54,20 +53,15 @@ export default function GraphSettingsPage() {
         }
     }, [error])
 
-    // Load prompts and providers
+    // Load providers
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [promptsResponse, providersResponse] = await Promise.all([
-                    promptApi.getAll(),
-                    aiProviderApi.getAll()
-                ])
-
-                setPrompts(promptsResponse.data || [])
+                const providersResponse = await aiProviderApi.getAll()
                 setProviders(providersResponse.data || [])
             } catch (err) {
                 console.error('Failed to load data:', err)
-                error('Failed to load prompts and providers')
+                error('Failed to load providers')
             }
         }
 
@@ -109,15 +103,6 @@ export default function GraphSettingsPage() {
         }
     }, [settings.aiProviderId, providers])
 
-    // Update selected prompt when promptId changes
-    useEffect(() => {
-        if (settings.promptId) {
-            const prompt = prompts.find(p => p.id === settings.promptId)
-            setSelectedPrompt(prompt || null)
-        } else {
-            setSelectedPrompt(null)
-        }
-    }, [settings.promptId, prompts])
 
     const handleSave = async () => {
         if (!user?.id) return
@@ -231,29 +216,13 @@ export default function GraphSettingsPage() {
                     </div>
 
                     {/* Prompt Selection */}
-                    <div className="space-y-2">
-                        <Label htmlFor="prompt">Graph Extraction Prompt</Label>
-                        <select
-                            id="prompt"
-                            value={settings.promptId || ''}
-                            onChange={(e) => handleInputChange('promptId', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
-                            <option value="">Select Prompt</option>
-                            {prompts.map((prompt) => (
-                                <option key={prompt.id} value={prompt.id}>
-                                    {prompt.name}
-                                </option>
-                            ))}
-                        </select>
-                        {selectedPrompt && (
-                            <div className="mt-2 p-3 bg-gray-50 rounded-md">
-                                <p className="text-sm text-gray-600">
-                                    <strong>Description:</strong> {selectedPrompt.description}
-                                </p>
-                            </div>
-                        )}
-                    </div>
+                    <PromptSelector
+                        value={settings.promptId}
+                        onChange={(promptId) => handleInputChange('promptId', promptId)}
+                        label="Graph Extraction Prompt"
+                        placeholder="Select Prompt"
+                        promptType="custom"
+                    />
 
                     {/* Temperature */}
                     <div className="space-y-2">

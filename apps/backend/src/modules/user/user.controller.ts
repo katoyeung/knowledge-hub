@@ -20,6 +20,7 @@ import { PermsGuard } from '@modules/access/guards/permissions.guard';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserGraphSettingsDto } from './dto/update-user-graph-settings.dto';
+import { UpdateUserPostSettingsDto } from './dto/update-user-post-settings.dto';
 import { Resource } from '@modules/access/enums/permission.enum';
 import { CrudPermissions } from '@modules/access/decorators/crud-permissions.decorator';
 @Crud({
@@ -111,5 +112,28 @@ export class UserController implements CrudController<User> {
       throw new Error('Unauthorized to access user graph settings');
     }
     return this.service.getUserGraphSettings(id);
+  }
+
+  @Put(':id/post-settings')
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async updateUserPostSettings(
+    @Param('id') id: string,
+    @Body() updateUserPostSettingsDto: UpdateUserPostSettingsDto,
+    @Request() req: any,
+  ) {
+    // Ensure user can only update their own post settings
+    if (req.user.id !== id) {
+      throw new Error('Unauthorized to update user post settings');
+    }
+    return this.service.updateUserPostSettings(id, updateUserPostSettingsDto);
+  }
+
+  @Get(':id/post-settings')
+  async getUserPostSettings(@Param('id') id: string, @Request() req: any) {
+    // Ensure user can only access their own post settings
+    if (req.user.id !== id) {
+      throw new Error('Unauthorized to access user post settings');
+    }
+    return this.service.getUserPostSettings(id);
   }
 }

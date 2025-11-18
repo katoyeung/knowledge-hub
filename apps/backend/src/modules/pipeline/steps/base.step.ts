@@ -151,6 +151,14 @@ export abstract class BaseStep
    * Useful for steps that need DocumentSegment[] internally
    */
   protected segmentsToDocumentSegments(segments: any[]): DocumentSegment[] {
+    // Defensive check: ensure segments is an array
+    if (!Array.isArray(segments)) {
+      this.logger.warn(
+        `segmentsToDocumentSegments received non-array input. Type: ${typeof segments}, converting to array.`,
+      );
+      segments = segments ? [segments] : [];
+    }
+
     return segments.map((item, index) => {
       if (item instanceof DocumentSegment) {
         return item;
@@ -248,9 +256,15 @@ export abstract class BaseStep
     } catch (error) {
       // Fallback: try to create segments from input for error reporting
       const unwrapResult = this.unwrapInput(input);
-      const inputSegments = this.segmentsToDocumentSegments(
-        unwrapResult.segments,
-      );
+      // Ensure segments is an array before passing to segmentsToDocumentSegments
+      let segments = unwrapResult.segments;
+      if (!Array.isArray(segments)) {
+        this.logger.warn(
+          `Error handler: unwrapInput returned non-array segments. Type: ${typeof segments}, converting to array.`,
+        );
+        segments = segments ? [segments] : [];
+      }
+      const inputSegments = this.segmentsToDocumentSegments(segments);
       return this.createErrorResult(
         inputSegments,
         startTime,
@@ -415,6 +429,14 @@ export abstract class BaseStep
     inputSegments: DocumentSegment[],
     config: IStepConfig,
   ): any {
+    // Defensive check: ensure inputSegments is an array
+    if (!Array.isArray(inputSegments)) {
+      this.logger.warn(
+        `createRollbackDataInternal received non-array input. Type: ${typeof inputSegments}, converting to array.`,
+      );
+      inputSegments = inputSegments ? [inputSegments] : [];
+    }
+
     return {
       inputSegments: inputSegments.map((segment) => ({
         id: segment.id,

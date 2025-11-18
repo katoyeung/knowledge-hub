@@ -398,4 +398,32 @@ export class GraphService {
       this.deleteNodesByDataset(datasetId),
     ]);
   }
+
+  async deleteGraphBySegment(
+    segmentId: string,
+  ): Promise<{ nodesDeleted: number; edgesDeleted: number }> {
+    // Get all nodes for this segment
+    const nodes = await this.nodeRepository.find({
+      where: { segmentId },
+      select: ['id'],
+    });
+
+    const nodeIds = nodes.map((node) => node.id);
+    let edgesDeleted = 0;
+
+    // Delete edges where source or target node belongs to this segment
+    if (nodeIds.length > 0) {
+      const deleteResult = await this.edgeRepository.delete([
+        { sourceNodeId: In(nodeIds) },
+        { targetNodeId: In(nodeIds) },
+      ]);
+      edgesDeleted = deleteResult.affected || 0;
+    }
+
+    // Delete nodes for this segment
+    const deleteResult = await this.nodeRepository.delete({ segmentId });
+    const nodesDeleted = deleteResult.affected || 0;
+
+    return { nodesDeleted, edgesDeleted };
+  }
 }

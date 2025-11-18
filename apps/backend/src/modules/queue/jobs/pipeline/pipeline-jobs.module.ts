@@ -59,7 +59,7 @@ import { GraphExtractionStep } from '../../../pipeline/steps/graph-extraction.st
   ],
   exports: [PipelineJob],
 })
-export class PipelineJobsModule implements OnModuleInit {
+export class PipelineJobsModule {
   constructor(
     private readonly stepRegistry: PipelineStepRegistry,
     private readonly duplicateSegmentStep: DuplicateSegmentStep,
@@ -67,9 +67,9 @@ export class PipelineJobsModule implements OnModuleInit {
     private readonly aiSummarizationStep: AiSummarizationStep,
     private readonly embeddingGenerationStep: EmbeddingGenerationStep,
     private readonly graphExtractionStep: GraphExtractionStep,
-  ) {}
-
-  onModuleInit() {
+  ) {
+    // Jobs are now auto-registered via JobAutoLoaderService in JobsModule
+    // Register pipeline steps
     this.stepRegistry.registerStep(this.duplicateSegmentStep);
     this.stepRegistry.registerStep(this.ruleBasedFilterStep);
     this.stepRegistry.registerStep(this.aiSummarizationStep);

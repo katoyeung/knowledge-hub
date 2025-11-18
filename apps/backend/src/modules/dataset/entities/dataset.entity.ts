@@ -13,7 +13,6 @@ import { DocumentSegment } from './document-segment.entity';
 import { DatasetKeywordTable } from './dataset-keyword-table.entity';
 import { GraphNode } from '../../graph/entities/graph-node.entity';
 import { GraphEdge } from '../../graph/entities/graph-edge.entity';
-import { PredefinedEntity } from '../../graph/entities/predefined-entity.entity';
 import { EntityNormalizationLog } from '../../graph/entities/entity-normalization-log.entity';
 import { Exclude } from 'class-transformer';
 
@@ -115,9 +114,6 @@ export class Dataset extends BaseEntity {
 
   @OneToMany(() => GraphEdge, (edge) => edge.dataset)
   graphEdges: GraphEdge[];
-
-  @OneToMany(() => PredefinedEntity, (entity) => entity.dataset)
-  predefinedEntities: PredefinedEntity[];
 
   @OneToMany(() => EntityNormalizationLog, (log) => log.dataset)
   entityNormalizationLogs: EntityNormalizationLog[];

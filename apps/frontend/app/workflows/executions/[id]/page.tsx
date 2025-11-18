@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,6 +30,9 @@ export default function WorkflowExecutionPage() {
     const [nodeStatuses, setNodeStatuses] = useState<Record<string, 'pending' | 'running' | 'completed' | 'failed' | 'skipped'>>({});
 
     const [execution, setExecution] = useState<WorkflowExecution | null>(null);
+    const executionRef = useRef<WorkflowExecution | null>(null);
+    const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const isRefreshingRef = useRef<boolean>(false);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [selectedData, setSelectedData] = useState<{ type: 'input' | 'output'; data: any; nodeName: string } | null>(null);
@@ -47,16 +50,31 @@ export default function WorkflowExecutionPage() {
     // Define loadExecution first so it can be used in useEffect hooks
     const loadExecution = useCallback(async () => {
         if (!executionId) return;
+        if (isRefreshingRef.current) return; // Prevent concurrent calls
+
+        isRefreshingRef.current = true;
         try {
             const data = await workflowApi.getExecutionStatus(executionId);
             setExecution(data);
+            executionRef.current = data;
         } catch (err) {
             console.error('Failed to load execution:', err);
             showError('Failed to load workflow execution');
         } finally {
             setLoading(false);
+            isRefreshingRef.current = false;
         }
-    }, [executionId]);
+    }, [executionId, showError]);
+
+    // Debounced version of loadExecution for notification-triggered refreshes
+    const debouncedLoadExecution = useCallback(() => {
+        if (refreshTimeoutRef.current) {
+            clearTimeout(refreshTimeoutRef.current);
+        }
+        refreshTimeoutRef.current = setTimeout(() => {
+            loadExecution();
+        }, 300); // Debounce by 300ms
+    }, [loadExecution]);
 
     // Initialize node statuses from execution node snapshots
     useEffect(() => {
@@ -80,6 +98,8 @@ export default function WorkflowExecutionPage() {
         if (!executionId) return;
 
         const executionNotifications = getExecutionNotifications(executionId);
+        const currentExecution = executionRef.current;
+        let shouldRefresh = false;
 
         // Process the latest notifications
         executionNotifications.forEach((notification) => {
@@ -87,15 +107,13 @@ export default function WorkflowExecutionPage() {
 
             // Handle WORKFLOW_EXECUTION_COMPLETED notification
             if (notification.type === 'WORKFLOW_EXECUTION_COMPLETED') {
-                // Refresh execution data to get final state
-                loadExecution();
+                shouldRefresh = true;
                 return;
             }
 
             // Handle WORKFLOW_EXECUTION_FAILED notification
             if (notification.type === 'WORKFLOW_EXECUTION_FAILED') {
-                // Refresh execution data to get error details
-                loadExecution();
+                shouldRefresh = true;
                 return;
             }
 
@@ -110,16 +128,18 @@ export default function WorkflowExecutionPage() {
                 }
 
                 // Update overall execution status if status changed
-                if (data.status && execution) {
+                if (data.status && currentExecution) {
                     const newStatus = data.status as WorkflowExecution['status'];
-                    if (execution.status !== newStatus) {
-                        // Refresh execution data to get latest state
-                        loadExecution();
+                    const statusChanged = currentExecution.status !== newStatus;
+
+                    if (statusChanged) {
+                        // Status changed, refresh to get latest state
+                        shouldRefresh = true;
                     } else if (
                         // If status is still running but progress changed, update progress
                         newStatus === 'running' &&
                         data.progress &&
-                        execution.progress?.overallProgress !== data.progress.percentage
+                        currentExecution.progress?.overallProgress !== data.progress.percentage
                     ) {
                         setExecution((prev) => {
                             if (!prev) return prev;
@@ -136,32 +156,62 @@ export default function WorkflowExecutionPage() {
                                 },
                             };
                         });
+                        // Update ref as well
+                        executionRef.current = {
+                            ...currentExecution,
+                            progress: {
+                                ...currentExecution.progress,
+                                currentNodeId: data.currentNodeId,
+                                currentNodeName: data.currentNode || data.currentNodeName,
+                                completedNodes: data.progress?.completedNodes || currentExecution.progress?.completedNodes || 0,
+                                totalNodes: data.progress?.totalNodes || currentExecution.progress?.totalNodes || 0,
+                                message: data.message || currentExecution.progress?.message || '',
+                                overallProgress: data.progress?.percentage || currentExecution.progress?.overallProgress || 0,
+                            },
+                        } as WorkflowExecution;
                     }
                 }
 
                 // If a new node started and we don't have it yet in snapshots, refresh to show it immediately
-                if (data.currentNodeId && (!execution?.nodeSnapshots || !execution.nodeSnapshots.some(n => n.nodeId === data.currentNodeId))) {
-                    loadExecution();
+                if (data.currentNodeId && (!currentExecution?.nodeSnapshots || !currentExecution.nodeSnapshots.some(n => n.nodeId === data.currentNodeId))) {
+                    shouldRefresh = true;
                 }
 
                 // Update execution if completed or failed
                 if (data.status === 'completed' || data.status === 'failed') {
-                    loadExecution();
+                    shouldRefresh = true;
                 }
             }
         });
-    }, [executionId, notifications, getExecutionNotifications, execution?.status, loadExecution, execution]);
+
+        // Only refresh once after processing all notifications
+        if (shouldRefresh) {
+            debouncedLoadExecution();
+        }
+    }, [executionId, notifications, getExecutionNotifications, debouncedLoadExecution]);
 
     // Auto-refresh execution when it's running
     useEffect(() => {
         if (!execution || execution.status !== 'running') return;
 
         const interval = setInterval(() => {
-            loadExecution();
+            // Only refresh if not already refreshing
+            if (!isRefreshingRef.current) {
+                loadExecution();
+            }
         }, 3000); // Refresh every 3 seconds when running
 
         return () => clearInterval(interval);
-    }, [execution?.status, executionId, loadExecution, execution]);
+    }, [execution?.status, executionId, loadExecution]);
+
+    // Cleanup timeout on unmount
+    useEffect(() => {
+        return () => {
+            if (refreshTimeoutRef.current) {
+                clearTimeout(refreshTimeoutRef.current);
+            }
+        };
+    }, []);
 
     const handleRefresh = async () => {
         setRefreshing(true);

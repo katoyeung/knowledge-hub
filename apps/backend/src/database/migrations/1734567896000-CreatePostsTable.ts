@@ -14,7 +14,10 @@ export class CreatePostsTable1734567896000 implements MigrationInterface {
         "title" text,
         "meta" jsonb,
         "user_id" uuid,
-        "dataset_id" uuid,
+        "posted_at" TIMESTAMP,
+        "status" varchar(50) NOT NULL DEFAULT 'pending',
+        "approval_reason" text NULL,
+        "confidence_score" decimal(5,2) NULL,
         "created_at" TIMESTAMP NOT NULL DEFAULT now(),
         "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
         CONSTRAINT "PK_posts" PRIMARY KEY ("id")
@@ -45,13 +48,19 @@ export class CreatePostsTable1734567896000 implements MigrationInterface {
 
     // Note: GIN index on meta JSONB is created via seeder, not migration
 
+    // Create index on posted_at
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS "idx_posts_posted_at" ON "posts" ("posted_at")
+    `);
+
+    // Create index on status
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS "idx_posts_status" ON "posts" ("status")
+    `);
+
     // Create indexes on foreign keys
     await queryRunner.query(`
       CREATE INDEX IF NOT EXISTS "idx_posts_user_id" ON "posts" ("user_id")
-    `);
-
-    await queryRunner.query(`
-      CREATE INDEX IF NOT EXISTS "idx_posts_dataset_id" ON "posts" ("dataset_id")
     `);
 
     // Add foreign key constraints (optional - only if tables exist)
@@ -71,32 +80,10 @@ export class CreatePostsTable1734567896000 implements MigrationInterface {
         FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL
       `);
     }
-
-    // Check if datasets table exists before adding foreign key
-    const datasetsTableExists = await queryRunner.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'datasets'
-      )
-    `);
-
-    if (datasetsTableExists[0].exists) {
-      await queryRunner.query(`
-        ALTER TABLE "posts" 
-        ADD CONSTRAINT "FK_posts_dataset" 
-        FOREIGN KEY ("dataset_id") REFERENCES "datasets"("id") ON DELETE SET NULL
-      `);
-    }
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     // Drop foreign key constraints
-    await queryRunner.query(`
-      ALTER TABLE "posts" 
-      DROP CONSTRAINT IF EXISTS "FK_posts_dataset"
-    `);
-
     await queryRunner.query(`
       ALTER TABLE "posts" 
       DROP CONSTRAINT IF EXISTS "FK_posts_user"
@@ -104,7 +91,11 @@ export class CreatePostsTable1734567896000 implements MigrationInterface {
 
     // Drop indexes
     await queryRunner.query(`
-      DROP INDEX IF EXISTS "idx_posts_dataset_id"
+      DROP INDEX IF EXISTS "idx_posts_posted_at"
+    `);
+
+    await queryRunner.query(`
+      DROP INDEX IF EXISTS "idx_posts_status"
     `);
 
     await queryRunner.query(`

@@ -11,9 +11,9 @@ export class PerplexityApiClient extends BaseLLMClientV2 {
     baseUrl: 'https://api.perplexity.ai',
     apiKeyEnv: 'PERPLEXITY_API_KEY',
     defaultModel: 'sonar',
-    supportsJsonSchema: false, // Perplexity doesn't support native JSON schema
-    supportsStructuredOutput: true, // Perplexity supports structured output via system message
-    structuredOutputFormat: 'custom', // Use custom format for system message injection
+    supportsJsonSchema: true, // Perplexity supports JSON schema via response_format
+    supportsStructuredOutput: true,
+    structuredOutputFormat: 'openai', // Perplexity uses response_format like OpenAI
     streamingFormat: 'sse',
     streamTransform: {
       contentPath: 'choices[0].delta.content',
